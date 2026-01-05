@@ -6,6 +6,12 @@ pub struct DbSchema {
     pub tables: HashMap<String, TableInfo>,
     pub enums: HashMap<String, EnumInfo>,
     pub functions: HashMap<String, FunctionInfo>,
+    // New entities
+    pub views: HashMap<String, ViewInfo>,
+    pub sequences: HashMap<String, SequenceInfo>,
+    pub extensions: HashMap<String, ExtensionInfo>,
+    pub composite_types: HashMap<String, CompositeTypeInfo>,
+    pub domains: HashMap<String, DomainInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -17,6 +23,8 @@ pub struct TableInfo {
     pub triggers: Vec<TriggerInfo>,
     pub rls_enabled: bool,
     pub policies: Vec<PolicyInfo>,
+    pub check_constraints: Vec<CheckConstraintInfo>,
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -29,8 +37,9 @@ pub struct ColumnInfo {
     pub is_primary_key: bool,
     pub is_unique: bool,
     pub is_identity: bool,
-    pub enum_name: Option<String>, // Helper for mapping back to enums
+    pub enum_name: Option<String>,
     pub is_array: bool,
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -40,6 +49,7 @@ pub struct ForeignKeyInfo {
     pub foreign_table: String,
     pub foreign_column: String,
     pub on_delete: String,
+    pub on_update: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -49,6 +59,9 @@ pub struct IndexInfo {
     pub is_unique: bool,
     pub is_primary: bool,
     pub owning_constraint: Option<String>,
+    pub index_method: String,         // btree, hash, gist, gin, brin, etc.
+    pub where_clause: Option<String>, // Partial index condition
+    pub expressions: Vec<String>,     // For expression indexes (e.g., LOWER(email))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -60,19 +73,20 @@ pub struct EnumInfo {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PolicyInfo {
     pub name: String,
-    pub cmd: String, // "SELECT", "INSERT", "UPDATE", "DELETE", "ALL"
+    pub cmd: String,
     pub roles: Vec<String>,
-    pub qual: Option<String>,       // using
-    pub with_check: Option<String>, // with check
+    pub qual: Option<String>,
+    pub with_check: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TriggerInfo {
     pub name: String,
-    pub events: Vec<String>, // INSERT, UPDATE, etc.
-    pub timing: String,      // BEFORE, AFTER, INSTEAD OF
-    pub orientation: String, // ROW, STATEMENT
+    pub events: Vec<String>,
+    pub timing: String,
+    pub orientation: String,
     pub function_name: String,
+    pub when_clause: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -82,12 +96,99 @@ pub struct FunctionInfo {
     pub return_type: String,
     pub language: String,
     pub definition: String,
+    pub volatility: Option<String>, // VOLATILE, STABLE, IMMUTABLE
+    pub is_strict: bool,            // STRICT / RETURNS NULL ON NULL INPUT
+    pub security_definer: bool,     // SECURITY DEFINER
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FunctionArg {
     pub name: String,
     pub type_: String,
+    pub mode: Option<String>, // IN, OUT, INOUT, VARIADIC
+    pub default_value: Option<String>,
+}
+
+// ========================
+// New Entity Types
+// ========================
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ViewInfo {
+    pub name: String,
+    pub definition: String,
+    pub is_materialized: bool,
+    pub columns: Vec<ViewColumnInfo>,
+    pub indexes: Vec<IndexInfo>, // Only for materialized views
+    pub comment: Option<String>,
+    pub with_options: Vec<String>,    // WITH (security_barrier, etc.)
+    pub check_option: Option<String>, // LOCAL, CASCADED
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ViewColumnInfo {
+    pub name: String,
+    pub data_type: String,
+    pub comment: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SequenceInfo {
+    pub name: String,
+    pub data_type: String, // smallint, integer, bigint
+    pub start_value: i64,
+    pub min_value: i64,
+    pub max_value: i64,
+    pub increment: i64,
+    pub cycle: bool,
+    pub cache_size: i64,
+    pub owned_by: Option<String>, // table.column if owned by a column
+    pub comment: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ExtensionInfo {
+    pub name: String,
+    pub version: Option<String>,
+    pub schema: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CompositeTypeInfo {
+    pub name: String,
+    pub attributes: Vec<CompositeTypeAttribute>,
+    pub comment: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CompositeTypeAttribute {
+    pub name: String,
+    pub data_type: String,
+    pub collation: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DomainInfo {
+    pub name: String,
+    pub base_type: String,
+    pub default_value: Option<String>,
+    pub is_not_null: bool,
+    pub check_constraints: Vec<DomainCheckConstraint>,
+    pub collation: Option<String>,
+    pub comment: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DomainCheckConstraint {
+    pub name: Option<String>,
+    pub expression: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CheckConstraintInfo {
+    pub name: String,
+    pub expression: String,
+    pub columns: Vec<String>, // Columns involved in the check
 }
 
 impl DbSchema {
@@ -96,6 +197,73 @@ impl DbSchema {
             tables: HashMap::new(),
             enums: HashMap::new(),
             functions: HashMap::new(),
+            views: HashMap::new(),
+            sequences: HashMap::new(),
+            extensions: HashMap::new(),
+            composite_types: HashMap::new(),
+            domains: HashMap::new(),
+        }
+    }
+}
+
+impl Default for DbSchema {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for FunctionInfo {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            args: vec![],
+            return_type: "void".to_string(),
+            language: "sql".to_string(),
+            definition: String::new(),
+            volatility: None,
+            is_strict: false,
+            security_definer: false,
+        }
+    }
+}
+
+impl Default for IndexInfo {
+    fn default() -> Self {
+        Self {
+            index_name: String::new(),
+            columns: vec![],
+            is_unique: false,
+            is_primary: false,
+            owning_constraint: None,
+            index_method: "btree".to_string(),
+            where_clause: None,
+            expressions: vec![],
+        }
+    }
+}
+
+impl Default for TriggerInfo {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            events: vec![],
+            timing: "BEFORE".to_string(),
+            orientation: "STATEMENT".to_string(),
+            function_name: String::new(),
+            when_clause: None,
+        }
+    }
+}
+
+impl Default for ForeignKeyInfo {
+    fn default() -> Self {
+        Self {
+            constraint_name: String::new(),
+            column_name: String::new(),
+            foreign_table: String::new(),
+            foreign_column: String::new(),
+            on_delete: "NO ACTION".to_string(),
+            on_update: "NO ACTION".to_string(),
         }
     }
 }

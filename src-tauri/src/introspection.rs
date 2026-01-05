@@ -1,6 +1,8 @@
 use crate::schema::{
-    ColumnInfo, DbSchema, EnumInfo, ForeignKeyInfo, FunctionArg, FunctionInfo, IndexInfo,
-    PolicyInfo, TableInfo, TriggerInfo,
+    CheckConstraintInfo, ColumnInfo, CompositeTypeAttribute, CompositeTypeInfo, DbSchema,
+    DomainCheckConstraint, DomainInfo, EnumInfo, ExtensionInfo, ForeignKeyInfo, FunctionArg,
+    FunctionInfo, IndexInfo, PolicyInfo, SequenceInfo, TableInfo, TriggerInfo, ViewColumnInfo,
+    ViewInfo,
 };
 use crate::supabase_api::SupabaseApi;
 use serde::Deserialize;
@@ -17,30 +19,61 @@ impl<'a> Introspector<'a> {
     }
 
     pub async fn introspect(&self) -> Result<DbSchema, String> {
-        println!("[DEBUG introspect] Starting introspection for project: {}", self.project_ref);
-        
+        println!(
+            "[DEBUG introspect] Starting introspection for project: {}",
+            self.project_ref
+        );
+
         // Run all bulk queries in parallel for maximum efficiency
         println!("[DEBUG introspect] Running bulk queries...");
-        
-        let (enums, functions, tables_data) = tokio::try_join!(
-            self.get_enums(),
-            self.get_functions(),
-            self.get_all_tables_bulk()
-        )?;
-        
-        
+
+        let (enums, functions, tables_data, views, sequences, extensions, composite_types, domains) =
+            tokio::try_join!(
+                self.get_enums(),
+                self.get_functions(),
+                self.get_all_tables_bulk(),
+                self.get_views(),
+                self.get_sequences(),
+                self.get_extensions(),
+                self.get_composite_types(),
+                self.get_domains()
+            )?;
+
         let total_triggers: usize = tables_data.values().map(|t| t.triggers.len()).sum();
         let total_policies: usize = tables_data.values().map(|t| t.policies.len()).sum();
 
-        println!("[DEBUG introspect] Got {} enums, {} functions, {} tables", 
-            enums.len(), functions.len(), tables_data.len());
-        println!("[DEBUG introspect] Got {} triggers, {} policies", total_triggers, total_policies);
+        println!(
+            "[DEBUG introspect] Got {} enums, {} functions, {} tables",
+            enums.len(),
+            functions.len(),
+            tables_data.len()
+        );
+        println!(
+            "[DEBUG introspect] Got {} triggers, {} policies",
+            total_triggers, total_policies
+        );
+        println!(
+            "[DEBUG introspect] Got {} views, {} sequences, {} extensions",
+            views.len(),
+            sequences.len(),
+            extensions.len()
+        );
+        println!(
+            "[DEBUG introspect] Got {} composite types, {} domains",
+            composite_types.len(),
+            domains.len()
+        );
 
         println!("[DEBUG introspect] Introspection complete!");
         Ok(DbSchema {
             tables: tables_data,
             enums,
             functions,
+            views,
+            sequences,
+            extensions,
+            composite_types,
+            domains,
         })
     }
 
@@ -92,7 +125,14 @@ impl<'a> Introspector<'a> {
               pg_get_function_result(p.oid) as return_type,
               pg_get_function_arguments(p.oid) as args,
               l.lanname as language,
-              p.prosrc as definition
+              p.prosrc as definition,
+              CASE p.provolatile
+                WHEN 'i' THEN 'IMMUTABLE'
+                WHEN 's' THEN 'STABLE'
+                WHEN 'v' THEN 'VOLATILE'
+              END as volatility,
+              p.proisstrict as is_strict,
+              p.prosecdef as security_definer
             FROM pg_proc p
             JOIN pg_language l ON p.prolang = l.oid
             JOIN pg_namespace n ON p.pronamespace = n.oid
@@ -106,6 +146,9 @@ impl<'a> Introspector<'a> {
             args: String,
             language: String,
             definition: String,
+            volatility: Option<String>,
+            is_strict: bool,
+            security_definer: bool,
         }
 
         let result = self
@@ -128,11 +171,466 @@ impl<'a> Introspector<'a> {
                     return_type: row.return_type,
                     language: row.language,
                     definition: row.definition,
+                    volatility: row.volatility,
+                    is_strict: row.is_strict,
+                    security_definer: row.security_definer,
                 },
             );
         }
 
         Ok(functions)
+    }
+
+    async fn get_views(&self) -> Result<HashMap<String, ViewInfo>, String> {
+        let query = r#"
+            WITH view_data AS (
+                -- Regular views
+                SELECT
+                    c.relname as name,
+                    pg_get_viewdef(c.oid, true) as definition,
+                    false as is_materialized,
+                    obj_description(c.oid, 'pg_class') as comment,
+                    c.reloptions as options,
+                    c.oid
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'public'
+                AND c.relkind = 'v'
+
+                UNION ALL
+
+                -- Materialized views
+                SELECT
+                    c.relname as name,
+                    pg_get_viewdef(c.oid, true) as definition,
+                    true as is_materialized,
+                    obj_description(c.oid, 'pg_class') as comment,
+                    c.reloptions as options,
+                    c.oid
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'public'
+                AND c.relkind = 'm'
+            ),
+            view_columns AS (
+                SELECT
+                    c.relname as view_name,
+                    a.attname as column_name,
+                    format_type(a.atttypid, a.atttypmod) as data_type,
+                    col_description(c.oid, a.attnum) as comment
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                JOIN pg_attribute a ON a.attrelid = c.oid
+                WHERE n.nspname = 'public'
+                AND c.relkind IN ('v', 'm')
+                AND a.attnum > 0
+                AND NOT a.attisdropped
+            ),
+            mat_view_indexes AS (
+                SELECT
+                    t.relname as view_name,
+                    i.relname as index_name,
+                    array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum)) as columns,
+                    ix.indisunique as is_unique,
+                    am.amname as index_method,
+                    pg_get_expr(ix.indpred, ix.indrelid) as where_clause
+                FROM pg_class t
+                JOIN pg_index ix ON t.oid = ix.indrelid
+                JOIN pg_class i ON i.oid = ix.indexrelid
+                JOIN pg_am am ON i.relam = am.oid
+                JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
+                JOIN pg_namespace n ON t.relnamespace = n.oid
+                WHERE n.nspname = 'public'
+                AND t.relkind = 'm'
+                GROUP BY t.relname, i.relname, ix.indisunique, am.amname, ix.indpred, ix.indrelid
+            )
+            SELECT json_build_object(
+                'views', (SELECT json_agg(row_to_json(view_data)) FROM view_data),
+                'columns', (SELECT json_agg(row_to_json(view_columns)) FROM view_columns),
+                'indexes', (SELECT json_agg(row_to_json(mat_view_indexes)) FROM mat_view_indexes)
+            ) as data
+        "#;
+
+        let result = self
+            .api
+            .run_query(&self.project_ref, query, true)
+            .await
+            .map_err(|e| format!("Views query failed: {}", e))?;
+
+        let rows: Vec<serde_json::Value> =
+            serde_json::from_value(result.result.unwrap_or(serde_json::Value::Array(vec![])))
+                .map_err(|e| e.to_string())?;
+
+        let data = rows
+            .first()
+            .and_then(|r| r.get("data"))
+            .cloned()
+            .unwrap_or(serde_json::json!({}));
+
+        self.parse_views_response(&data)
+    }
+
+    fn parse_views_response(
+        &self,
+        data: &serde_json::Value,
+    ) -> Result<HashMap<String, ViewInfo>, String> {
+        #[derive(Deserialize)]
+        struct ViewRow {
+            name: String,
+            definition: Option<String>,
+            is_materialized: bool,
+            comment: Option<String>,
+            options: Option<serde_json::Value>,
+        }
+
+        #[derive(Deserialize)]
+        struct ColumnRow {
+            view_name: String,
+            column_name: String,
+            data_type: String,
+            comment: Option<String>,
+        }
+
+        #[derive(Deserialize)]
+        struct IndexRow {
+            view_name: String,
+            index_name: String,
+            columns: serde_json::Value,
+            is_unique: bool,
+            index_method: String,
+            where_clause: Option<String>,
+        }
+
+        let view_rows: Vec<ViewRow> = data
+            .get("views")
+            .cloned()
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default();
+
+        let column_rows: Vec<ColumnRow> = data
+            .get("columns")
+            .cloned()
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default();
+
+        let index_rows: Vec<IndexRow> = data
+            .get("indexes")
+            .cloned()
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default();
+
+        let mut views: HashMap<String, ViewInfo> = HashMap::new();
+
+        for row in view_rows {
+            let options = row.options.map(|v| parse_pg_array(&v)).unwrap_or_default();
+
+            views.insert(
+                row.name.clone(),
+                ViewInfo {
+                    name: row.name,
+                    definition: row.definition.unwrap_or_default(),
+                    is_materialized: row.is_materialized,
+                    columns: vec![],
+                    indexes: vec![],
+                    comment: row.comment,
+                    with_options: options,
+                    check_option: None,
+                },
+            );
+        }
+
+        // Add columns to views
+        for col in column_rows {
+            if let Some(view) = views.get_mut(&col.view_name) {
+                view.columns.push(ViewColumnInfo {
+                    name: col.column_name,
+                    data_type: col.data_type,
+                    comment: col.comment,
+                });
+            }
+        }
+
+        // Add indexes to materialized views
+        for idx in index_rows {
+            if let Some(view) = views.get_mut(&idx.view_name) {
+                view.indexes.push(IndexInfo {
+                    index_name: idx.index_name,
+                    columns: parse_pg_array(&idx.columns),
+                    is_unique: idx.is_unique,
+                    is_primary: false,
+                    owning_constraint: None,
+                    index_method: idx.index_method,
+                    where_clause: idx.where_clause,
+                    expressions: vec![],
+                });
+            }
+        }
+
+        Ok(views)
+    }
+
+    async fn get_sequences(&self) -> Result<HashMap<String, SequenceInfo>, String> {
+        let query = r#"
+            SELECT
+                s.relname as name,
+                format_type(seq.seqtypid, NULL) as data_type,
+                seq.seqstart as start_value,
+                seq.seqmin as min_value,
+                seq.seqmax as max_value,
+                seq.seqincrement as increment,
+                seq.seqcycle as cycle,
+                seq.seqcache as cache_size,
+                CASE WHEN d.refobjid IS NOT NULL
+                    THEN c.relname || '.' || a.attname
+                    ELSE NULL
+                END as owned_by,
+                obj_description(s.oid, 'pg_class') as comment
+            FROM pg_class s
+            JOIN pg_sequence seq ON seq.seqrelid = s.oid
+            JOIN pg_namespace n ON n.oid = s.relnamespace
+            LEFT JOIN pg_depend d ON d.objid = s.oid AND d.deptype = 'a'
+            LEFT JOIN pg_class c ON c.oid = d.refobjid
+            LEFT JOIN pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
+            WHERE n.nspname = 'public'
+            AND s.relkind = 'S'
+        "#;
+
+        #[derive(Deserialize)]
+        struct Row {
+            name: String,
+            data_type: String,
+            start_value: i64,
+            min_value: i64,
+            max_value: i64,
+            increment: i64,
+            cycle: bool,
+            cache_size: i64,
+            owned_by: Option<String>,
+            comment: Option<String>,
+        }
+
+        let result = self
+            .api
+            .run_query(&self.project_ref, query, true)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let rows: Vec<Row> =
+            serde_json::from_value(result.result.unwrap_or(serde_json::Value::Array(vec![])))
+                .map_err(|e| e.to_string())?;
+
+        let mut sequences = HashMap::new();
+        for row in rows {
+            sequences.insert(
+                row.name.clone(),
+                SequenceInfo {
+                    name: row.name,
+                    data_type: row.data_type,
+                    start_value: row.start_value,
+                    min_value: row.min_value,
+                    max_value: row.max_value,
+                    increment: row.increment,
+                    cycle: row.cycle,
+                    cache_size: row.cache_size,
+                    owned_by: row.owned_by,
+                    comment: row.comment,
+                },
+            );
+        }
+
+        Ok(sequences)
+    }
+
+    async fn get_extensions(&self) -> Result<HashMap<String, ExtensionInfo>, String> {
+        let query = r#"
+            SELECT
+                e.extname as name,
+                e.extversion as version,
+                n.nspname as schema
+            FROM pg_extension e
+            JOIN pg_namespace n ON n.oid = e.extnamespace
+            WHERE e.extname != 'plpgsql'  -- Skip built-in
+        "#;
+
+        #[derive(Deserialize)]
+        struct Row {
+            name: String,
+            version: Option<String>,
+            schema: Option<String>,
+        }
+
+        let result = self
+            .api
+            .run_query(&self.project_ref, query, true)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let rows: Vec<Row> =
+            serde_json::from_value(result.result.unwrap_or(serde_json::Value::Array(vec![])))
+                .map_err(|e| e.to_string())?;
+
+        let mut extensions = HashMap::new();
+        for row in rows {
+            extensions.insert(
+                row.name.clone(),
+                ExtensionInfo {
+                    name: row.name,
+                    version: row.version,
+                    schema: row.schema,
+                },
+            );
+        }
+
+        Ok(extensions)
+    }
+
+    async fn get_composite_types(&self) -> Result<HashMap<String, CompositeTypeInfo>, String> {
+        let query = r#"
+            SELECT
+                t.typname as name,
+                array_agg(
+                    json_build_object(
+                        'name', a.attname,
+                        'data_type', format_type(a.atttypid, a.atttypmod),
+                        'collation', c.collname
+                    ) ORDER BY a.attnum
+                ) as attributes,
+                obj_description(t.oid, 'pg_type') as comment
+            FROM pg_type t
+            JOIN pg_namespace n ON t.typnamespace = n.oid
+            JOIN pg_class cls ON cls.oid = t.typrelid
+            LEFT JOIN pg_attribute a ON a.attrelid = cls.oid AND a.attnum > 0 AND NOT a.attisdropped
+            LEFT JOIN pg_collation c ON c.oid = a.attcollation AND c.collname != 'default'
+            WHERE n.nspname = 'public'
+            AND t.typtype = 'c'
+            AND cls.relkind = 'c'
+            GROUP BY t.typname, t.oid
+        "#;
+
+        #[derive(Deserialize)]
+        struct Row {
+            name: String,
+            attributes: serde_json::Value,
+            comment: Option<String>,
+        }
+
+        let result = self
+            .api
+            .run_query(&self.project_ref, query, true)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let rows: Vec<Row> =
+            serde_json::from_value(result.result.unwrap_or(serde_json::Value::Array(vec![])))
+                .map_err(|e| e.to_string())?;
+
+        let mut types = HashMap::new();
+        for row in rows {
+            let attrs: Vec<CompositeTypeAttribute> = if let Some(arr) = row.attributes.as_array() {
+                arr.iter()
+                    .filter_map(|v| {
+                        Some(CompositeTypeAttribute {
+                            name: v.get("name")?.as_str()?.to_string(),
+                            data_type: v.get("data_type")?.as_str()?.to_string(),
+                            collation: v
+                                .get("collation")
+                                .and_then(|c| c.as_str())
+                                .map(String::from),
+                        })
+                    })
+                    .collect()
+            } else {
+                vec![]
+            };
+
+            types.insert(
+                row.name.clone(),
+                CompositeTypeInfo {
+                    name: row.name,
+                    attributes: attrs,
+                    comment: row.comment,
+                },
+            );
+        }
+
+        Ok(types)
+    }
+
+    async fn get_domains(&self) -> Result<HashMap<String, DomainInfo>, String> {
+        let query = r#"
+            SELECT
+                t.typname as name,
+                format_type(t.typbasetype, t.typtypmod) as base_type,
+                t.typdefault as default_value,
+                t.typnotnull as is_not_null,
+                c.collname as collation,
+                obj_description(t.oid, 'pg_type') as comment,
+                (
+                    SELECT json_agg(json_build_object(
+                        'name', con.conname,
+                        'expression', pg_get_constraintdef(con.oid)
+                    ))
+                    FROM pg_constraint con
+                    WHERE con.contypid = t.oid
+                ) as check_constraints
+            FROM pg_type t
+            JOIN pg_namespace n ON t.typnamespace = n.oid
+            LEFT JOIN pg_collation c ON c.oid = t.typcollation AND c.collname != 'default'
+            WHERE n.nspname = 'public'
+            AND t.typtype = 'd'
+        "#;
+
+        #[derive(Deserialize)]
+        struct Row {
+            name: String,
+            base_type: String,
+            default_value: Option<String>,
+            is_not_null: bool,
+            collation: Option<String>,
+            comment: Option<String>,
+            check_constraints: Option<serde_json::Value>,
+        }
+
+        let result = self
+            .api
+            .run_query(&self.project_ref, query, true)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let rows: Vec<Row> =
+            serde_json::from_value(result.result.unwrap_or(serde_json::Value::Array(vec![])))
+                .map_err(|e| e.to_string())?;
+
+        let mut domains = HashMap::new();
+        for row in rows {
+            let checks: Vec<DomainCheckConstraint> = row
+                .check_constraints
+                .and_then(|v| v.as_array().cloned())
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|c| {
+                    Some(DomainCheckConstraint {
+                        name: c.get("name").and_then(|n| n.as_str()).map(String::from),
+                        expression: c.get("expression")?.as_str()?.to_string(),
+                    })
+                })
+                .collect();
+
+            domains.insert(
+                row.name.clone(),
+                DomainInfo {
+                    name: row.name,
+                    base_type: row.base_type,
+                    default_value: row.default_value,
+                    is_not_null: row.is_not_null,
+                    check_constraints: checks,
+                    collation: row.collation,
+                    comment: row.comment,
+                },
+            );
+        }
+
+        Ok(domains)
     }
 
     /// Fetch all table information using bulk queries (minimal API calls)
@@ -155,7 +653,8 @@ impl<'a> Introspector<'a> {
                     t_type.typname as udt_name,
                     CASE WHEN a.attidentity != '' THEN 'YES' ELSE 'NO' END as is_identity,
                     COALESCE(pk.is_primary, false) as is_primary_key,
-                    false as is_unique -- Simplified, unique handled by indexes usually
+                    false as is_unique,
+                    col_description(t.oid, a.attnum) as comment
                 FROM pg_attribute a
                 JOIN pg_class t ON a.attrelid = t.oid
                 JOIN pg_namespace n ON t.relnamespace = n.oid
@@ -185,7 +684,15 @@ impl<'a> Introspector<'a> {
                         WHEN 'n' THEN 'SET NULL'
                         WHEN 'd' THEN 'SET DEFAULT'
                         ELSE 'NO ACTION'
-                    END as on_delete
+                    END as on_delete,
+                    CASE con.confupdtype
+                        WHEN 'a' THEN 'NO ACTION'
+                        WHEN 'r' THEN 'RESTRICT'
+                        WHEN 'c' THEN 'CASCADE'
+                        WHEN 'n' THEN 'SET NULL'
+                        WHEN 'd' THEN 'SET DEFAULT'
+                        ELSE 'NO ACTION'
+                    END as on_update
                 FROM pg_constraint con
                 JOIN pg_class c ON con.conrelid = c.oid
                 JOIN pg_namespace n ON c.relnamespace = n.oid
@@ -203,23 +710,28 @@ impl<'a> Introspector<'a> {
                     array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum)) as columns,
                     ix.indisunique as is_unique,
                     ix.indisprimary as is_primary,
-                    MAX(con.conname) as owning_constraint
+                    MAX(con.conname) as owning_constraint,
+                    am.amname as index_method,
+                    pg_get_expr(ix.indpred, ix.indrelid) as where_clause,
+                    pg_get_indexdef(i.oid) as index_def
                 FROM pg_class t
                 JOIN pg_index ix ON t.oid = ix.indrelid
                 JOIN pg_class i ON i.oid = ix.indexrelid
+                JOIN pg_am am ON i.relam = am.oid
                 JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
                 JOIN pg_namespace n ON t.relnamespace = n.oid
                 LEFT JOIN pg_constraint con ON con.conindid = i.oid
                 WHERE n.nspname = 'public'
                 AND NOT ix.indisprimary
-                GROUP BY t.relname, i.relname, ix.indisunique, ix.indisprimary
+                GROUP BY t.relname, i.relname, ix.indisunique, ix.indisprimary, am.amname, ix.indpred, ix.indrelid, i.oid
             ),
             trigger_data AS (
                 SELECT
                     c.relname as table_name,
                     t.tgname as trigger_name,
                     t.tgtype::integer as tgtype,
-                    p.proname as function_name
+                    p.proname as function_name,
+                    pg_get_triggerdef(t.oid) as trigger_def
                 FROM pg_trigger t
                 JOIN pg_class c ON c.oid = t.tgrelid
                 JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -245,6 +757,29 @@ impl<'a> Introspector<'a> {
                 FROM pg_class c
                 JOIN pg_namespace n ON n.oid = c.relnamespace
                 WHERE n.nspname = 'public' AND c.relkind = 'r'
+            ),
+            check_data AS (
+                SELECT
+                    c.relname as table_name,
+                    con.conname as name,
+                    pg_get_constraintdef(con.oid) as expression,
+                    array_agg(a.attname ORDER BY a.attnum) as columns
+                FROM pg_constraint con
+                JOIN pg_class c ON con.conrelid = c.oid
+                JOIN pg_namespace n ON c.relnamespace = n.oid
+                LEFT JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(con.conkey)
+                WHERE n.nspname = 'public'
+                AND con.contype = 'c'
+                GROUP BY c.relname, con.conname, con.oid
+            ),
+            table_comments AS (
+                SELECT
+                    c.relname as table_name,
+                    obj_description(c.oid, 'pg_class') as comment
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'public'
+                AND c.relkind = 'r'
             )
             SELECT json_build_object(
                 'tables', (SELECT json_agg(table_name) FROM table_list),
@@ -253,7 +788,9 @@ impl<'a> Introspector<'a> {
                 'indexes', (SELECT json_agg(row_to_json(index_data)) FROM index_data),
                 'triggers', (SELECT json_agg(row_to_json(trigger_data)) FROM trigger_data),
                 'policies', (SELECT json_agg(row_to_json(policy_data)) FROM policy_data),
-                'rls', (SELECT json_agg(row_to_json(rls_data)) FROM rls_data)
+                'rls', (SELECT json_agg(row_to_json(rls_data)) FROM rls_data),
+                'check_constraints', (SELECT json_agg(row_to_json(check_data)) FROM check_data),
+                'table_comments', (SELECT json_agg(row_to_json(table_comments)) FROM table_comments)
             ) as data
         "#;
 
@@ -267,7 +804,8 @@ impl<'a> Introspector<'a> {
             serde_json::from_value(result.result.unwrap_or(serde_json::Value::Array(vec![])))
                 .map_err(|e| e.to_string())?;
 
-        let data = rows.first()
+        let data = rows
+            .first()
             .and_then(|r| r.get("data"))
             .cloned()
             .unwrap_or(serde_json::json!({}));
@@ -276,11 +814,19 @@ impl<'a> Introspector<'a> {
         self.parse_bulk_response(&data)
     }
 
-    fn parse_bulk_response(&self, data: &serde_json::Value) -> Result<HashMap<String, TableInfo>, String> {
+    fn parse_bulk_response(
+        &self,
+        data: &serde_json::Value,
+    ) -> Result<HashMap<String, TableInfo>, String> {
         // Extract table names
-        let table_names: Vec<String> = data.get("tables")
+        let table_names: Vec<String> = data
+            .get("tables")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
 
         // Parse columns
@@ -295,8 +841,10 @@ impl<'a> Introspector<'a> {
             is_identity: String,
             is_primary_key: bool,
             is_unique: bool,
+            comment: Option<String>,
         }
-        let columns: Vec<ColumnRow> = data.get("columns")
+        let columns: Vec<ColumnRow> = data
+            .get("columns")
             .cloned()
             .and_then(|v| serde_json::from_value(v).ok())
             .unwrap_or_default();
@@ -310,8 +858,10 @@ impl<'a> Introspector<'a> {
             foreign_table: String,
             foreign_column: String,
             on_delete: String,
+            on_update: String,
         }
-        let fks: Vec<FkRow> = data.get("foreign_keys")
+        let fks: Vec<FkRow> = data
+            .get("foreign_keys")
             .cloned()
             .and_then(|v| serde_json::from_value(v).ok())
             .unwrap_or_default();
@@ -325,8 +875,12 @@ impl<'a> Introspector<'a> {
             is_unique: bool,
             is_primary: bool,
             owning_constraint: Option<String>,
+            index_method: String,
+            where_clause: Option<String>,
+            index_def: Option<String>,
         }
-        let indexes: Vec<IndexRow> = data.get("indexes")
+        let indexes: Vec<IndexRow> = data
+            .get("indexes")
             .cloned()
             .and_then(|v| serde_json::from_value(v).ok())
             .unwrap_or_default();
@@ -338,8 +892,10 @@ impl<'a> Introspector<'a> {
             trigger_name: String,
             tgtype: i32,
             function_name: String,
+            trigger_def: Option<String>,
         }
-        let triggers: Vec<TriggerRow> = data.get("triggers")
+        let triggers: Vec<TriggerRow> = data
+            .get("triggers")
             .cloned()
             .and_then(|v| serde_json::from_value(v).ok())
             .unwrap_or_default();
@@ -354,7 +910,8 @@ impl<'a> Introspector<'a> {
             qual: Option<String>,
             with_check: Option<String>,
         }
-        let policies: Vec<PolicyRow> = data.get("policies")
+        let policies: Vec<PolicyRow> = data
+            .get("policies")
             .cloned()
             .and_then(|v| serde_json::from_value(v).ok())
             .unwrap_or_default();
@@ -365,7 +922,34 @@ impl<'a> Introspector<'a> {
             table_name: String,
             rls_enabled: bool,
         }
-        let rls_data: Vec<RlsRow> = data.get("rls")
+        let rls_data: Vec<RlsRow> = data
+            .get("rls")
+            .cloned()
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default();
+
+        // Parse check constraints
+        #[derive(Deserialize)]
+        struct CheckRow {
+            table_name: String,
+            name: String,
+            expression: String,
+            columns: serde_json::Value,
+        }
+        let check_data: Vec<CheckRow> = data
+            .get("check_constraints")
+            .cloned()
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default();
+
+        // Parse table comments
+        #[derive(Deserialize)]
+        struct CommentRow {
+            table_name: String,
+            comment: Option<String>,
+        }
+        let comment_data: Vec<CommentRow> = data
+            .get("table_comments")
             .cloned()
             .and_then(|v| serde_json::from_value(v).ok())
             .unwrap_or_default();
@@ -375,15 +959,20 @@ impl<'a> Introspector<'a> {
 
         // Initialize all tables
         for table_name in table_names {
-            tables.insert(table_name.clone(), TableInfo {
-                table_name,
-                columns: HashMap::new(),
-                foreign_keys: vec![],
-                indexes: vec![],
-                triggers: vec![],
-                rls_enabled: false,
-                policies: vec![],
-            });
+            tables.insert(
+                table_name.clone(),
+                TableInfo {
+                    table_name,
+                    columns: HashMap::new(),
+                    foreign_keys: vec![],
+                    indexes: vec![],
+                    triggers: vec![],
+                    rls_enabled: false,
+                    policies: vec![],
+                    check_constraints: vec![],
+                    comment: None,
+                },
+            );
         }
 
         // Populate columns
@@ -391,9 +980,9 @@ impl<'a> Introspector<'a> {
             if let Some(table) = tables.get_mut(&col.table_name) {
                 let mut final_data_type = col.data_type.clone();
                 if final_data_type == "ARRAY" {
-                     if col.udt_name.starts_with('_') {
-                         final_data_type = format!("{}[]", &col.udt_name[1..]);
-                     }
+                    if col.udt_name.starts_with('_') {
+                        final_data_type = format!("{}[]", &col.udt_name[1..]);
+                    }
                 }
 
                 table.columns.insert(
@@ -408,7 +997,8 @@ impl<'a> Introspector<'a> {
                         is_unique: col.is_unique,
                         is_identity: col.is_identity == "YES",
                         enum_name: None,
-                        is_array: col.udt_name.starts_with("_"),
+                        is_array: col.udt_name.starts_with('_'),
+                        comment: col.comment,
                     },
                 );
             }
@@ -423,6 +1013,7 @@ impl<'a> Introspector<'a> {
                     foreign_table: fk.foreign_table,
                     foreign_column: fk.foreign_column,
                     on_delete: fk.on_delete,
+                    on_update: fk.on_update,
                 });
             }
         }
@@ -430,50 +1021,85 @@ impl<'a> Introspector<'a> {
         // Populate indexes
         println!("[DEBUG] Indexes fetched from DB: {}", indexes.len());
         for idx in indexes {
-            println!("[DEBUG] Adding index {} to table {}, columns: {:?}", idx.index_name, idx.table_name, idx.columns);
+            println!(
+                "[DEBUG] Adding index {} to table {}, columns: {:?}",
+                idx.index_name, idx.table_name, idx.columns
+            );
             if let Some(table) = tables.get_mut(&idx.table_name) {
+                // Extract expressions from index_def if present
+                let expressions = idx
+                    .index_def
+                    .as_ref()
+                    .map(|def| extract_index_expressions(def))
+                    .unwrap_or_default();
+
                 table.indexes.push(IndexInfo {
                     index_name: idx.index_name,
                     columns: parse_pg_array(&idx.columns),
                     is_unique: idx.is_unique,
                     is_primary: idx.is_primary,
                     owning_constraint: idx.owning_constraint,
+                    index_method: idx.index_method,
+                    where_clause: idx.where_clause,
+                    expressions,
                 });
             }
         }
 
         // Populate triggers (consolidate by trigger name)
-        // Populate triggers (consolidate by trigger name)
         let mut trigger_map: HashMap<(String, String), TriggerInfo> = HashMap::new();
         for trig in triggers {
             let key = (trig.table_name.clone(), trig.trigger_name.clone());
+
+            // Extract WHEN clause from trigger definition
+            let when_clause = trig
+                .trigger_def
+                .as_ref()
+                .and_then(|def| extract_trigger_when_clause(def));
+
             let entry = trigger_map.entry(key).or_insert_with(|| {
                 // Decode tgtype for timing and orientation (once)
-                let timing = if trig.tgtype & 2 != 0 { "BEFORE" } else { "AFTER" };
-                let orientation = if trig.tgtype & 1 != 0 { "ROW" } else { "STATEMENT" };
-                
+                let timing = if trig.tgtype & 2 != 0 {
+                    "BEFORE"
+                } else if trig.tgtype & 64 != 0 {
+                    "INSTEAD OF"
+                } else {
+                    "AFTER"
+                };
+                let orientation = if trig.tgtype & 1 != 0 {
+                    "ROW"
+                } else {
+                    "STATEMENT"
+                };
+
                 TriggerInfo {
                     name: trig.trigger_name.clone(),
                     events: vec![],
                     timing: timing.to_string(),
                     orientation: orientation.to_string(),
                     function_name: trig.function_name.clone(),
+                    when_clause,
                 }
             });
 
             // Decode tgtype for events (bitmask)
-            if trig.tgtype & 4 != 0 { entry.events.push("INSERT".to_string()); }
-            if trig.tgtype & 8 != 0 { entry.events.push("DELETE".to_string()); }
-            if trig.tgtype & 16 != 0 { entry.events.push("UPDATE".to_string()); }
-            if trig.tgtype & 32 != 0 { entry.events.push("TRUNCATE".to_string()); }
+            if trig.tgtype & 4 != 0 && !entry.events.contains(&"INSERT".to_string()) {
+                entry.events.push("INSERT".to_string());
+            }
+            if trig.tgtype & 8 != 0 && !entry.events.contains(&"DELETE".to_string()) {
+                entry.events.push("DELETE".to_string());
+            }
+            if trig.tgtype & 16 != 0 && !entry.events.contains(&"UPDATE".to_string()) {
+                entry.events.push("UPDATE".to_string());
+            }
+            if trig.tgtype & 32 != 0 && !entry.events.contains(&"TRUNCATE".to_string()) {
+                entry.events.push("TRUNCATE".to_string());
+            }
         }
-        
+
         for ((table_name, _), trigger) in trigger_map {
             if let Some(table) = tables.get_mut(&table_name) {
-                // Deduplicate events just in case (though bits are unique)
-                let mut final_trigger = trigger.clone();
-                final_trigger.events.dedup();
-                table.triggers.push(final_trigger);
+                table.triggers.push(trigger);
             }
         }
 
@@ -497,6 +1123,24 @@ impl<'a> Introspector<'a> {
             }
         }
 
+        // Populate check constraints
+        for check in check_data {
+            if let Some(table) = tables.get_mut(&check.table_name) {
+                table.check_constraints.push(CheckConstraintInfo {
+                    name: check.name,
+                    expression: check.expression,
+                    columns: parse_pg_array(&check.columns),
+                });
+            }
+        }
+
+        // Populate table comments
+        for comment in comment_data {
+            if let Some(table) = tables.get_mut(&comment.table_name) {
+                table.comment = comment.comment;
+            }
+        }
+
         Ok(tables)
     }
 }
@@ -506,7 +1150,7 @@ impl<'a> Introspector<'a> {
 fn parse_pg_array(val: &serde_json::Value) -> Vec<String> {
     if let Some(arr) = val.as_array() {
         arr.iter()
-            .map(|v| v.as_str().unwrap_or("").to_string())
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
             .collect()
     } else if let Some(s) = val.as_str() {
         // Handle "{a,b}" string
@@ -548,20 +1192,108 @@ fn parse_function_args(args_str: &str) -> Vec<FunctionArg> {
     args_str
         .split(',')
         .map(|s| {
-            let parts: Vec<&str> = s.trim().split_whitespace().collect();
-            if parts.len() >= 2 {
-                FunctionArg {
-                    name: parts[0].to_string(),
-                    type_: parts[1..].join(" "),
-                }
+            let trimmed = s.trim();
+            let parts: Vec<&str> = trimmed.splitn(2, ' ').collect();
+
+            // Check for mode keywords
+            let (mode, name_type) = if parts.first().map(|p| p.to_uppercase()).as_deref()
+                == Some("IN")
+                || parts.first().map(|p| p.to_uppercase()).as_deref() == Some("OUT")
+                || parts.first().map(|p| p.to_uppercase()).as_deref() == Some("INOUT")
+                || parts.first().map(|p| p.to_uppercase()).as_deref() == Some("VARIADIC")
+            {
+                (
+                    Some(parts[0].to_uppercase()),
+                    parts.get(1).map(|s| *s).unwrap_or(""),
+                )
             } else {
-                FunctionArg {
-                    name: "".to_string(),
-                    type_: s.trim().to_string(),
-                }
+                (None, trimmed)
+            };
+
+            let name_type_parts: Vec<&str> = name_type.splitn(2, ' ').collect();
+            let (name, type_str) = if name_type_parts.len() >= 2 {
+                (
+                    name_type_parts[0].to_string(),
+                    name_type_parts[1..].join(" "),
+                )
+            } else {
+                (String::new(), name_type.to_string())
+            };
+
+            // Check for DEFAULT
+            let (final_type, default_value) =
+                if let Some(idx) = type_str.to_uppercase().find(" DEFAULT ") {
+                    (
+                        type_str[..idx].to_string(),
+                        Some(type_str[idx + 9..].to_string()),
+                    )
+                } else {
+                    (type_str, None)
+                };
+
+            FunctionArg {
+                name,
+                type_: final_type,
+                mode,
+                default_value,
             }
         })
         .collect()
+}
+
+fn extract_trigger_when_clause(trigger_def: &str) -> Option<String> {
+    // Look for WHEN (...) in the trigger definition
+    let upper = trigger_def.to_uppercase();
+    if let Some(when_idx) = upper.find(" WHEN ") {
+        let after_when = &trigger_def[when_idx + 6..];
+        // Find matching parentheses
+        if let Some(start) = after_when.find('(') {
+            let mut depth = 0;
+            let mut end = None;
+            for (i, c) in after_when[start..].char_indices() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = Some(start + i);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(e) = end {
+                return Some(after_when[start + 1..e].to_string());
+            }
+        }
+    }
+    None
+}
+
+fn extract_index_expressions(index_def: &str) -> Vec<String> {
+    // Extract expressions from index definition like "CREATE INDEX ... ON table ((lower(email)))"
+    // This is a simplified extraction - looks for expressions in double parens or function calls
+    let mut expressions = vec![];
+
+    if let Some(on_idx) = index_def.to_uppercase().find(" ON ") {
+        let after_on = &index_def[on_idx + 4..];
+        if let Some(paren_start) = after_on.find('(') {
+            let in_parens = &after_on[paren_start + 1..];
+            if let Some(paren_end) = in_parens.rfind(')') {
+                let cols_str = &in_parens[..paren_end];
+                // Check for expressions (contain parentheses themselves)
+                for part in cols_str.split(',') {
+                    let trimmed = part.trim();
+                    if trimmed.contains('(') {
+                        expressions.push(trimmed.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    expressions
 }
 
 #[cfg(test)]
@@ -586,20 +1318,23 @@ mod tests {
                     "udt_name": "_text",
                     "is_identity": "NO",
                     "is_primary_key": false,
-                    "is_unique": false
+                    "is_unique": false,
+                    "comment": null
                 }
             ],
             "foreign_keys": [],
             "indexes": [],
             "triggers": [],
             "policies": [],
-            "rls": []
+            "rls": [],
+            "check_constraints": [],
+            "table_comments": []
         });
 
         let result = introspector.parse_bulk_response(&data).unwrap();
         let table = result.get("test_table").unwrap();
         let col = table.columns.get("tags").unwrap();
-        
+
         assert_eq!(col.data_type, "text[]");
     }
 
@@ -617,12 +1352,15 @@ mod tests {
                 {
                     "table_name": "test_table",
                     "trigger_name": "test_trigger",
-                    "tgtype": 21, // 16 (UPDATE) + 4 (INSERT) + 1 (ROW) = 21. No 2 bit => AFTER.
-                    "function_name": "test_func"
+                    "tgtype": 21,
+                    "function_name": "test_func",
+                    "trigger_def": "CREATE TRIGGER test_trigger AFTER INSERT OR UPDATE ON test_table FOR EACH ROW EXECUTE FUNCTION test_func()"
                 }
             ],
             "policies": [],
-            "rls": []
+            "rls": [],
+            "check_constraints": [],
+            "table_comments": []
         });
 
         let result = introspector.parse_bulk_response(&data).unwrap();
@@ -635,5 +1373,57 @@ mod tests {
         assert!(trigger.events.contains(&"UPDATE".to_string()));
         assert!(trigger.events.contains(&"INSERT".to_string()));
         assert_eq!(trigger.function_name, "test_func");
+    }
+
+    #[test]
+    fn test_parse_bulk_response_with_check_constraints() {
+        let api = SupabaseApi::new("token".to_string());
+        let introspector = Introspector::new(&api, "project".to_string());
+
+        let data = json!({
+            "tables": ["users"],
+            "columns": [],
+            "foreign_keys": [],
+            "indexes": [],
+            "triggers": [],
+            "policies": [],
+            "rls": [],
+            "check_constraints": [
+                {
+                    "table_name": "users",
+                    "name": "age_check",
+                    "expression": "CHECK ((age > 0))",
+                    "columns": ["age"]
+                }
+            ],
+            "table_comments": []
+        });
+
+        let result = introspector.parse_bulk_response(&data).unwrap();
+        let table = result.get("users").unwrap();
+        assert_eq!(table.check_constraints.len(), 1);
+        assert_eq!(table.check_constraints[0].name, "age_check");
+    }
+
+    #[test]
+    fn test_extract_trigger_when_clause() {
+        let def = "CREATE TRIGGER my_trigger AFTER UPDATE ON users FOR EACH ROW WHEN (OLD.status IS DISTINCT FROM NEW.status) EXECUTE FUNCTION notify()";
+        let when = extract_trigger_when_clause(def);
+        assert_eq!(
+            when,
+            Some("OLD.status IS DISTINCT FROM NEW.status".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_function_args_with_defaults() {
+        let args = parse_function_args("name text, age integer DEFAULT 0, OUT result text");
+        assert_eq!(args.len(), 3);
+        assert_eq!(args[0].name, "name");
+        assert_eq!(args[0].type_, "text");
+        assert_eq!(args[1].name, "age");
+        assert_eq!(args[1].type_, "integer");
+        assert_eq!(args[1].default_value, Some("0".to_string()));
+        assert_eq!(args[2].mode, Some("OUT".to_string()));
     }
 }
