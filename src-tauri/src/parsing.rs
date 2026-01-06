@@ -1,13 +1,12 @@
 use crate::schema::{
     CheckConstraintInfo, ColumnInfo, CompositeTypeAttribute, CompositeTypeInfo, DbSchema,
     DomainCheckConstraint, DomainInfo, EnumInfo, ExtensionInfo, ForeignKeyInfo, FunctionArg,
-    FunctionInfo, IndexInfo, PolicyInfo, SequenceInfo, TableInfo, TriggerInfo, ViewColumnInfo,
-    ViewInfo,
+    FunctionInfo, IndexInfo, PolicyInfo, RoleInfo, SequenceInfo, TableInfo, TriggerInfo, ViewInfo,
 };
 use sqlparser::ast::{
     AlterTable, AlterTableOperation, ColumnDef, ColumnOption, CreateFunction, CreateFunctionBody,
-    CreateIndex, CreatePolicyCommand, CreateTable, CreateTrigger, DataType, Expr, Ident,
-    ObjectName, OperateFunctionArg, Statement, TableConstraint, TriggerExecBody, Value,
+    CreateIndex, CreatePolicyCommand, CreateRole, CreateTable, CreateTrigger, Expr, OperateFunctionArg,
+    Statement, TableConstraint, TriggerExecBody, Value,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -24,6 +23,7 @@ pub fn parse_schema_sql(sql: &str) -> Result<DbSchema, String> {
     let mut tables = HashMap::new();
     let mut enums = HashMap::new();
     let mut functions = HashMap::new();
+    let mut roles = HashMap::new();
     let mut views = HashMap::new();
     let mut sequences = HashMap::new();
     let mut extensions = HashMap::new();
@@ -191,8 +191,12 @@ pub fn parse_schema_sql(sql: &str) -> Result<DbSchema, String> {
                         "".to_string()
                     };
 
+                // Generate signature key: "name"(arg1, arg2)
+                let arg_types: Vec<String> = fn_args.iter().map(|a| a.type_.clone()).collect();
+                let signature = format!("\"{}\"({})", fn_name, arg_types.join(", "));
+
                 functions.insert(
-                    fn_name.clone(),
+                    signature,
                     FunctionInfo {
                         name: fn_name,
                         args: fn_args,
@@ -204,6 +208,50 @@ pub fn parse_schema_sql(sql: &str) -> Result<DbSchema, String> {
                         security_definer: false,
                     },
                 );
+            }
+            Statement::CreateRole(CreateRole {
+                names,
+                login,
+                inherit,
+                superuser,
+                create_db,
+                create_role,
+                replication,
+                bypassrls,
+                connection_limit,
+                password,
+                valid_until,
+                ..
+            }) => {
+                for name in names {
+                    let role_name = name.to_string();
+                    let pwd = match &password {
+                        Some(sqlparser::ast::Password::Password(p)) => Some(p.to_string()),
+                        Some(sqlparser::ast::Password::NullPassword) => None,
+                        None => None,
+                    };
+                    let valid = valid_until.as_ref().map(|v| v.to_string());
+                    let conn_limit = connection_limit.as_ref()
+                        .map(|c| c.to_string().parse::<i32>().unwrap_or(-1))
+                        .unwrap_or(-1);
+
+                    roles.insert(
+                        role_name.clone(),
+                        RoleInfo {
+                            name: role_name,
+                            superuser: superuser.unwrap_or(false),
+                            create_db: create_db.unwrap_or(false),
+                            create_role: create_role.unwrap_or(false),
+                            inherit: inherit.unwrap_or(true), // Default is usually INHERIT
+                            login: login.unwrap_or(false),
+                            replication: replication.unwrap_or(false),
+                            bypass_rls: bypassrls.unwrap_or(false),
+                            connection_limit: conn_limit,
+                            valid_until: valid,
+                            password: pwd,
+                        },
+                    );
+                }
             }
             Statement::CreateTrigger(CreateTrigger {
                 name,
@@ -431,22 +479,22 @@ pub fn parse_schema_sql(sql: &str) -> Result<DbSchema, String> {
                     });
                 }
             }
-            Statement::CreateView {
+            Statement::CreateView(sqlparser::ast::CreateView {
                 name,
                 query,
                 materialized,
                 options,
-                with_no_schema_binding,
                 ..
-            } => {
+            }) => {
                 let view_name = normalize_table_name(&name.to_string());
                 let definition = query.to_string();
 
-                let with_options: Vec<String> = options
-                    .options
-                    .iter()
-                    .map(|o| format!("{}={}", o.name, o.value))
-                    .collect();
+                let with_options: Vec<String> = match options {
+                    sqlparser::ast::CreateTableOptions::Options(opts) => {
+                        opts.iter().map(|o| o.to_string()).collect()
+                    }
+                    _ => vec![],
+                };
 
                 views.insert(
                     view_name.clone(),
@@ -479,28 +527,25 @@ pub fn parse_schema_sql(sql: &str) -> Result<DbSchema, String> {
                 let mut increment: i64 = 1;
                 let mut cycle = false;
                 let mut cache_size: i64 = 1;
-                let mut owned_by: Option<String> = None;
+                let owned_by: Option<String> = None;
 
-                for opt in sequence_options.unwrap_or_default() {
+                for opt in sequence_options {
                     match opt {
                         sqlparser::ast::SequenceOptions::StartWith(v, _) => {
-                            start_value = v.value.parse().unwrap_or(1);
+                            start_value = v.to_string().parse().unwrap_or(1);
                         }
                         sqlparser::ast::SequenceOptions::MinValue(Some(v)) => {
-                            min_value = v.value.parse().unwrap_or(1);
+                            min_value = v.to_string().parse().unwrap_or(1);
                         }
                         sqlparser::ast::SequenceOptions::MaxValue(Some(v)) => {
-                            max_value = v.value.parse().unwrap_or(i64::MAX);
+                            max_value = v.to_string().parse().unwrap_or(i64::MAX);
                         }
                         sqlparser::ast::SequenceOptions::IncrementBy(v, _) => {
-                            increment = v.value.parse().unwrap_or(1);
+                            increment = v.to_string().parse().unwrap_or(1);
                         }
                         sqlparser::ast::SequenceOptions::Cycle(c) => cycle = c,
                         sqlparser::ast::SequenceOptions::Cache(v) => {
-                            cache_size = v.value.parse().unwrap_or(1);
-                        }
-                        sqlparser::ast::SequenceOptions::OwnedBy(obj) => {
-                            owned_by = Some(obj.to_string());
+                            cache_size = v.to_string().parse().unwrap_or(1);
                         }
                         _ => {}
                     }
@@ -522,12 +567,12 @@ pub fn parse_schema_sql(sql: &str) -> Result<DbSchema, String> {
                     },
                 );
             }
-            Statement::CreateExtension {
+            Statement::CreateExtension(sqlparser::ast::CreateExtension {
                 name,
                 schema,
                 version,
                 ..
-            } => {
+            }) => {
                 let ext_name = name.value.clone();
                 extensions.insert(
                     ext_name.clone(),
@@ -538,13 +583,13 @@ pub fn parse_schema_sql(sql: &str) -> Result<DbSchema, String> {
                     },
                 );
             }
-            Statement::CreateDomain {
+            Statement::CreateDomain(sqlparser::ast::CreateDomain {
                 name,
                 data_type,
                 default,
                 constraints,
                 collation,
-            } => {
+            }) => {
                 let domain_name = name.to_string();
                 let base_type = data_type.to_string().to_lowercase();
                 let default_value = default.map(|d| d.to_string());
@@ -554,13 +599,14 @@ pub fn parse_schema_sql(sql: &str) -> Result<DbSchema, String> {
 
                 for constraint in constraints {
                     match constraint {
-                        sqlparser::ast::DomainConstraint::NotNull => is_not_null = true,
-                        sqlparser::ast::DomainConstraint::Check(expr, name) => {
+                        TableConstraint::Check(chk) => {
                             check_constraints.push(DomainCheckConstraint {
-                                name: name.map(|n| n.value),
-                                expression: format!("CHECK ({})", expr),
+                                name: chk.name.as_ref().map(|n| n.value.clone()),
+                                expression: format!("CHECK ({})", chk.expr),
                             });
                         }
+                        // Handle NOT NULL constraint if encoded as a table constraint
+                        _ => {}
                     }
                 }
 
@@ -605,11 +651,6 @@ pub fn parse_schema_sql(sql: &str) -> Result<DbSchema, String> {
                             }
                         }
                     }
-                    sqlparser::ast::CommentObject::View => {
-                        if let Some(view) = views.get_mut(&normalized_name) {
-                            view.comment = comment;
-                        }
-                    }
                     _ => {}
                 }
             }
@@ -621,6 +662,7 @@ pub fn parse_schema_sql(sql: &str) -> Result<DbSchema, String> {
         tables,
         enums,
         functions,
+        roles,
         views,
         sequences,
         extensions,
@@ -652,13 +694,23 @@ fn parse_columns(
         let mut is_unique = false;
         let mut column_default = None;
         let mut is_identity = false;
+        let mut identity_generation = None;
+        let mut collation = None;
 
         for option in &col.options {
             match &option.option {
                 ColumnOption::NotNull => is_nullable = false,
                 ColumnOption::Unique { .. } => is_unique = true,
                 ColumnOption::Default(expr) => column_default = Some(expr.to_string()),
-                ColumnOption::Generated { .. } => is_identity = true,
+                ColumnOption::Generated { generated_as, .. } => {
+                     is_identity = true;
+                     identity_generation = match generated_as {
+                         sqlparser::ast::GeneratedAs::Always => Some("ALWAYS".to_string()),
+                         sqlparser::ast::GeneratedAs::ByDefault => Some("BY DEFAULT".to_string()),
+                         _ => Some("BY DEFAULT".to_string()),
+                     };
+                }
+                ColumnOption::Collation(c) => collation = Some(c.to_string()),
                 ColumnOption::Check(check_expr) => {
                     let constraint_name = option
                         .name
@@ -725,6 +777,8 @@ fn parse_columns(
                 is_primary_key,
                 is_unique,
                 is_identity,
+                identity_generation,
+                collation,
                 enum_name: None,
                 is_array: false,
                 comment: None,
@@ -960,5 +1014,57 @@ ALTER TABLE users ADD CONSTRAINT unique_username UNIQUE (username);
             .iter()
             .any(|i| i.index_name == "unique_username"
                 && i.owning_constraint.as_deref() == Some("unique_username")));
+    }
+
+    #[test]
+    fn test_parse_identity_and_collation() {
+        let sql = r#"
+CREATE TABLE items (
+    id integer GENERATED ALWAYS AS IDENTITY,
+    code text COLLATE "C"
+);
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let table = schema.tables.get("items").expect("Table not found");
+
+        let id_col = table.columns.get("id").expect("id column not found");
+        assert!(id_col.is_identity);
+        assert_eq!(id_col.identity_generation, Some("ALWAYS".to_string()));
+
+        let code_col = table.columns.get("code").expect("code column not found");
+        assert_eq!(code_col.collation, Some("C".to_string()));
+    }
+
+    #[test]
+    fn test_parse_function_overloading() {
+        let sql = r#"
+CREATE FUNCTION add(a integer, b integer) RETURNS integer LANGUAGE sql AS 'SELECT a + b';
+CREATE FUNCTION add(a float, b float) RETURNS float LANGUAGE sql AS 'SELECT a + b';
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+
+        assert_eq!(schema.functions.len(), 2);
+        assert!(schema.functions.contains_key("\"add\"(integer, integer)"));
+        assert!(schema.functions.contains_key("\"add\"(float, float)"));
+    }
+
+    #[test]
+    fn test_parse_roles() {
+        let sql = r#"
+CREATE ROLE "Test" WITH LOGIN SUPERUSER PASSWORD 'secret';
+CREATE ROLE "readonly";
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+
+        assert!(schema.roles.contains_key("Test"));
+        let test_role = schema.roles.get("Test").unwrap();
+        assert!(test_role.login);
+        assert!(test_role.superuser);
+        assert_eq!(test_role.password, Some("secret".to_string()));
+
+        assert!(schema.roles.contains_key("readonly"));
+        let readonly_role = schema.roles.get("readonly").unwrap();
+        assert!(!readonly_role.superuser);
+        assert!(!readonly_role.login);
     }
 }

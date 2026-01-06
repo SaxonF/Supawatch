@@ -1,7 +1,7 @@
 use crate::schema::{
     CheckConstraintInfo, ColumnInfo, CompositeTypeAttribute, CompositeTypeInfo, DbSchema,
     DomainCheckConstraint, DomainInfo, EnumInfo, ExtensionInfo, ForeignKeyInfo, FunctionArg,
-    FunctionInfo, IndexInfo, PolicyInfo, SequenceInfo, TableInfo, TriggerInfo, ViewColumnInfo,
+    FunctionInfo, IndexInfo, PolicyInfo, RoleInfo, SequenceInfo, TableInfo, TriggerInfo, ViewColumnInfo,
     ViewInfo,
 };
 use crate::supabase_api::SupabaseApi;
@@ -27,10 +27,11 @@ impl<'a> Introspector<'a> {
         // Run all bulk queries in parallel for maximum efficiency
         println!("[DEBUG introspect] Running bulk queries...");
 
-        let (enums, functions, tables_data, views, sequences, extensions, composite_types, domains) =
+        let (enums, functions, roles, tables_data, views, sequences, extensions, composite_types, domains) =
             tokio::try_join!(
                 self.get_enums(),
                 self.get_functions(),
+                self.get_roles(),
                 self.get_all_tables_bulk(),
                 self.get_views(),
                 self.get_sequences(),
@@ -69,6 +70,7 @@ impl<'a> Introspector<'a> {
             tables: tables_data,
             enums,
             functions,
+            roles,
             views,
             sequences,
             extensions,
@@ -163,11 +165,15 @@ impl<'a> Introspector<'a> {
 
         let mut functions = HashMap::new();
         for row in rows {
+            let args = parse_function_args(&row.args);
+            let arg_types: Vec<String> = args.iter().map(|a| a.type_.clone()).collect();
+            let signature = format!("\"{}\"({})", row.name, arg_types.join(", "));
+
             functions.insert(
-                row.name.clone(),
+                signature,
                 FunctionInfo {
                     name: row.name,
-                    args: parse_function_args(&row.args),
+                    args,
                     return_type: row.return_type,
                     language: row.language,
                     definition: row.definition,
@@ -651,7 +657,13 @@ impl<'a> Introspector<'a> {
                     CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END as is_nullable,
                     pg_get_expr(d.adbin, d.adrelid) as column_default,
                     t_type.typname as udt_name,
+                    CASE a.attidentity
+                        WHEN 'a' THEN 'ALWAYS'
+                        WHEN 'd' THEN 'BY DEFAULT'
+                        ELSE NULL
+                    END as identity_generation,
                     CASE WHEN a.attidentity != '' THEN 'YES' ELSE 'NO' END as is_identity,
+                    coll.collname as collation,
                     COALESCE(pk.is_primary, false) as is_primary_key,
                     false as is_unique,
                     col_description(t.oid, a.attnum) as comment
@@ -660,6 +672,7 @@ impl<'a> Introspector<'a> {
                 JOIN pg_namespace n ON t.relnamespace = n.oid
                 JOIN pg_type t_type ON a.atttypid = t_type.oid
                 LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+                LEFT JOIN pg_collation coll ON coll.oid = a.attcollation AND coll.collname != 'default'
                 LEFT JOIN (
                     SELECT c.conrelid, unnest(c.conkey) as attnum, true as is_primary
                     FROM pg_constraint c
@@ -814,6 +827,73 @@ impl<'a> Introspector<'a> {
         self.parse_bulk_response(&data)
     }
 
+    async fn get_roles(&self) -> Result<HashMap<String, RoleInfo>, String> {
+        // Query to get roles, filtering out system roles
+        let query = r#"
+            SELECT
+                rolname as name,
+                rolsuper as superuser,
+                rolcreatedb as create_db,
+                rolcreaterole as create_role,
+                rolinherit as inherit,
+                rolcanlogin as login,
+                rolreplication as replication,
+                rolbypassrls as bypass_rls,
+                rolconnlimit as connection_limit,
+                rolvaliduntil::text as valid_until
+            FROM pg_roles
+            WHERE rolname NOT LIKE 'pg_%'
+              AND rolname NOT LIKE 'supabase%'
+              AND rolname NOT IN ('postgres', 'authenticator', 'anon', 'service_role', 'dashboard_user', 'pgbouncer')
+        "#;
+
+        #[derive(Deserialize)]
+        struct RoleRow {
+            name: String,
+            superuser: bool,
+            create_db: bool,
+            create_role: bool,
+            inherit: bool,
+            login: bool,
+            replication: bool,
+            bypass_rls: bool,
+            connection_limit: i32,
+            valid_until: Option<String>,
+        }
+
+        let result = self
+            .api
+            .run_query(&self.project_ref, query, true)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let rows: Vec<RoleRow> =
+            serde_json::from_value(result.result.unwrap_or(serde_json::Value::Array(vec![])))
+                .map_err(|e| e.to_string())?;
+
+        let mut roles = HashMap::new();
+        for row in rows {
+            roles.insert(
+                row.name.clone(),
+                RoleInfo {
+                    name: row.name,
+                    superuser: row.superuser,
+                    create_db: row.create_db,
+                    create_role: row.create_role,
+                    inherit: row.inherit,
+                    login: row.login,
+                    replication: row.replication,
+                    bypass_rls: row.bypass_rls,
+                    connection_limit: row.connection_limit,
+                    valid_until: row.valid_until,
+                    password: None, // We don't fetch passwords for security
+                },
+            );
+        }
+
+        Ok(roles)
+    }
+
     fn parse_bulk_response(
         &self,
         data: &serde_json::Value,
@@ -839,6 +919,8 @@ impl<'a> Introspector<'a> {
             column_default: Option<String>,
             udt_name: String,
             is_identity: String,
+            identity_generation: Option<String>,
+            collation: Option<String>,
             is_primary_key: bool,
             is_unique: bool,
             comment: Option<String>,
@@ -996,6 +1078,8 @@ impl<'a> Introspector<'a> {
                         is_primary_key: col.is_primary_key,
                         is_unique: col.is_unique,
                         is_identity: col.is_identity == "YES",
+                        identity_generation: col.identity_generation,
+                        collation: col.collation,
                         enum_name: None,
                         is_array: col.udt_name.starts_with('_'),
                         comment: col.comment,

@@ -1,6 +1,6 @@
 use crate::schema::{
     CheckConstraintInfo, CompositeTypeInfo, DbSchema, DomainInfo, EnumInfo, ExtensionInfo,
-    ForeignKeyInfo, FunctionInfo, IndexInfo, PolicyInfo, SequenceInfo, TableInfo, TriggerInfo,
+    ForeignKeyInfo, FunctionInfo, IndexInfo, PolicyInfo, RoleInfo, SequenceInfo, TableInfo, TriggerInfo,
     ViewInfo,
 };
 use std::collections::HashMap;
@@ -27,6 +27,9 @@ pub struct SchemaDiff {
     pub composite_types_to_drop: Vec<String>,
     pub domains_to_create: Vec<DomainInfo>,
     pub domains_to_drop: Vec<String>,
+    pub roles_to_create: Vec<RoleInfo>,
+    pub roles_to_drop: Vec<String>,
+    pub roles_to_update: Vec<RoleInfo>,
 }
 
 #[derive(Debug)]
@@ -59,6 +62,8 @@ pub struct ColumnChangeDetail {
     pub type_change: Option<(String, String)>,
     pub nullable_change: Option<(bool, bool)>,
     pub default_change: Option<(Option<String>, Option<String>)>,
+    pub identity_change: Option<(Option<String>, Option<String>)>,
+    pub collation_change: Option<(Option<String>, Option<String>)>,
     pub comment_change: Option<(Option<String>, Option<String>)>,
 }
 
@@ -98,7 +103,27 @@ pub fn compute_diff(remote: &DbSchema, local: &DbSchema) -> SchemaDiff {
         composite_types_to_drop: vec![],
         domains_to_create: vec![],
         domains_to_drop: vec![],
+        roles_to_create: vec![],
+        roles_to_drop: vec![],
+        roles_to_update: vec![],
     };
+
+    // 0. Roles (Global objects, handle first)
+    for (name, local_role) in &local.roles {
+        if let Some(remote_role) = remote.roles.get(name) {
+            if local_role != remote_role {
+                diff.roles_to_update.push(local_role.clone());
+            }
+        } else {
+            diff.roles_to_create.push(local_role.clone());
+        }
+    }
+
+    for (name, _) in &remote.roles {
+        if !local.roles.contains_key(name) {
+            diff.roles_to_drop.push(name.clone());
+        }
+    }
 
     // 1. Tables
     for (name, _) in &local.tables {
@@ -323,6 +348,8 @@ fn compute_table_diff(remote: &TableInfo, local: &TableInfo) -> TableDiff {
                 type_change: None,
                 nullable_change: None,
                 default_change: None,
+                identity_change: None,
+                collation_change: None,
                 comment_change: None,
             };
 
@@ -345,6 +372,22 @@ fn compute_table_diff(remote: &TableInfo, local: &TableInfo) -> TableDiff {
                 ));
             }
 
+            // Identity Generation
+            if local_col.identity_generation != remote_col.identity_generation {
+                changes.identity_change = Some((
+                    remote_col.identity_generation.clone(),
+                    local_col.identity_generation.clone(),
+                ));
+            }
+
+            // Collation
+            if local_col.collation != remote_col.collation {
+                changes.collation_change = Some((
+                    remote_col.collation.clone(),
+                    local_col.collation.clone(),
+                ));
+            }
+
             // Comment
             if local_col.comment != remote_col.comment {
                 changes.comment_change =
@@ -354,6 +397,8 @@ fn compute_table_diff(remote: &TableInfo, local: &TableInfo) -> TableDiff {
             if changes.type_change.is_some()
                 || changes.nullable_change.is_some()
                 || changes.default_change.is_some()
+                || changes.identity_change.is_some()
+                || changes.collation_change.is_some()
                 || changes.comment_change.is_some()
             {
                 diff.columns_to_modify.push(ColumnModification {

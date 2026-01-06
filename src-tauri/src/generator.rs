@@ -1,7 +1,7 @@
 use crate::diff::{EnumChange, EnumChangeType, SchemaDiff, TableDiff};
 use crate::schema::{
     CheckConstraintInfo, CompositeTypeInfo, DbSchema, DomainInfo, ExtensionInfo, ForeignKeyInfo,
-    FunctionInfo, IndexInfo, PolicyInfo, SequenceInfo, TableInfo, TriggerInfo, ViewInfo,
+    FunctionInfo, IndexInfo, PolicyInfo, RoleInfo, SequenceInfo, TableInfo, TriggerInfo, ViewInfo,
 };
 
 pub fn generate_sql(diff: &SchemaDiff, local_schema: &DbSchema) -> String {
@@ -17,6 +17,25 @@ pub fn generate_sql(diff: &SchemaDiff, local_schema: &DbSchema) -> String {
     // 7. Functions
     // 8. Triggers, Policies, etc.
     // 9. Foreign keys (deferred to end)
+
+    // ====================
+    // 0. ROLES (Global objects)
+    // ====================
+
+    // Drop roles
+    for name in &diff.roles_to_drop {
+        statements.push(format!("DROP ROLE IF EXISTS \"{}\";", name));
+    }
+
+    // Create roles
+    for role in &diff.roles_to_create {
+        statements.push(generate_create_role(role));
+    }
+
+    // Update roles
+    for role in &diff.roles_to_update {
+        statements.push(generate_alter_role(role));
+    }
 
     // ====================
     // 1. EXTENSIONS
@@ -45,7 +64,7 @@ pub fn generate_sql(diff: &SchemaDiff, local_schema: &DbSchema) -> String {
 
     // Drop functions
     for name in &diff.functions_to_drop {
-        statements.push(format!("DROP FUNCTION IF EXISTS \"{}\" CASCADE;", name));
+        statements.push(format!("DROP FUNCTION IF EXISTS {} CASCADE;", name));
     }
 
     // Drop sequences
@@ -452,12 +471,20 @@ fn generate_create_table(table: &TableInfo) -> String {
     for col in &columns {
         let mut col_sql = format!("\"{}\" {}", col.column_name, col.data_type);
 
+        if let Some(collation) = &col.collation {
+            col_sql.push_str(&format!(" COLLATE \"{}\"", collation));
+        }
+
         if !col.is_nullable && !col.is_primary_key {
             col_sql.push_str(" NOT NULL");
         }
 
         if let Some(def) = &col.column_default {
             col_sql.push_str(&format!(" DEFAULT {}", def));
+        }
+
+        if let Some(identity) = &col.identity_generation {
+            col_sql.push_str(&format!(" GENERATED {} AS IDENTITY", identity));
         }
 
         col_defs.push(col_sql);
@@ -732,13 +759,29 @@ fn generate_alter_table(
     for mod_col in &diff.columns_to_modify {
         let col_name = &mod_col.column_name;
 
+        // Type Change
         if let Some((_, new_type)) = &mod_col.changes.type_change {
-            statements.push(format!(
-                "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" TYPE {} USING \"{}\"::{};",
+            let mut alter_sql = format!(
+                "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" TYPE {} USING \"{}\"::{}",
                 table_name, col_name, new_type, col_name, new_type
-            ));
+            );
+            // If collation changed, apply it with TYPE change
+            if let Some((_, Some(new_collation))) = &mod_col.changes.collation_change {
+                alter_sql.push_str(&format!(" COLLATE \"{}\"", new_collation));
+            }
+            alter_sql.push(';');
+            statements.push(alter_sql);
+        } else if let Some((_, Some(new_collation))) = &mod_col.changes.collation_change {
+             // Collation changed but Type didn't. Must use SET DATA TYPE ... COLLATE
+             if let Some(col) = local_table.columns.get(col_name) {
+                 statements.push(format!(
+                    "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" SET DATA TYPE {} COLLATE \"{}\";",
+                    table_name, col_name, col.data_type, new_collation
+                ));
+             }
         }
 
+        // Nullability
         if let Some((_, to_nullable)) = mod_col.changes.nullable_change {
             if to_nullable {
                 statements.push(format!(
@@ -753,6 +796,7 @@ fn generate_alter_table(
             }
         }
 
+        // Default
         if let Some((_, new_default)) = &mod_col.changes.default_change {
             if let Some(def) = new_default {
                 statements.push(format!(
@@ -764,6 +808,31 @@ fn generate_alter_table(
                     "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" DROP DEFAULT;",
                     table_name, col_name
                 ));
+            }
+        }
+
+        // Identity
+        if let Some((old_identity, new_identity)) = &mod_col.changes.identity_change {
+            match (old_identity, new_identity) {
+                (Some(_), None) => {
+                    statements.push(format!(
+                        "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" DROP IDENTITY;",
+                        table_name, col_name
+                    ));
+                }
+                (None, Some(new_id)) => {
+                    statements.push(format!(
+                        "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" ADD GENERATED {} AS IDENTITY;",
+                        table_name, col_name, new_id
+                    ));
+                }
+                (Some(_), Some(new_id)) => {
+                     statements.push(format!(
+                        "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" SET GENERATED {};",
+                        table_name, col_name, new_id
+                    ));
+                }
+                (None, None) => {}
             }
         }
     }
@@ -824,6 +893,81 @@ fn generate_alter_table(
 
 fn escape_string(s: &str) -> String {
     s.replace('\'', "''")
+}
+
+fn generate_create_role(role: &RoleInfo) -> String {
+    let mut sql = format!("CREATE ROLE \"{}\"", role.name);
+
+    let mut options = Vec::new();
+
+    if role.superuser { options.push("SUPERUSER"); } else { options.push("NOSUPERUSER"); }
+    if role.create_db { options.push("CREATEDB"); } else { options.push("NOCREATEDB"); }
+    if role.create_role { options.push("CREATEROLE"); } else { options.push("NOCREATEROLE"); }
+    if role.inherit { options.push("INHERIT"); } else { options.push("NOINHERIT"); }
+    if role.login { options.push("LOGIN"); } else { options.push("NOLOGIN"); }
+    if role.replication { options.push("REPLICATION"); } else { options.push("NOREPLICATION"); }
+    if role.bypass_rls { options.push("BYPASSRLS"); } else { options.push("NOBYPASSRLS"); }
+
+    if role.connection_limit != -1 {
+         options.push("CONNECTION LIMIT");
+    }
+
+    let mut option_str = options.join(" ");
+
+    if role.connection_limit != -1 {
+         option_str = option_str.replace("CONNECTION LIMIT", &format!("CONNECTION LIMIT {}", role.connection_limit));
+    }
+
+    if let Some(valid) = &role.valid_until {
+        option_str.push_str(&format!(" VALID UNTIL '{}'", valid));
+    }
+
+    if let Some(pwd) = &role.password {
+         option_str.push_str(&format!(" PASSWORD '{}'", pwd));
+    }
+
+    if !option_str.is_empty() {
+        sql.push_str(" WITH ");
+        sql.push_str(&option_str);
+    }
+
+    sql.push(';');
+    sql
+}
+
+fn generate_alter_role(role: &RoleInfo) -> String {
+    let mut sql = format!("ALTER ROLE \"{}\"", role.name);
+    let mut options = Vec::new();
+
+    if role.superuser { options.push("SUPERUSER"); } else { options.push("NOSUPERUSER"); }
+    if role.create_db { options.push("CREATEDB"); } else { options.push("NOCREATEDB"); }
+    if role.create_role { options.push("CREATEROLE"); } else { options.push("NOCREATEROLE"); }
+    if role.inherit { options.push("INHERIT"); } else { options.push("NOINHERIT"); }
+    if role.login { options.push("LOGIN"); } else { options.push("NOLOGIN"); }
+    if role.replication { options.push("REPLICATION"); } else { options.push("NOREPLICATION"); }
+    if role.bypass_rls { options.push("BYPASSRLS"); } else { options.push("NOBYPASSRLS"); }
+
+    let mut option_str = options.join(" ");
+
+     if role.connection_limit != -1 {
+         option_str.push_str(&format!(" CONNECTION LIMIT {}", role.connection_limit));
+    }
+
+    if let Some(valid) = &role.valid_until {
+        option_str.push_str(&format!(" VALID UNTIL '{}'", valid));
+    }
+
+     if let Some(pwd) = &role.password {
+         option_str.push_str(&format!(" PASSWORD '{}'", pwd));
+    }
+
+    if !option_str.is_empty() {
+        sql.push_str(" WITH ");
+        sql.push_str(&option_str);
+    }
+
+    sql.push(';');
+    sql
 }
 
 #[cfg(test)]

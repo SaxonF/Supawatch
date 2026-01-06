@@ -1,11 +1,27 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RoleInfo {
+    pub name: String,
+    pub superuser: bool,
+    pub create_db: bool,
+    pub create_role: bool,
+    pub inherit: bool,
+    pub login: bool,
+    pub replication: bool,
+    pub bypass_rls: bool,
+    pub connection_limit: i32,
+    pub valid_until: Option<String>,
+    pub password: Option<String>, // Usually encrypted or null/hidden
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DbSchema {
     pub tables: HashMap<String, TableInfo>,
     pub enums: HashMap<String, EnumInfo>,
-    pub functions: HashMap<String, FunctionInfo>,
+    pub functions: HashMap<String, FunctionInfo>, // Key is signature "name(arg1, arg2)"
+    pub roles: HashMap<String, RoleInfo>,
     // New entities
     pub views: HashMap<String, ViewInfo>,
     pub sequences: HashMap<String, SequenceInfo>,
@@ -37,6 +53,8 @@ pub struct ColumnInfo {
     pub is_primary_key: bool,
     pub is_unique: bool,
     pub is_identity: bool,
+    pub identity_generation: Option<String>, // ALWAYS or BY DEFAULT
+    pub collation: Option<String>,
     pub enum_name: Option<String>,
     pub is_array: bool,
     pub comment: Option<String>,
@@ -197,6 +215,7 @@ impl DbSchema {
             tables: HashMap::new(),
             enums: HashMap::new(),
             functions: HashMap::new(),
+            roles: HashMap::new(),
             views: HashMap::new(),
             sequences: HashMap::new(),
             extensions: HashMap::new(),
