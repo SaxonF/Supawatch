@@ -50,6 +50,41 @@ export function ProjectItem({ project, onUpdate, onDelete }: ProjectItemProps) {
     }
   };
 
+  const handlePush = async () => {
+    setIsLoading(true);
+    try {
+      const result = await api.pushProject(project.id);
+      if (result === "No changes") {
+        alert("No schema changes detected");
+      } else {
+        alert("Schema changes pushed successfully");
+      }
+    } catch (err) {
+      const errorMsg = String(err);
+      if (errorMsg.startsWith("CONFIRMATION_NEEDED:")) {
+        const summary = errorMsg.replace("CONFIRMATION_NEEDED:", "");
+        if (
+          confirm(
+            `Destructive changes detected!\n${summary}\n\nAre you sure you want to proceed? This cannot be undone.`
+          )
+        ) {
+          try {
+            await api.pushProject(project.id, true);
+            alert("Schema changes pushed successfully");
+          } catch (retryErr) {
+            console.error("Failed to push project (forced):", retryErr);
+            alert("Failed to push project: " + String(retryErr));
+          }
+        }
+      } else {
+        console.error("Failed to push project:", err);
+        alert("Failed to push project: " + String(err));
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleDelete = async () => {
     if (!confirm(`Delete project "${project.name}"?`)) return;
     try {
@@ -95,6 +130,14 @@ export function ProjectItem({ project, onUpdate, onDelete }: ProjectItemProps) {
           title="Pull from remote (overwrites local)"
         >
           Pull
+        </button>
+        <button
+          className="action-btn push"
+          onClick={handlePush}
+          disabled={isLoading}
+          title="Push local schema to remote"
+        >
+          Push
         </button>
         <button
           className="action-btn delete"

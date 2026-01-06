@@ -3,6 +3,7 @@
   flex-direction: column;
   flex: 1;
   overflow: hidden;
+  height: 100%;
 }
 
 .logs-header {
@@ -10,61 +11,80 @@
   align-items: center;
   justify-content: space-between;
   margin-bottom: 12px;
+  gap: 12px;
 }
 
-.logs-title {
-  font-size: 14px;
-  font-weight: 500;
+.project-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.project-selector label {
+  font-size: 13px;
   color: rgba(255, 255, 255, 0.7);
 }
 
-.clear-btn {
-  padding: 4px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+.project-selector select {
+  padding: 6px 10px;
   border-radius: 4px;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.5);
-  font-size: 11px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 13px;
+  outline: none;
+  min-width: 150px;
+}
+
+.project-selector select:focus {
+  border-color: rgba(62, 207, 142, 0.5);
+}
+
+.refresh-btn {
+  padding: 6px 12px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 12px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
-.clear-btn:hover {
-  border-color: rgba(255, 255, 255, 0.2);
-  color: rgba(255, 255, 255, 0.8);
+.refresh-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
 }
 
 .logs-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   overflow-y: auto;
   flex: 1;
+  padding-bottom: 20px;
 }
 
 .log-entry {
   display: flex;
   gap: 10px;
-  padding: 10px;
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 6px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 4px;
   border-left: 2px solid transparent;
 }
 
-.log-entry.info {
-  border-left-color: rgba(255, 255, 255, 0.3);
+.log-entry.postgres {
+  border-left-color: #3ecf8e;
 }
 
-.log-entry.success {
-  border-left-color: #34c759;
-}
-
-.log-entry.warning {
-  border-left-color: #ff9500;
+.log-entry.function {
+  border-left-color: #a855f7;
 }
 
 .log-entry.error {
   border-left-color: #ff3b30;
+  background: rgba(255, 59, 48, 0.05);
 }
 
 .log-icon {
@@ -73,18 +93,7 @@
   text-align: center;
   flex-shrink: 0;
   line-height: 18px;
-}
-
-.log-entry.info .log-icon {
-  color: rgba(255, 255, 255, 0.5);
-}
-
-.log-entry.success .log-icon {
-  color: #34c759;
-}
-
-.log-entry.warning .log-icon {
-  color: #ff9500;
+  color: rgba(255, 255, 255, 0.3);
 }
 
 .log-entry.error .log-icon {
@@ -100,18 +109,25 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 2px;
+  margin-bottom: 4px;
 }
 
 .log-source {
   font-size: 10px;
-  font-weight: 500;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: rgba(255, 255, 255, 0.4);
+  color: rgba(255, 255, 255, 0.5);
   background: rgba(255, 255, 255, 0.05);
-  padding: 2px 6px;
-  border-radius: 3px;
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+
+.log-entry.postgres .log-source {
+  color: #3ecf8e;
+}
+
+.log-entry.function .log-source {
+  color: #a855f7;
 }
 
 .log-time {
@@ -120,31 +136,58 @@
   font-family: monospace;
 }
 
+.log-status {
+  font-size: 10px;
+  font-weight: bold;
+  padding: 1px 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.log-status.s-200,
+.log-status.s-201 {
+  background: rgba(52, 199, 89, 0.2);
+  color: #34c759;
+}
+
+.log-status.s-400,
+.log-status.s-404,
+.log-status.s-500 {
+  background: rgba(255, 59, 48, 0.2);
+  color: #ff3b30;
+}
+
 .log-message {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.8);
+  color: rgba(255, 255, 255, 0.9);
   line-height: 1.4;
+  font-family: monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .log-details {
   margin-top: 6px;
-  padding: 8px;
-  background: rgba(0, 0, 0, 0.2);
+  padding: 6px;
+  background: rgba(0, 0, 0, 0.3);
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 10px;
   font-family: monospace;
   color: rgba(255, 255, 255, 0.5);
   white-space: pre-wrap;
-  word-break: break-all;
-  max-height: 100px;
-  overflow-y: auto;
+  overflow-x: auto;
+}
+
+.error-text {
+  color: #ff6961;
 }
 
 .loading {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 100px;
+  height: 100%;
   color: rgba(255, 255, 255, 0.5);
   font-size: 13px;
 }
@@ -154,7 +197,7 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 40px 20px;
+  height: 100%;
   text-align: center;
 }
 

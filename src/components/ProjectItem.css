@@ -102,6 +102,24 @@
   background: rgba(255, 149, 0, 0.3);
 }
 
+.action-btn.pull {
+  background: rgba(100, 210, 255, 0.2);
+  color: #64d2ff;
+}
+
+.action-btn.pull:hover {
+  background: rgba(100, 210, 255, 0.3);
+}
+
+.action-btn.push {
+  background: rgba(50, 173, 230, 0.2);
+  color: #32ade6;
+}
+
+.action-btn.push:hover {
+  background: rgba(50, 173, 230, 0.3);
+}
+
 .action-btn.delete {
   background: rgba(255, 59, 48, 0.2);
   color: #ff3b30;

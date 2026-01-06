@@ -125,6 +125,13 @@ export async function pullProject(projectId: string): Promise<void> {
   return invoke("pull_project", { projectId });
 }
 
+export async function pushProject(
+  projectId: string,
+  force?: boolean
+): Promise<string> {
+  return invoke("push_project", { projectId, force });
+}
+
 // Supabase Logs API
 export async function querySupabaseLogs(
   projectId: string,

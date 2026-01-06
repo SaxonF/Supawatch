@@ -133,7 +133,7 @@ mod tests {
     #[test]
     fn test_parse_bulk_response_array_type() {
         let api = SupabaseApi::new("token".to_string());
-        let introspector = Introspector::new(&api, "project".to_string());
+        let _introspector = Introspector::new(&api, "project".to_string());
 
         let data = json!({
             "tables": [{"schema": "public", "name": "test_table"}],
@@ -171,7 +171,7 @@ mod tests {
     #[test]
     fn test_parse_bulk_response_pg_trigger() {
         let api = SupabaseApi::new("token".to_string());
-        let introspector = Introspector::new(&api, "project".to_string());
+        let _introspector = Introspector::new(&api, "project".to_string());
 
         let data = json!({
             "tables": [{"schema": "public", "name": "test_table"}],
@@ -209,7 +209,7 @@ mod tests {
     #[test]
     fn test_parse_bulk_response_with_check_constraints() {
         let api = SupabaseApi::new("token".to_string());
-        let introspector = Introspector::new(&api, "project".to_string());
+        let _introspector = Introspector::new(&api, "project".to_string());
 
         let data = json!({
             "tables": [{"schema": "public", "name": "users"}],

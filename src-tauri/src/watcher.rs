@@ -264,6 +264,18 @@ async fn handle_schema_push(
     // 3. Diff (Remote -> Local)
     let diff = crate::diff::compute_diff(&remote_schema, &local_schema);
 
+    if diff.is_destructive() {
+        let summary = diff.summarize();
+        let log = LogEntry::error(
+            Some(project_id),
+            LogSource::Schema,
+            format!("Destructive changes detected! Auto-push aborted.\nPlease push manually to confirm:\n{}", summary),
+        );
+        state.add_log(log.clone()).await;
+        app_handle.emit("log", &log).ok();
+        return Ok(());
+    }
+
     // 4. Generate Migration SQL
     let migration_sql = crate::generator::generate_sql(&diff, &local_schema);
 

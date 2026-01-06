@@ -296,9 +296,11 @@ async fn pull_edge_functions(
 }
 
 #[tauri::command]
+
 pub async fn push_project(
     app_handle: tauri::AppHandle,
     project_id: String,
+    force: Option<bool>,
 ) -> Result<String, String> {
     let state = app_handle.state::<Arc<AppState>>();
     let uuid = Uuid::parse_str(&project_id).map_err(|e| e.to_string())?;
@@ -311,6 +313,7 @@ pub async fn push_project(
     let api = state.get_api_client().await.map_err(|e| e.to_string())?;
 
     let log = LogEntry::info(Some(uuid), LogSource::System, "Pushing schema changes...".to_string());
+    println!("[INFO] Pushing schema changes for project {}", uuid);
     state.add_log(log.clone()).await;
     app_handle.emit("log", &log).ok();
 
@@ -339,6 +342,21 @@ pub async fn push_project(
     let diff = crate::diff::compute_diff(&remote_schema, &local_schema);
 
     let summary = diff.summarize();
+    
+    // Check for destructive changes
+    if !force.unwrap_or(false) && diff.is_destructive() {
+        let log = LogEntry::warning(
+            Some(uuid),
+            LogSource::System,
+            "Destructive changes detected. Confirmation required.".to_string(),
+        );
+        state.add_log(log.clone()).await;
+        app_handle.emit("log", &log).ok();
+        
+        return Err(format!("CONFIRMATION_NEEDED:{}", summary));
+    }
+
+    println!("[INFO] Diff Summary:\n{}", summary);
     let log = LogEntry::info(
         Some(uuid),
         LogSource::System,
@@ -366,6 +384,7 @@ pub async fn push_project(
         LogSource::System,
         format!("Applying changes:\n{}", migration_sql),
     );
+    println!("[INFO] Applying changes:\n{}", migration_sql);
     state.add_log(log.clone()).await;
     app_handle.emit("log", &log).ok();
 
@@ -374,6 +393,7 @@ pub async fn push_project(
 
     if let Some(err) = result.error {
         let log = LogEntry::error(Some(uuid), LogSource::System, format!("Migration failed: {}", err));
+        println!("[ERROR] Migration failed: {}", err);
         state.add_log(log.clone()).await;
         app_handle.emit("log", &log).ok();
         return Err(err);
@@ -622,7 +642,39 @@ pub async fn create_project(
         
         (Some(pid), Some(refer))
     } else {
-        // Create Mode - Try to create remote project if authenticated
+        // Create Mode
+        
+        // Ensure standard Supabase folder structure exists for new projects
+        let supabase_dir = std::path::Path::new(&local_path).join("supabase");
+        if !supabase_dir.exists() {
+            let schemas_dir = supabase_dir.join("schemas");
+            let functions_dir = supabase_dir.join("functions");
+            let schema_path = schemas_dir.join("schema.sql");
+
+            // Create directories
+            tokio::fs::create_dir_all(&schemas_dir)
+                .await
+                .map_err(|e| format!("Failed to create schemas directory: {}", e))?;
+            tokio::fs::create_dir_all(&functions_dir)
+                .await
+                .map_err(|e| format!("Failed to create functions directory: {}", e))?;
+
+            // Create placeholder schema.sql
+            let placeholder = "-- Supabase schema\n\n-- Add your table definitions and other schema elements here.\n";
+            tokio::fs::write(&schema_path, placeholder)
+                .await
+                .map_err(|e| format!("Failed to create schema.sql: {}", e))?;
+
+            let log = LogEntry::success(
+                None,
+                LogSource::System,
+                "Created local supabase directory structure".to_string(),
+            );
+            state.add_log(log.clone()).await;
+            app_handle.emit("log", &log).ok();
+        }
+
+        // Try to create remote project if authenticated
         if state.has_access_token().await {
             let api = state.get_api_client().await.map_err(|e| e.to_string())?;
             

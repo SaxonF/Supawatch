@@ -458,7 +458,7 @@ impl SupabaseApi {
         iso_timestamp_end: Option<&str>,
     ) -> Result<serde_json::Value, ApiError> {
         let mut url = format!(
-            "{}/v1/projects/{}/analytics/endpoints/logs.all/query",
+            "{}/v1/projects/{}/analytics/endpoints/logs.all",
             SUPABASE_API_BASE, project_ref
         );
 
@@ -490,7 +490,28 @@ impl SupabaseApi {
             return Err(ApiError::ApiError { status, message });
         }
 
-        Ok(response.json().await?)
+        let val: serde_json::Value = response.json().await?;
+
+        if val.is_array() {
+            return Ok(val);
+        }
+
+        if let Some(obj) = val.as_object() {
+            if let Some(error) = obj.get("error") {
+                if !error.is_null() {
+                    let msg = format!("Supabase API Error: {}", error);
+                    return Err(ApiError::ApiError { 
+                        status: 200, 
+                        message: msg
+                    });
+                }
+            }
+            if let Some(res) = obj.get("result") {
+                return Ok(res.clone());
+            }
+        }
+
+        Ok(val)
     }
 
     /// Get edge function logs for the last N minutes
@@ -505,16 +526,42 @@ impl SupabaseApi {
 
         let sql = if let Some(name) = function_name {
             format!(
-                r#"select id, timestamp, event_message, metadata, request
-                   from edge_logs
-                   where metadata->>'function_id' = '{}'
+                r#"select 
+                    id, 
+                    datetime(t.timestamp) as timestamp, 
+                    event_message, 
+                    m.function_id, 
+                    m.execution_time_ms, 
+                    m.deployment_id, 
+                    m.version, 
+                    r.method, 
+                    r.url, 
+                    resp.status_code 
+                   from function_edge_logs as t
+                   cross join unnest(metadata) as m
+                   cross join unnest(m.request) as r
+                   cross join unnest(m.response) as resp
+                   where m.function_id = '{}'
                    order by timestamp desc
                    limit 100"#,
                 name
             )
         } else {
-            r#"select id, timestamp, event_message, metadata, request
-               from edge_logs
+            r#"select 
+                id, 
+                datetime(t.timestamp) as timestamp, 
+                event_message, 
+                m.function_id, 
+                m.execution_time_ms, 
+                m.deployment_id, 
+                m.version, 
+                r.method, 
+                r.url, 
+                resp.status_code 
+               from function_edge_logs as t
+               left join unnest(metadata) as m
+               left join unnest(m.request) as r
+               left join unnest(m.response) as resp
                order by timestamp desc
                limit 100"#
                 .to_string()
@@ -523,8 +570,8 @@ impl SupabaseApi {
         self.query_logs(
             project_ref,
             Some(&sql),
-            Some(&start.to_rfc3339()),
-            Some(&now.to_rfc3339()),
+            Some(&start.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
+            Some(&now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
         )
         .await
     }
@@ -538,16 +585,29 @@ impl SupabaseApi {
         let now = chrono::Utc::now();
         let start = now - chrono::Duration::minutes(minutes as i64);
 
-        let sql = r#"select id, timestamp, event_message, error_severity, user_name, query
-                     from postgres_logs
+        // Select metadata to get error_severity, user_name, query etc.
+        // Filter to only show errors to reduce noise
+        let sql = r#"select 
+                    id, 
+                    datetime(t.timestamp) as timestamp, 
+                    event_message, 
+                    p.error_severity, 
+                    p.query, 
+                    p.user_name,
+                    p.detail,
+                    p.hint
+                     from postgres_logs as t
+                     cross join unnest(metadata) as m
+                     cross join unnest(m.parsed) as p
+                     where p.error_severity in ('ERROR', 'FATAL', 'PANIC')
                      order by timestamp desc
                      limit 100"#;
 
         self.query_logs(
             project_ref,
             Some(sql),
-            Some(&start.to_rfc3339()),
-            Some(&now.to_rfc3339()),
+            Some(&start.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
+            Some(&now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
         )
         .await
     }
@@ -561,7 +621,8 @@ impl SupabaseApi {
         let now = chrono::Utc::now();
         let start = now - chrono::Duration::minutes(minutes as i64);
 
-        let sql = r#"select id, timestamp, event_message, level, path, status
+        // Select metadata to get detail fields
+        let sql = r#"select id, datetime(timestamp) as timestamp, event_message, metadata
                      from auth_logs
                      order by timestamp desc
                      limit 100"#;
@@ -569,8 +630,8 @@ impl SupabaseApi {
         self.query_logs(
             project_ref,
             Some(sql),
-            Some(&start.to_rfc3339()),
-            Some(&now.to_rfc3339()),
+            Some(&start.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
+            Some(&now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
         )
         .await
     }

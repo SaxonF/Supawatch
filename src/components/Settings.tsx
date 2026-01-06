@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import * as api from "../api";
 import "./Settings.css";
 
@@ -119,6 +119,60 @@ export function Settings() {
           Supabase project.
         </p>
       </div>
+      <div className="settings-section">
+        <label>Audit Logs</label>
+        <div className="audit-logs-container">
+          <AuditLogs />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AuditLogs() {
+  const [logs, setLogs] = useState<import("../types").LogEntry[]>([]);
+
+  useEffect(() => {
+    loadLogs();
+
+    // Listen for real-time log updates
+    let unlistenFn: (() => void) | undefined;
+
+    import("@tauri-apps/api/event").then(async ({ listen }) => {
+      unlistenFn = await listen<import("../types").LogEntry>("log", (event) => {
+        setLogs((prev) => [event.payload, ...prev].slice(0, 50));
+      });
+    });
+
+    return () => {
+      if (unlistenFn) unlistenFn();
+    };
+  }, []);
+
+  const loadLogs = async () => {
+    try {
+      const data = await api.getLogs(undefined, 50);
+      setLogs(data);
+    } catch (err) {
+      console.error("Failed to load audit logs:", err);
+    }
+  };
+
+  if (logs.length === 0) {
+    return <div className="audit-empty">No system activity recorded</div>;
+  }
+
+  return (
+    <div className="audit-list">
+      {logs.map((log) => (
+        <div key={log.id} className={`audit-entry ${log.level}`}>
+          <span className="audit-time">
+            {new Date(log.timestamp).toLocaleTimeString([], { hour12: false })}
+          </span>
+          <span className="audit-source">{log.source}</span>
+          <span className="audit-message">{log.message}</span>
+        </div>
+      ))}
     </div>
   );
 }
