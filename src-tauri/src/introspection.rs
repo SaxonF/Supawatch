@@ -81,16 +81,20 @@ impl<'a> Introspector<'a> {
 
     async fn get_enums(&self) -> Result<HashMap<String, EnumInfo>, String> {
         let query = r#"
-            SELECT t.typname as name, array_agg(e.enumlabel ORDER BY e.enumsortorder) as values
+            SELECT n.nspname as schema, t.typname as name, array_agg(e.enumlabel ORDER BY e.enumsortorder) as values
             FROM pg_type t
             JOIN pg_enum e ON t.oid = e.enumtypid
             JOIN pg_namespace n ON t.typnamespace = n.oid
-            WHERE n.nspname = 'public'
-            GROUP BY t.typname
+            WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+              AND n.nspname NOT LIKE 'pg_toast%'
+              AND n.nspname NOT LIKE 'pg_temp%'
+              AND n.nspname NOT IN ('auth', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium', 'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger', 'topology', 'supabase_migrations', 'supabase_functions', 'cron')
+            GROUP BY n.nspname, t.typname
         "#;
 
         #[derive(Deserialize)]
         struct Row {
+            schema: String,
             name: String,
             values: serde_json::Value,
         }
@@ -108,9 +112,11 @@ impl<'a> Introspector<'a> {
         let mut enums = HashMap::new();
         for row in rows {
             let values = parse_pg_array(&row.values);
+            let key = format!("\"{}\".\"{}\"", row.schema, row.name);
             enums.insert(
-                row.name.clone(),
+                key,
                 EnumInfo {
+                    schema: row.schema,
                     name: row.name,
                     values,
                 },
@@ -123,6 +129,7 @@ impl<'a> Introspector<'a> {
     async fn get_functions(&self) -> Result<HashMap<String, FunctionInfo>, String> {
         let query = r#"
             SELECT
+              n.nspname as schema,
               p.proname as name,
               pg_get_function_result(p.oid) as return_type,
               pg_get_function_arguments(p.oid) as args,
@@ -138,11 +145,15 @@ impl<'a> Introspector<'a> {
             FROM pg_proc p
             JOIN pg_language l ON p.prolang = l.oid
             JOIN pg_namespace n ON p.pronamespace = n.oid
-            WHERE n.nspname = 'public'
+            WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+              AND n.nspname NOT LIKE 'pg_toast%'
+              AND n.nspname NOT LIKE 'pg_temp%'
+              AND n.nspname NOT IN ('auth', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium', 'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger', 'topology', 'supabase_migrations', 'supabase_functions', 'cron')
         "#;
 
         #[derive(Deserialize)]
         struct Row {
+            schema: String,
             name: String,
             return_type: String,
             args: String,
@@ -167,11 +178,13 @@ impl<'a> Introspector<'a> {
         for row in rows {
             let args = parse_function_args(&row.args);
             let arg_types: Vec<String> = args.iter().map(|a| a.type_.clone()).collect();
-            let signature = format!("\"{}\"({})", row.name, arg_types.join(", "));
+            // Store with schema qualified signature: "schema"."name"(arg1, arg2)
+            let signature = format!("\"{}\".\"{}\"({})", row.schema, row.name, arg_types.join(", "));
 
             functions.insert(
                 signature,
                 FunctionInfo {
+                    schema: row.schema,
                     name: row.name,
                     args,
                     return_type: row.return_type,
@@ -192,6 +205,7 @@ impl<'a> Introspector<'a> {
             WITH view_data AS (
                 -- Regular views
                 SELECT
+                    n.nspname as schema,
                     c.relname as name,
                     pg_get_viewdef(c.oid, true) as definition,
                     false as is_materialized,
@@ -200,13 +214,17 @@ impl<'a> Introspector<'a> {
                     c.oid
                 FROM pg_class c
                 JOIN pg_namespace n ON n.oid = c.relnamespace
-                WHERE n.nspname = 'public'
+                WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+                  AND n.nspname NOT LIKE 'pg_toast%'
+                  AND n.nspname NOT LIKE 'pg_temp%'
+                  AND n.nspname NOT IN ('auth', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium', 'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger', 'topology', 'supabase_migrations', 'supabase_functions', 'cron')
                 AND c.relkind = 'v'
 
                 UNION ALL
 
                 -- Materialized views
                 SELECT
+                    n.nspname as schema,
                     c.relname as name,
                     pg_get_viewdef(c.oid, true) as definition,
                     true as is_materialized,
@@ -215,11 +233,15 @@ impl<'a> Introspector<'a> {
                     c.oid
                 FROM pg_class c
                 JOIN pg_namespace n ON n.oid = c.relnamespace
-                WHERE n.nspname = 'public'
+                WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+                  AND n.nspname NOT LIKE 'pg_toast%'
+                  AND n.nspname NOT LIKE 'pg_temp%'
+                  AND n.nspname NOT IN ('auth', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium', 'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger', 'topology', 'supabase_migrations', 'supabase_functions', 'cron')
                 AND c.relkind = 'm'
             ),
             view_columns AS (
                 SELECT
+                    n.nspname as schema,
                     c.relname as view_name,
                     a.attname as column_name,
                     format_type(a.atttypid, a.atttypmod) as data_type,
@@ -227,13 +249,17 @@ impl<'a> Introspector<'a> {
                 FROM pg_class c
                 JOIN pg_namespace n ON n.oid = c.relnamespace
                 JOIN pg_attribute a ON a.attrelid = c.oid
-                WHERE n.nspname = 'public'
+                WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+                  AND n.nspname NOT LIKE 'pg_toast%'
+                  AND n.nspname NOT LIKE 'pg_temp%'
+                  AND n.nspname NOT IN ('auth', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium', 'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger', 'topology', 'supabase_migrations', 'supabase_functions', 'cron')
                 AND c.relkind IN ('v', 'm')
                 AND a.attnum > 0
                 AND NOT a.attisdropped
             ),
             mat_view_indexes AS (
                 SELECT
+                    n.nspname as schema,
                     t.relname as view_name,
                     i.relname as index_name,
                     array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum)) as columns,
@@ -246,9 +272,12 @@ impl<'a> Introspector<'a> {
                 JOIN pg_am am ON i.relam = am.oid
                 JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
                 JOIN pg_namespace n ON t.relnamespace = n.oid
-                WHERE n.nspname = 'public'
+                WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+                  AND n.nspname NOT LIKE 'pg_toast%'
+                  AND n.nspname NOT LIKE 'pg_temp%'
+                  AND n.nspname NOT IN ('auth', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium', 'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger', 'topology', 'supabase_migrations', 'supabase_functions', 'cron')
                 AND t.relkind = 'm'
-                GROUP BY t.relname, i.relname, ix.indisunique, am.amname, ix.indpred, ix.indrelid
+                GROUP BY n.nspname, t.relname, i.relname, ix.indisunique, am.amname, ix.indpred, ix.indrelid
             )
             SELECT json_build_object(
                 'views', (SELECT json_agg(row_to_json(view_data)) FROM view_data),
@@ -282,6 +311,7 @@ impl<'a> Introspector<'a> {
     ) -> Result<HashMap<String, ViewInfo>, String> {
         #[derive(Deserialize)]
         struct ViewRow {
+            schema: String,
             name: String,
             definition: Option<String>,
             is_materialized: bool,
@@ -291,6 +321,7 @@ impl<'a> Introspector<'a> {
 
         #[derive(Deserialize)]
         struct ColumnRow {
+            schema: String,
             view_name: String,
             column_name: String,
             data_type: String,
@@ -299,6 +330,7 @@ impl<'a> Introspector<'a> {
 
         #[derive(Deserialize)]
         struct IndexRow {
+            schema: String,
             view_name: String,
             index_name: String,
             columns: serde_json::Value,
@@ -329,10 +361,12 @@ impl<'a> Introspector<'a> {
 
         for row in view_rows {
             let options = row.options.map(|v| parse_pg_array(&v)).unwrap_or_default();
+            let key = format!("\"{}\".\"{}\"", row.schema, row.name);
 
             views.insert(
-                row.name.clone(),
+                key,
                 ViewInfo {
+                    schema: row.schema,
                     name: row.name,
                     definition: row.definition.unwrap_or_default(),
                     is_materialized: row.is_materialized,
@@ -347,7 +381,8 @@ impl<'a> Introspector<'a> {
 
         // Add columns to views
         for col in column_rows {
-            if let Some(view) = views.get_mut(&col.view_name) {
+            let key = format!("\"{}\".\"{}\"", col.schema, col.view_name);
+            if let Some(view) = views.get_mut(&key) {
                 view.columns.push(ViewColumnInfo {
                     name: col.column_name,
                     data_type: col.data_type,
@@ -358,7 +393,8 @@ impl<'a> Introspector<'a> {
 
         // Add indexes to materialized views
         for idx in index_rows {
-            if let Some(view) = views.get_mut(&idx.view_name) {
+            let key = format!("\"{}\".\"{}\"", idx.schema, idx.view_name);
+            if let Some(view) = views.get_mut(&key) {
                 view.indexes.push(IndexInfo {
                     index_name: idx.index_name,
                     columns: parse_pg_array(&idx.columns),
@@ -378,6 +414,7 @@ impl<'a> Introspector<'a> {
     async fn get_sequences(&self) -> Result<HashMap<String, SequenceInfo>, String> {
         let query = r#"
             SELECT
+                n.nspname as schema,
                 s.relname as name,
                 format_type(seq.seqtypid, NULL) as data_type,
                 seq.seqstart as start_value,
@@ -397,19 +434,28 @@ impl<'a> Introspector<'a> {
             LEFT JOIN pg_depend d ON d.objid = s.oid AND d.deptype = 'a'
             LEFT JOIN pg_class c ON c.oid = d.refobjid
             LEFT JOIN pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
-            WHERE n.nspname = 'public'
+            WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+              AND n.nspname NOT LIKE 'pg_toast%'
+              AND n.nspname NOT LIKE 'pg_temp%'
+              AND n.nspname NOT IN ('auth', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium', 'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger', 'topology', 'supabase_migrations', 'supabase_functions', 'cron')
             AND s.relkind = 'S'
         "#;
 
         #[derive(Deserialize)]
         struct Row {
+            schema: String,
             name: String,
             data_type: String,
+            #[serde(deserialize_with = "deserialize_i64_or_string")]
             start_value: i64,
+            #[serde(deserialize_with = "deserialize_i64_or_string")]
             min_value: i64,
+            #[serde(deserialize_with = "deserialize_i64_or_string")]
             max_value: i64,
+            #[serde(deserialize_with = "deserialize_i64_or_string")]
             increment: i64,
             cycle: bool,
+            #[serde(deserialize_with = "deserialize_i64_or_string")]
             cache_size: i64,
             owned_by: Option<String>,
             comment: Option<String>,
@@ -427,9 +473,11 @@ impl<'a> Introspector<'a> {
 
         let mut sequences = HashMap::new();
         for row in rows {
+            let key = format!("\"{}\".\"{}\"", row.schema, row.name);
             sequences.insert(
-                row.name.clone(),
+                key,
                 SequenceInfo {
+                    schema: row.schema,
                     name: row.name,
                     data_type: row.data_type,
                     start_value: row.start_value,
@@ -493,6 +541,7 @@ impl<'a> Introspector<'a> {
     async fn get_composite_types(&self) -> Result<HashMap<String, CompositeTypeInfo>, String> {
         let query = r#"
             SELECT
+                n.nspname as schema,
                 t.typname as name,
                 array_agg(
                     json_build_object(
@@ -507,14 +556,18 @@ impl<'a> Introspector<'a> {
             JOIN pg_class cls ON cls.oid = t.typrelid
             LEFT JOIN pg_attribute a ON a.attrelid = cls.oid AND a.attnum > 0 AND NOT a.attisdropped
             LEFT JOIN pg_collation c ON c.oid = a.attcollation AND c.collname != 'default'
-            WHERE n.nspname = 'public'
+            WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+              AND n.nspname NOT LIKE 'pg_toast%'
+              AND n.nspname NOT LIKE 'pg_temp%'
+              AND n.nspname NOT IN ('auth', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium', 'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger', 'topology', 'supabase_migrations', 'supabase_functions', 'cron')
             AND t.typtype = 'c'
             AND cls.relkind = 'c'
-            GROUP BY t.typname, t.oid
+            GROUP BY n.nspname, t.typname, t.oid
         "#;
 
         #[derive(Deserialize)]
         struct Row {
+            schema: String,
             name: String,
             attributes: serde_json::Value,
             comment: Option<String>,
@@ -549,9 +602,11 @@ impl<'a> Introspector<'a> {
                 vec![]
             };
 
+            let key = format!("\"{}\".\"{}\"", row.schema, row.name);
             types.insert(
-                row.name.clone(),
+                key,
                 CompositeTypeInfo {
+                    schema: row.schema,
                     name: row.name,
                     attributes: attrs,
                     comment: row.comment,
@@ -565,6 +620,7 @@ impl<'a> Introspector<'a> {
     async fn get_domains(&self) -> Result<HashMap<String, DomainInfo>, String> {
         let query = r#"
             SELECT
+                n.nspname as schema,
                 t.typname as name,
                 format_type(t.typbasetype, t.typtypmod) as base_type,
                 t.typdefault as default_value,
@@ -582,12 +638,16 @@ impl<'a> Introspector<'a> {
             FROM pg_type t
             JOIN pg_namespace n ON t.typnamespace = n.oid
             LEFT JOIN pg_collation c ON c.oid = t.typcollation AND c.collname != 'default'
-            WHERE n.nspname = 'public'
+            WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+              AND n.nspname NOT LIKE 'pg_toast%'
+              AND n.nspname NOT LIKE 'pg_temp%'
+              AND n.nspname NOT IN ('auth', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium', 'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger', 'topology', 'supabase_migrations', 'supabase_functions', 'cron')
             AND t.typtype = 'd'
         "#;
 
         #[derive(Deserialize)]
         struct Row {
+            schema: String,
             name: String,
             base_type: String,
             default_value: Option<String>,
@@ -622,9 +682,11 @@ impl<'a> Introspector<'a> {
                 })
                 .collect();
 
+            let key = format!("\"{}\".\"{}\"", row.schema, row.name);
             domains.insert(
-                row.name.clone(),
+                key,
                 DomainInfo {
+                    schema: row.schema,
                     name: row.name,
                     base_type: row.base_type,
                     default_value: row.default_value,
@@ -644,13 +706,17 @@ impl<'a> Introspector<'a> {
         // Single comprehensive query that gets tables + columns + constraints
         let bulk_query = r#"
             WITH table_list AS (
-                SELECT table_name
+                SELECT table_schema as schema, table_name as name
                 FROM information_schema.tables
-                WHERE table_schema = 'public'
+                WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+                  AND table_schema NOT LIKE 'pg_toast%'
+                  AND table_schema NOT LIKE 'pg_temp%'
+                  AND table_schema NOT IN ('auth', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium', 'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger', 'topology', 'supabase_migrations', 'supabase_functions', 'cron')
                 AND table_type = 'BASE TABLE'
             ),
             columns_data AS (
                 SELECT
+                    n.nspname as schema,
                     t.relname as table_name,
                     a.attname as column_name,
                     format_type(a.atttypid, a.atttypmod) as data_type,
@@ -678,13 +744,17 @@ impl<'a> Introspector<'a> {
                     FROM pg_constraint c
                     WHERE c.contype = 'p'
                 ) pk ON pk.conrelid = a.attrelid AND pk.attnum = a.attnum
-                WHERE n.nspname = 'public'
+                WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+                  AND n.nspname NOT LIKE 'pg_toast%'
+                  AND n.nspname NOT LIKE 'pg_temp%'
+                  AND n.nspname NOT IN ('auth', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium', 'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger', 'topology', 'supabase_migrations', 'supabase_functions', 'cron')
                 AND t.relkind = 'r'
                 AND a.attnum > 0
                 AND NOT a.attisdropped
             ),
             fk_data AS (
                 SELECT
+                    n.nspname as schema,
                     c.relname as table_name,
                     con.conname as constraint_name,
                     a.attname as column_name,
@@ -713,11 +783,15 @@ impl<'a> Introspector<'a> {
                 CROSS JOIN LATERAL unnest(con.conkey, con.confkey) AS k(con_attnum, conf_attnum)
                 JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.con_attnum
                 JOIN pg_attribute af ON af.attrelid = cf.oid AND af.attnum = k.conf_attnum
-                WHERE n.nspname = 'public'
+                WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+                  AND n.nspname NOT LIKE 'pg_toast%'
+                  AND n.nspname NOT LIKE 'pg_temp%'
+                  AND n.nspname NOT IN ('auth', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium', 'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger', 'topology', 'supabase_migrations', 'supabase_functions', 'cron')
                 AND con.contype = 'f'
             ),
             index_data AS (
                 SELECT
+                    n.nspname as schema,
                     t.relname as table_name,
                     i.relname as index_name,
                     array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum)) as columns,
@@ -734,12 +808,16 @@ impl<'a> Introspector<'a> {
                 JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
                 JOIN pg_namespace n ON t.relnamespace = n.oid
                 LEFT JOIN pg_constraint con ON con.conindid = i.oid
-                WHERE n.nspname = 'public'
+                WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+                  AND n.nspname NOT LIKE 'pg_toast%'
+                  AND n.nspname NOT LIKE 'pg_temp%'
+                  AND n.nspname NOT IN ('auth', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium', 'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger', 'topology', 'supabase_migrations', 'supabase_functions', 'cron')
                 AND NOT ix.indisprimary
-                GROUP BY t.relname, i.relname, ix.indisunique, ix.indisprimary, am.amname, ix.indpred, ix.indrelid, i.oid
+                GROUP BY n.nspname, t.relname, i.relname, ix.indisunique, ix.indisprimary, am.amname, ix.indpred, ix.indrelid, i.oid
             ),
             trigger_data AS (
                 SELECT
+                    n.nspname as schema,
                     c.relname as table_name,
                     t.tgname as trigger_name,
                     t.tgtype::integer as tgtype,
@@ -749,11 +827,15 @@ impl<'a> Introspector<'a> {
                 JOIN pg_class c ON c.oid = t.tgrelid
                 JOIN pg_namespace n ON n.oid = c.relnamespace
                 JOIN pg_proc p ON p.oid = t.tgfoid
-                WHERE n.nspname = 'public'
+                WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+                  AND n.nspname NOT LIKE 'pg_toast%'
+                  AND n.nspname NOT LIKE 'pg_temp%'
+                  AND n.nspname NOT IN ('auth', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium', 'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger', 'topology', 'supabase_migrations', 'supabase_functions', 'cron')
                 AND NOT t.tgisinternal
             ),
             policy_data AS (
                 SELECT
+                    n.nspname as schema,
                     c.relname as table_name,
                     p.polname as name,
                     p.polcmd as cmd,
@@ -763,16 +845,24 @@ impl<'a> Introspector<'a> {
                 FROM pg_policy p
                 JOIN pg_class c ON c.oid = p.polrelid
                 JOIN pg_namespace n ON n.oid = c.relnamespace
-                WHERE n.nspname = 'public'
+                WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+                  AND n.nspname NOT LIKE 'pg_toast%'
+                  AND n.nspname NOT LIKE 'pg_temp%'
+                  AND n.nspname NOT IN ('auth', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium', 'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger', 'topology', 'supabase_migrations', 'supabase_functions', 'cron')
             ),
             rls_data AS (
-                SELECT c.relname as table_name, c.relrowsecurity as rls_enabled
+                SELECT n.nspname as schema, c.relname as table_name, c.relrowsecurity as rls_enabled
                 FROM pg_class c
                 JOIN pg_namespace n ON n.oid = c.relnamespace
-                WHERE n.nspname = 'public' AND c.relkind = 'r'
+                WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+                  AND n.nspname NOT LIKE 'pg_toast%'
+                  AND n.nspname NOT LIKE 'pg_temp%'
+                  AND n.nspname NOT IN ('auth', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium', 'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger', 'topology', 'supabase_migrations', 'supabase_functions', 'cron')
+                AND c.relkind = 'r'
             ),
             check_data AS (
                 SELECT
+                    n.nspname as schema,
                     c.relname as table_name,
                     con.conname as name,
                     pg_get_constraintdef(con.oid) as expression,
@@ -781,21 +871,28 @@ impl<'a> Introspector<'a> {
                 JOIN pg_class c ON con.conrelid = c.oid
                 JOIN pg_namespace n ON c.relnamespace = n.oid
                 LEFT JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(con.conkey)
-                WHERE n.nspname = 'public'
+                WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+                  AND n.nspname NOT LIKE 'pg_toast%'
+                  AND n.nspname NOT LIKE 'pg_temp%'
+                  AND n.nspname NOT IN ('auth', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium', 'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger', 'topology', 'supabase_migrations', 'supabase_functions', 'cron')
                 AND con.contype = 'c'
-                GROUP BY c.relname, con.conname, con.oid
+                GROUP BY n.nspname, c.relname, con.conname, con.oid
             ),
             table_comments AS (
                 SELECT
+                    n.nspname as schema,
                     c.relname as table_name,
                     obj_description(c.oid, 'pg_class') as comment
                 FROM pg_class c
                 JOIN pg_namespace n ON n.oid = c.relnamespace
-                WHERE n.nspname = 'public'
+                WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+                  AND n.nspname NOT LIKE 'pg_toast%'
+                  AND n.nspname NOT LIKE 'pg_temp%'
+                  AND n.nspname NOT IN ('auth', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium', 'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger', 'topology', 'supabase_migrations', 'supabase_functions', 'cron')
                 AND c.relkind = 'r'
             )
             SELECT json_build_object(
-                'tables', (SELECT json_agg(table_name) FROM table_list),
+                'tables', (SELECT json_agg(row_to_json(table_list)) FROM table_list),
                 'columns', (SELECT json_agg(row_to_json(columns_data)) FROM columns_data),
                 'foreign_keys', (SELECT json_agg(row_to_json(fk_data)) FROM fk_data),
                 'indexes', (SELECT json_agg(row_to_json(index_data)) FROM index_data),
@@ -898,20 +995,22 @@ impl<'a> Introspector<'a> {
         &self,
         data: &serde_json::Value,
     ) -> Result<HashMap<String, TableInfo>, String> {
-        // Extract table names
-        let table_names: Vec<String> = data
+        // Extract table names with schema
+        #[derive(Deserialize)]
+        struct TableRow {
+            schema: String,
+            name: String,
+        }
+        let table_rows: Vec<TableRow> = data
             .get("tables")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
+            .cloned()
+            .and_then(|v| serde_json::from_value(v).ok())
             .unwrap_or_default();
 
         // Parse columns
         #[derive(Deserialize)]
         struct ColumnRow {
+            schema: String,
             table_name: String,
             column_name: String,
             data_type: String,
@@ -934,6 +1033,7 @@ impl<'a> Introspector<'a> {
         // Parse foreign keys
         #[derive(Deserialize)]
         struct FkRow {
+            schema: String,
             table_name: String,
             constraint_name: String,
             column_name: String,
@@ -951,6 +1051,7 @@ impl<'a> Introspector<'a> {
         // Parse indexes
         #[derive(Deserialize)]
         struct IndexRow {
+            schema: String,
             table_name: String,
             index_name: String,
             columns: serde_json::Value,
@@ -970,6 +1071,7 @@ impl<'a> Introspector<'a> {
         // Parse triggers
         #[derive(Deserialize)]
         struct TriggerRow {
+            schema: String,
             table_name: String,
             trigger_name: String,
             tgtype: i32,
@@ -985,6 +1087,7 @@ impl<'a> Introspector<'a> {
         // Parse policies
         #[derive(Deserialize)]
         struct PolicyRow {
+            schema: String,
             table_name: String,
             name: String,
             cmd: String,
@@ -1001,6 +1104,7 @@ impl<'a> Introspector<'a> {
         // Parse RLS
         #[derive(Deserialize)]
         struct RlsRow {
+            schema: String,
             table_name: String,
             rls_enabled: bool,
         }
@@ -1013,6 +1117,7 @@ impl<'a> Introspector<'a> {
         // Parse check constraints
         #[derive(Deserialize)]
         struct CheckRow {
+            schema: String,
             table_name: String,
             name: String,
             expression: String,
@@ -1027,6 +1132,7 @@ impl<'a> Introspector<'a> {
         // Parse table comments
         #[derive(Deserialize)]
         struct CommentRow {
+            schema: String,
             table_name: String,
             comment: Option<String>,
         }
@@ -1040,11 +1146,13 @@ impl<'a> Introspector<'a> {
         let mut tables: HashMap<String, TableInfo> = HashMap::new();
 
         // Initialize all tables
-        for table_name in table_names {
+        for row in table_rows {
+            let key = format!("\"{}\".\"{}\"", row.schema, row.name);
             tables.insert(
-                table_name.clone(),
+                key,
                 TableInfo {
-                    table_name,
+                    schema: row.schema,
+                    table_name: row.name,
                     columns: HashMap::new(),
                     foreign_keys: vec![],
                     indexes: vec![],
@@ -1059,7 +1167,8 @@ impl<'a> Introspector<'a> {
 
         // Populate columns
         for col in columns {
-            if let Some(table) = tables.get_mut(&col.table_name) {
+            let key = format!("\"{}\".\"{}\"", col.schema, col.table_name);
+            if let Some(table) = tables.get_mut(&key) {
                 let mut final_data_type = col.data_type.clone();
                 if final_data_type == "ARRAY" {
                     if col.udt_name.starts_with('_') {
@@ -1090,7 +1199,8 @@ impl<'a> Introspector<'a> {
 
         // Populate foreign keys
         for fk in fks {
-            if let Some(table) = tables.get_mut(&fk.table_name) {
+            let key = format!("\"{}\".\"{}\"", fk.schema, fk.table_name);
+            if let Some(table) = tables.get_mut(&key) {
                 table.foreign_keys.push(ForeignKeyInfo {
                     constraint_name: fk.constraint_name,
                     column_name: fk.column_name,
@@ -1105,11 +1215,12 @@ impl<'a> Introspector<'a> {
         // Populate indexes
         println!("[DEBUG] Indexes fetched from DB: {}", indexes.len());
         for idx in indexes {
+            let key = format!("\"{}\".\"{}\"", idx.schema, idx.table_name);
             println!(
-                "[DEBUG] Adding index {} to table {}, columns: {:?}",
-                idx.index_name, idx.table_name, idx.columns
+                "[DEBUG] Adding index {} to table key {}, columns: {:?}",
+                idx.index_name, key, idx.columns
             );
-            if let Some(table) = tables.get_mut(&idx.table_name) {
+            if let Some(table) = tables.get_mut(&key) {
                 // Extract expressions from index_def if present
                 let expressions = idx
                     .index_def
@@ -1133,7 +1244,9 @@ impl<'a> Introspector<'a> {
         // Populate triggers (consolidate by trigger name)
         let mut trigger_map: HashMap<(String, String), TriggerInfo> = HashMap::new();
         for trig in triggers {
-            let key = (trig.table_name.clone(), trig.trigger_name.clone());
+            // Key using fully qualified table name
+            let table_key = format!("\"{}\".\"{}\"", trig.schema, trig.table_name);
+            let map_key = (table_key.clone(), trig.trigger_name.clone());
 
             // Extract WHEN clause from trigger definition
             let when_clause = trig
@@ -1141,7 +1254,7 @@ impl<'a> Introspector<'a> {
                 .as_ref()
                 .and_then(|def| extract_trigger_when_clause(def));
 
-            let entry = trigger_map.entry(key).or_insert_with(|| {
+            let entry = trigger_map.entry(map_key).or_insert_with(|| {
                 // Decode tgtype for timing and orientation (once)
                 let timing = if trig.tgtype & 2 != 0 {
                     "BEFORE"
@@ -1181,15 +1294,16 @@ impl<'a> Introspector<'a> {
             }
         }
 
-        for ((table_name, _), trigger) in trigger_map {
-            if let Some(table) = tables.get_mut(&table_name) {
+        for ((table_key, _), trigger) in trigger_map {
+            if let Some(table) = tables.get_mut(&table_key) {
                 table.triggers.push(trigger);
             }
         }
 
         // Populate policies
         for pol in policies {
-            if let Some(table) = tables.get_mut(&pol.table_name) {
+            let key = format!("\"{}\".\"{}\"", pol.schema, pol.table_name);
+            if let Some(table) = tables.get_mut(&key) {
                 table.policies.push(PolicyInfo {
                     name: pol.name,
                     cmd: parse_policy_cmd(&pol.cmd),
@@ -1202,14 +1316,16 @@ impl<'a> Introspector<'a> {
 
         // Populate RLS status
         for rls in rls_data {
-            if let Some(table) = tables.get_mut(&rls.table_name) {
+            let key = format!("\"{}\".\"{}\"", rls.schema, rls.table_name);
+            if let Some(table) = tables.get_mut(&key) {
                 table.rls_enabled = rls.rls_enabled;
             }
         }
 
         // Populate check constraints
         for check in check_data {
-            if let Some(table) = tables.get_mut(&check.table_name) {
+            let key = format!("\"{}\".\"{}\"", check.schema, check.table_name);
+            if let Some(table) = tables.get_mut(&key) {
                 table.check_constraints.push(CheckConstraintInfo {
                     name: check.name,
                     expression: check.expression,
@@ -1220,7 +1336,8 @@ impl<'a> Introspector<'a> {
 
         // Populate table comments
         for comment in comment_data {
-            if let Some(table) = tables.get_mut(&comment.table_name) {
+            let key = format!("\"{}\".\"{}\"", comment.schema, comment.table_name);
+            if let Some(table) = tables.get_mut(&key) {
                 table.comment = comment.comment;
             }
         }
@@ -1380,6 +1497,23 @@ fn extract_index_expressions(index_def: &str) -> Vec<String> {
     expressions
 }
 
+fn deserialize_i64_or_string<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StrOrInt {
+        Str(String),
+        Int(i64),
+    }
+
+    match StrOrInt::deserialize(deserializer)? {
+        StrOrInt::Str(v) => v.parse::<i64>().map_err(serde::de::Error::custom),
+        StrOrInt::Int(v) => Ok(v),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1391,9 +1525,10 @@ mod tests {
         let introspector = Introspector::new(&api, "project".to_string());
 
         let data = json!({
-            "tables": ["test_table"],
+            "tables": [{"schema": "public", "name": "test_table"}],
             "columns": [
                 {
+                    "schema": "public",
                     "table_name": "test_table",
                     "column_name": "tags",
                     "data_type": "ARRAY",
@@ -1416,7 +1551,7 @@ mod tests {
         });
 
         let result = introspector.parse_bulk_response(&data).unwrap();
-        let table = result.get("test_table").unwrap();
+        let table = result.get("\"public\".\"test_table\"").unwrap();
         let col = table.columns.get("tags").unwrap();
 
         assert_eq!(col.data_type, "text[]");
@@ -1428,12 +1563,13 @@ mod tests {
         let introspector = Introspector::new(&api, "project".to_string());
 
         let data = json!({
-            "tables": ["test_table"],
+            "tables": [{"schema": "public", "name": "test_table"}],
             "columns": [],
             "foreign_keys": [],
             "indexes": [],
             "triggers": [
                 {
+                    "schema": "public",
                     "table_name": "test_table",
                     "trigger_name": "test_trigger",
                     "tgtype": 21,
@@ -1448,7 +1584,7 @@ mod tests {
         });
 
         let result = introspector.parse_bulk_response(&data).unwrap();
-        let table = result.get("test_table").unwrap();
+        let table = result.get("\"public\".\"test_table\"").unwrap();
         let trigger = &table.triggers[0];
 
         assert_eq!(trigger.name, "test_trigger");
@@ -1465,7 +1601,7 @@ mod tests {
         let introspector = Introspector::new(&api, "project".to_string());
 
         let data = json!({
-            "tables": ["users"],
+            "tables": [{"schema": "public", "name": "users"}],
             "columns": [],
             "foreign_keys": [],
             "indexes": [],
@@ -1474,6 +1610,7 @@ mod tests {
             "rls": [],
             "check_constraints": [
                 {
+                    "schema": "public",
                     "table_name": "users",
                     "name": "age_check",
                     "expression": "CHECK ((age > 0))",
@@ -1484,7 +1621,7 @@ mod tests {
         });
 
         let result = introspector.parse_bulk_response(&data).unwrap();
-        let table = result.get("users").unwrap();
+        let table = result.get("\"public\".\"users\"").unwrap();
         assert_eq!(table.check_constraints.len(), 1);
         assert_eq!(table.check_constraints[0].name, "age_check");
     }
@@ -1509,5 +1646,22 @@ mod tests {
         assert_eq!(args[1].type_, "integer");
         assert_eq!(args[1].default_value, Some("0".to_string()));
         assert_eq!(args[2].mode, Some("OUT".to_string()));
+    }
+
+    #[test]
+    fn test_deserialize_large_sequence_value() {
+        #[derive(Deserialize, Debug)]
+        struct Row {
+            #[serde(deserialize_with = "deserialize_i64_or_string")]
+            val: i64,
+        }
+
+        let json_str = r#"{"val": "9223372036854775807"}"#;
+        let row: Row = serde_json::from_str(json_str).expect("Failed to parse stringified i64");
+        assert_eq!(row.val, i64::MAX);
+
+        let json_int = r#"{"val": 123}"#;
+        let row_int: Row = serde_json::from_str(json_int).expect("Failed to parse int i64");
+        assert_eq!(row_int.val, 123);
     }
 }

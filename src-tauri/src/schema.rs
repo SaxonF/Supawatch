@@ -32,6 +32,7 @@ pub struct DbSchema {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TableInfo {
+    pub schema: String, // Added schema field
     pub table_name: String,
     pub columns: HashMap<String, ColumnInfo>,
     pub foreign_keys: Vec<ForeignKeyInfo>,
@@ -84,6 +85,7 @@ pub struct IndexInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EnumInfo {
+    pub schema: String, // Added schema field
     pub name: String,
     pub values: Vec<String>,
 }
@@ -109,6 +111,7 @@ pub struct TriggerInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FunctionInfo {
+    pub schema: String, // Added schema field
     pub name: String,
     pub args: Vec<FunctionArg>,
     pub return_type: String,
@@ -133,6 +136,7 @@ pub struct FunctionArg {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ViewInfo {
+    pub schema: String, // Added schema field
     pub name: String,
     pub definition: String,
     pub is_materialized: bool,
@@ -152,6 +156,7 @@ pub struct ViewColumnInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SequenceInfo {
+    pub schema: String, // Added schema field
     pub name: String,
     pub data_type: String, // smallint, integer, bigint
     pub start_value: i64,
@@ -173,6 +178,7 @@ pub struct ExtensionInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CompositeTypeInfo {
+    pub schema: String, // Added schema field
     pub name: String,
     pub attributes: Vec<CompositeTypeAttribute>,
     pub comment: Option<String>,
@@ -187,6 +193,7 @@ pub struct CompositeTypeAttribute {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DomainInfo {
+    pub schema: String, // Added schema field
     pub name: String,
     pub base_type: String,
     pub default_value: Option<String>,
@@ -234,6 +241,7 @@ impl Default for DbSchema {
 impl Default for FunctionInfo {
     fn default() -> Self {
         Self {
+            schema: "public".to_string(),
             name: String::new(),
             args: vec![],
             return_type: "void".to_string(),

@@ -38,6 +38,52 @@ pub fn generate_sql(diff: &SchemaDiff, local_schema: &DbSchema) -> String {
     }
 
     // ====================
+    // 0.5 SCHEMAS
+    // ====================
+    let mut schemas = std::collections::HashSet::new();
+
+    for table in local_schema.tables.values() {
+        schemas.insert(table.schema.clone());
+    }
+    for view in local_schema.views.values() {
+        schemas.insert(view.schema.clone());
+    }
+    for enum_info in local_schema.enums.values() {
+        schemas.insert(enum_info.schema.clone());
+    }
+    for seq in local_schema.sequences.values() {
+        schemas.insert(seq.schema.clone());
+    }
+    for func in local_schema.functions.values() {
+        schemas.insert(func.schema.clone());
+    }
+    for comp in local_schema.composite_types.values() {
+        schemas.insert(comp.schema.clone());
+    }
+    for domain in local_schema.domains.values() {
+        schemas.insert(domain.schema.clone());
+    }
+    // Extensions might specify a schema
+    for ext in local_schema.extensions.values() {
+        if let Some(s) = &ext.schema {
+            schemas.insert(s.clone());
+        }
+    }
+
+    let mut sorted_schemas: Vec<String> = schemas.into_iter().collect();
+    sorted_schemas.sort();
+
+    for schema in sorted_schemas {
+        if schema != "public"
+            && schema != "information_schema"
+            && schema != "pg_catalog"
+            && !schema.starts_with("pg_")
+        {
+            statements.push(format!("CREATE SCHEMA IF NOT EXISTS \"{}\";", schema));
+        }
+    }
+
+    // ====================
     // 1. EXTENSIONS
     // ====================
     for ext in &diff.extensions_to_create {
@@ -53,12 +99,12 @@ pub fn generate_sql(diff: &SchemaDiff, local_schema: &DbSchema) -> String {
         // Check if it was a materialized view in the local schema
         if let Some(view) = local_schema.views.get(name) {
             if view.is_materialized {
-                statements.push(format!("DROP MATERIALIZED VIEW IF EXISTS \"{}\";", name));
+                statements.push(format!("DROP MATERIALIZED VIEW IF EXISTS {};", name));
             } else {
-                statements.push(format!("DROP VIEW IF EXISTS \"{}\";", name));
+                statements.push(format!("DROP VIEW IF EXISTS {};", name));
             }
         } else {
-            statements.push(format!("DROP VIEW IF EXISTS \"{}\";", name));
+            statements.push(format!("DROP VIEW IF EXISTS {};", name));
         }
     }
 
@@ -69,19 +115,19 @@ pub fn generate_sql(diff: &SchemaDiff, local_schema: &DbSchema) -> String {
 
     // Drop sequences
     for name in &diff.sequences_to_drop {
-        statements.push(format!("DROP SEQUENCE IF EXISTS \"{}\";", name));
+        statements.push(format!("DROP SEQUENCE IF EXISTS {};", name));
     }
 
     // Drop tables
     for name in &diff.tables_to_drop {
-        statements.push(format!("DROP TABLE IF EXISTS \"{}\" CASCADE;", name));
+        statements.push(format!("DROP TABLE IF EXISTS {} CASCADE;", name));
     }
 
     // Drop enums
     for enum_change in &diff.enum_changes {
         if enum_change.type_ == EnumChangeType::Drop {
             statements.push(format!(
-                "DROP TYPE IF EXISTS \"{}\" CASCADE;",
+                "DROP TYPE IF EXISTS {} CASCADE;",
                 enum_change.name
             ));
         }
@@ -89,16 +135,19 @@ pub fn generate_sql(diff: &SchemaDiff, local_schema: &DbSchema) -> String {
 
     // Drop composite types
     for name in &diff.composite_types_to_drop {
-        statements.push(format!("DROP TYPE IF EXISTS \"{}\" CASCADE;", name));
+        statements.push(format!("DROP TYPE IF EXISTS {} CASCADE;", name));
     }
 
     // Drop domains
     for name in &diff.domains_to_drop {
-        statements.push(format!("DROP DOMAIN IF EXISTS \"{}\" CASCADE;", name));
+        statements.push(format!("DROP DOMAIN IF EXISTS {} CASCADE;", name));
     }
 
     // Drop extensions (last, as others may depend on them)
     for name in &diff.extensions_to_drop {
+        // Extensions keys might not be qualified? introspection says extensions usually global but name is unique.
+        // parsing.rs uses just name.
+        // So for extension, we keep quotes: "uuid-ossp".
         statements.push(format!("DROP EXTENSION IF EXISTS \"{}\" CASCADE;", name));
     }
 
@@ -325,7 +374,7 @@ fn generate_create_extension(ext: &ExtensionInfo) -> String {
 }
 
 fn generate_create_domain(domain: &DomainInfo) -> String {
-    let mut sql = format!("CREATE DOMAIN \"{}\" AS {}", domain.name, domain.base_type);
+    let mut sql = format!("CREATE DOMAIN \"{}\".\"{}\" AS {}", domain.schema, domain.name, domain.base_type);
 
     if let Some(collation) = &domain.collation {
         sql.push_str(&format!(" COLLATE \"{}\"", collation));
@@ -364,7 +413,8 @@ fn generate_create_composite_type(comp_type: &CompositeTypeInfo) -> String {
         .collect();
 
     format!(
-        "CREATE TYPE \"{}\" AS (\n  {}\n);",
+        "CREATE TYPE \"{}\".\"{}\" AS (\n  {}\n);",
+        comp_type.schema,
         comp_type.name,
         attrs.join(",\n  ")
     )
@@ -372,15 +422,16 @@ fn generate_create_composite_type(comp_type: &CompositeTypeInfo) -> String {
 
 fn generate_create_enum(name: &str, values: &[String]) -> String {
     let quoted_values: Vec<String> = values.iter().map(|v| format!("'{}'", v)).collect();
+    // Name is already qualified
     format!(
-        "CREATE TYPE \"{}\" AS ENUM ({});",
+        "CREATE TYPE {} AS ENUM ({});",
         name,
         quoted_values.join(", ")
     )
 }
 
 fn generate_create_sequence(seq: &SequenceInfo) -> String {
-    let mut sql = format!("CREATE SEQUENCE \"{}\"", seq.name);
+    let mut sql = format!("CREATE SEQUENCE \"{}\".\"{}\"", seq.schema, seq.name);
 
     if seq.data_type != "bigint" {
         sql.push_str(&format!(" AS {}", seq.data_type));
@@ -420,16 +471,57 @@ fn generate_alter_sequence(seq: &SequenceInfo) -> String {
         parts.push("NO CYCLE".to_string());
     }
 
-    format!("ALTER SEQUENCE \"{}\" {};", seq.name, parts.join(" "))
+    format!("ALTER SEQUENCE \"{}\".\"{}\" {};", seq.schema, seq.name, parts.join(" "))
+}
+
+fn generate_create_function(func: &FunctionInfo) -> String {
+    // If definition starts with CREATE OR REPLACE, use it directly (from introspection)
+    // Otherwise construct it (from local parsing)
+    if func.definition.trim_start().to_uppercase().starts_with("CREATE") {
+        return format!("{};", func.definition.trim_end_matches(';'));
+    }
+
+    let mut sql = format!(
+        "CREATE OR REPLACE FUNCTION \"{}\".\"{}\"({}) RETURNS {} LANGUAGE {} ",
+        func.schema, func.name, 
+        func.args.iter().map(|a| {
+            let mut arg_def = format!("\"{}\" {}", a.name, a.type_);
+            if let Some(mode) = &a.mode {
+                arg_def = format!("{} {}", mode, arg_def);
+            }
+            if let Some(default) = &a.default_value {
+                arg_def.push_str(&format!(" DEFAULT {}", default));
+            }
+            arg_def
+        }).collect::<Vec<_>>().join(", "),
+        func.return_type,
+        func.language
+    );
+
+    if let Some(volatility) = &func.volatility {
+        sql.push_str(&format!("{} ", volatility));
+    }
+
+    if func.is_strict {
+        sql.push_str("STRICT ");
+    }
+
+    if func.security_definer {
+        sql.push_str("SECURITY DEFINER ");
+    }
+
+    sql.push_str(&format!("AS $${}$$;", func.definition));
+
+    sql
 }
 
 fn generate_create_view(view: &ViewInfo) -> String {
     let mut sql = String::new();
 
     if view.is_materialized {
-        sql.push_str(&format!("CREATE MATERIALIZED VIEW \"{}\"", view.name));
+        sql.push_str(&format!("CREATE MATERIALIZED VIEW \"{}\".\"{}\"", view.schema, view.name));
     } else {
-        sql.push_str(&format!("CREATE OR REPLACE VIEW \"{}\"", view.name));
+        sql.push_str(&format!("CREATE OR REPLACE VIEW \"{}\".\"{}\"", view.schema, view.name));
     }
 
     if !view.with_options.is_empty() {
@@ -462,11 +554,6 @@ fn generate_create_table(table: &TableInfo) -> String {
         .filter(|c| c.is_primary_key)
         .map(|c| format!("\"{}\"", c.column_name))
         .collect();
-
-    println!(
-        "[DEBUG] Table {}: PK columns found: {:?}",
-        table.table_name, pk_columns
-    );
 
     for col in &columns {
         let mut col_sql = format!("\"{}\" {}", col.column_name, col.data_type);
@@ -503,34 +590,28 @@ fn generate_create_table(table: &TableInfo) -> String {
         ));
     }
 
+    let qualified_name = format!("\"{}\".\"{}\"", table.schema, table.table_name);
+
     let mut sql = format!(
-        "CREATE TABLE \"{}\" (\n  {}\n);",
-        table.table_name,
+        "CREATE TABLE {} (\n  {}\n);",
+        qualified_name,
         col_defs.join(",\n  ")
     );
 
     // Indexes (non-primary)
-    println!(
-        "[DEBUG] Table {} has {} indexes to create",
-        table.table_name,
-        table.indexes.len()
-    );
     for idx in &table.indexes {
-        println!(
-            "[DEBUG] Generating index {}: is_primary={}, is_unique={}",
-            idx.index_name, idx.is_primary, idx.is_unique
-        );
         if !idx.is_primary {
             sql.push('\n');
-            sql.push_str(&generate_create_index(&table.table_name, idx));
+            // Pass qualified name to generate_create_index
+            sql.push_str(&generate_create_index(&qualified_name, idx));
         }
     }
 
     // RLS
     if table.rls_enabled {
         sql.push_str(&format!(
-            "\nALTER TABLE \"{}\" ENABLE ROW LEVEL SECURITY;",
-            table.table_name
+            "\nALTER TABLE {} ENABLE ROW LEVEL SECURITY;",
+            qualified_name
         ));
     }
 
@@ -544,7 +625,8 @@ fn generate_create_index(table_name: &str, idx: &IndexInfo) -> String {
         format!("CREATE INDEX \"{}\"", idx.index_name)
     };
 
-    sql.push_str(&format!(" ON \"{}\"", table_name));
+    // table_name is already qualified/quoted
+    sql.push_str(&format!(" ON {}", table_name));
 
     // Index method (if not btree)
     if idx.index_method.to_lowercase() != "btree" {
@@ -571,8 +653,9 @@ fn generate_create_index(table_name: &str, idx: &IndexInfo) -> String {
 fn generate_create_trigger(table_name: &str, trigger: &TriggerInfo) -> String {
     let events = trigger.events.join(" OR ");
 
+    // table_name is already qualified/quoted
     let mut sql = format!(
-        "CREATE TRIGGER \"{}\" {} {} ON \"{}\" FOR EACH {} ",
+        "CREATE TRIGGER \"{}\" {} {} ON {} FOR EACH {} ",
         trigger.name, trigger.timing, events, table_name, trigger.orientation
     );
 
@@ -587,8 +670,9 @@ fn generate_create_trigger(table_name: &str, trigger: &TriggerInfo) -> String {
 }
 
 fn generate_create_policy(table_name: &str, policy: &PolicyInfo) -> String {
+    // table_name is already qualified/quoted
     let mut sql = format!(
-        "CREATE POLICY \"{}\" ON \"{}\" FOR {} TO {}",
+        "CREATE POLICY \"{}\" ON {} FOR {} TO {}",
         policy.name,
         table_name,
         policy.cmd,
@@ -607,59 +691,11 @@ fn generate_create_policy(table_name: &str, policy: &PolicyInfo) -> String {
     sql
 }
 
-fn generate_create_function(func: &FunctionInfo) -> String {
-    let args: Vec<String> = func
-        .args
-        .iter()
-        .map(|a| {
-            let mut arg_sql = String::new();
-            if let Some(mode) = &a.mode {
-                arg_sql.push_str(mode);
-                arg_sql.push(' ');
-            }
-            if !a.name.is_empty() {
-                arg_sql.push_str(&format!("{} ", a.name));
-            }
-            arg_sql.push_str(&a.type_);
-            if let Some(default) = &a.default_value {
-                arg_sql.push_str(&format!(" DEFAULT {}", default));
-            }
-            arg_sql
-        })
-        .collect();
 
-    let mut sql = format!(
-        "CREATE OR REPLACE FUNCTION {}({}) RETURNS {} LANGUAGE {} ",
-        func.name,
-        args.join(", "),
-        func.return_type,
-        func.language
-    );
-
-    // Volatility
-    if let Some(vol) = &func.volatility {
-        sql.push_str(vol);
-        sql.push(' ');
-    }
-
-    // Strictness
-    if func.is_strict {
-        sql.push_str("STRICT ");
-    }
-
-    // Security
-    if func.security_definer {
-        sql.push_str("SECURITY DEFINER ");
-    }
-
-    sql.push_str(&format!("AS $${}$$;", func.definition));
-
-    sql
-}
 
 fn generate_add_foreign_key(table_name: &str, fk: &ForeignKeyInfo) -> String {
     let mut sql = format!(
-        "ALTER TABLE \"{}\" ADD CONSTRAINT \"{}\" FOREIGN KEY (\"{}\") REFERENCES \"{}\"(\"{}\")",
+        "ALTER TABLE {} ADD CONSTRAINT \"{}\" FOREIGN KEY (\"{}\") REFERENCES \"{}\"(\"{}\")",
         table_name, fk.constraint_name, fk.column_name, fk.foreign_table, fk.foreign_column
     );
 
@@ -685,7 +721,7 @@ fn generate_alter_table(
     // Drop foreign keys first (before dropping columns they reference)
     for fk in &diff.foreign_keys_to_drop {
         statements.push(format!(
-            "ALTER TABLE \"{}\" DROP CONSTRAINT IF EXISTS \"{}\";",
+            "ALTER TABLE {} DROP CONSTRAINT IF EXISTS \"{}\";",
             table_name, fk.constraint_name
         ));
     }
@@ -693,7 +729,7 @@ fn generate_alter_table(
     // Drop check constraints
     for check in &diff.check_constraints_to_drop {
         statements.push(format!(
-            "ALTER TABLE \"{}\" DROP CONSTRAINT IF EXISTS \"{}\";",
+            "ALTER TABLE {} DROP CONSTRAINT IF EXISTS \"{}\";",
             table_name, check.name
         ));
     }
@@ -701,7 +737,7 @@ fn generate_alter_table(
     // Drop policies
     for p in &diff.policies_to_drop {
         statements.push(format!(
-            "DROP POLICY IF EXISTS \"{}\" ON \"{}\";",
+            "DROP POLICY IF EXISTS \"{}\" ON {};",
             p.name, table_name
         ));
     }
@@ -709,7 +745,7 @@ fn generate_alter_table(
     // Drop triggers
     for t in &diff.triggers_to_drop {
         statements.push(format!(
-            "DROP TRIGGER IF EXISTS \"{}\" ON \"{}\";",
+            "DROP TRIGGER IF EXISTS \"{}\" ON {};",
             t.name, table_name
         ));
     }
@@ -718,7 +754,7 @@ fn generate_alter_table(
     for i in &diff.indexes_to_drop {
         if let Some(constraint) = &i.owning_constraint {
             statements.push(format!(
-                "ALTER TABLE \"{}\" DROP CONSTRAINT IF EXISTS \"{}\";",
+                "ALTER TABLE {} DROP CONSTRAINT IF EXISTS \"{}\";",
                 table_name, constraint
             ));
         } else {
@@ -729,7 +765,7 @@ fn generate_alter_table(
     // Drop columns
     for col in &diff.columns_to_drop {
         statements.push(format!(
-            "ALTER TABLE \"{}\" DROP COLUMN IF EXISTS \"{}\";",
+            "ALTER TABLE {} DROP COLUMN IF EXISTS \"{}\";",
             table_name, col
         ));
     }
@@ -738,7 +774,7 @@ fn generate_alter_table(
     for col_name in &diff.columns_to_add {
         if let Some(col) = local_table.columns.get(col_name) {
             let mut add_sql = format!(
-                "ALTER TABLE \"{}\" ADD COLUMN \"{}\" {}",
+                "ALTER TABLE {} ADD COLUMN \"{}\" {}",
                 table_name, col.column_name, col.data_type
             );
 
@@ -762,7 +798,7 @@ fn generate_alter_table(
         // Type Change
         if let Some((_, new_type)) = &mod_col.changes.type_change {
             let mut alter_sql = format!(
-                "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" TYPE {} USING \"{}\"::{}",
+                "ALTER TABLE {} ALTER COLUMN \"{}\" TYPE {} USING \"{}\"::{}",
                 table_name, col_name, new_type, col_name, new_type
             );
             // If collation changed, apply it with TYPE change
@@ -775,7 +811,7 @@ fn generate_alter_table(
              // Collation changed but Type didn't. Must use SET DATA TYPE ... COLLATE
              if let Some(col) = local_table.columns.get(col_name) {
                  statements.push(format!(
-                    "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" SET DATA TYPE {} COLLATE \"{}\";",
+                    "ALTER TABLE {} ALTER COLUMN \"{}\" SET DATA TYPE {} COLLATE \"{}\";",
                     table_name, col_name, col.data_type, new_collation
                 ));
              }
@@ -785,12 +821,12 @@ fn generate_alter_table(
         if let Some((_, to_nullable)) = mod_col.changes.nullable_change {
             if to_nullable {
                 statements.push(format!(
-                    "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" DROP NOT NULL;",
+                    "ALTER TABLE {} ALTER COLUMN \"{}\" DROP NOT NULL;",
                     table_name, col_name
                 ));
             } else {
                 statements.push(format!(
-                    "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" SET NOT NULL;",
+                    "ALTER TABLE {} ALTER COLUMN \"{}\" SET NOT NULL;",
                     table_name, col_name
                 ));
             }
@@ -800,12 +836,12 @@ fn generate_alter_table(
         if let Some((_, new_default)) = &mod_col.changes.default_change {
             if let Some(def) = new_default {
                 statements.push(format!(
-                    "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" SET DEFAULT {};",
+                    "ALTER TABLE {} ALTER COLUMN \"{}\" SET DEFAULT {};",
                     table_name, col_name, def
                 ));
             } else {
                 statements.push(format!(
-                    "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" DROP DEFAULT;",
+                    "ALTER TABLE {} ALTER COLUMN \"{}\" DROP DEFAULT;",
                     table_name, col_name
                 ));
             }
@@ -816,19 +852,19 @@ fn generate_alter_table(
             match (old_identity, new_identity) {
                 (Some(_), None) => {
                     statements.push(format!(
-                        "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" DROP IDENTITY;",
+                        "ALTER TABLE {} ALTER COLUMN \"{}\" DROP IDENTITY;",
                         table_name, col_name
                     ));
                 }
                 (None, Some(new_id)) => {
                     statements.push(format!(
-                        "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" ADD GENERATED {} AS IDENTITY;",
+                        "ALTER TABLE {} ALTER COLUMN \"{}\" ADD GENERATED {} AS IDENTITY;",
                         table_name, col_name, new_id
                     ));
                 }
                 (Some(_), Some(new_id)) => {
                      statements.push(format!(
-                        "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" SET GENERATED {};",
+                        "ALTER TABLE {} ALTER COLUMN \"{}\" SET GENERATED {};",
                         table_name, col_name, new_id
                     ));
                 }
@@ -841,12 +877,12 @@ fn generate_alter_table(
     if let Some(enable) = diff.rls_change {
         if enable {
             statements.push(format!(
-                "ALTER TABLE \"{}\" ENABLE ROW LEVEL SECURITY;",
+                "ALTER TABLE {} ENABLE ROW LEVEL SECURITY;",
                 table_name
             ));
         } else {
             statements.push(format!(
-                "ALTER TABLE \"{}\" DISABLE ROW LEVEL SECURITY;",
+                "ALTER TABLE {} DISABLE ROW LEVEL SECURITY;",
                 table_name
             ));
         }
@@ -855,7 +891,7 @@ fn generate_alter_table(
     // Add check constraints
     for check in &diff.check_constraints_to_create {
         statements.push(format!(
-            "ALTER TABLE \"{}\" ADD CONSTRAINT \"{}\" {};",
+            "ALTER TABLE {} ADD CONSTRAINT \"{}\" {};",
             table_name, check.name, check.expression
         ));
     }
@@ -866,7 +902,7 @@ fn generate_alter_table(
             // Unique constraint
             let cols: Vec<String> = i.columns.iter().map(|c| format!("\"{}\"", c)).collect();
             statements.push(format!(
-                "ALTER TABLE \"{}\" ADD CONSTRAINT \"{}\" UNIQUE ({});",
+                "ALTER TABLE {} ADD CONSTRAINT \"{}\" UNIQUE ({});",
                 table_name,
                 i.index_name,
                 cols.join(", ")
@@ -986,6 +1022,7 @@ mod tests {
             table_changes: HashMap::new(),
             enum_changes: vec![],
             functions_to_create: vec![FunctionInfo {
+                schema: "public".to_string(),
                 name: "new_func".to_string(),
                 args: vec![FunctionArg {
                     name: "a".to_string(),
@@ -1014,14 +1051,17 @@ mod tests {
             composite_types_to_drop: vec![],
             domains_to_create: vec![],
             domains_to_drop: vec![],
+            roles_to_create: vec![],
+            roles_to_drop: vec![],
+            roles_to_update: vec![],
         };
 
         // Run generator
         let schema = DbSchema::new();
         let sql = generate_sql(&diff, &schema);
 
-        assert!(sql.contains("CREATE OR REPLACE FUNCTION new_func"));
-        assert!(sql.contains("DROP FUNCTION IF EXISTS \"old_func\""));
+        assert!(sql.contains("CREATE OR REPLACE FUNCTION \"public\".\"new_func\""));
+        assert!(sql.contains("DROP FUNCTION IF EXISTS old_func CASCADE"));
     }
 
     #[test]
@@ -1037,7 +1077,7 @@ mod tests {
             expressions: vec![],
         };
 
-        let sql = generate_create_index("users", &idx);
+        let sql = generate_create_index("\"public\".\"users\"", &idx);
         assert!(sql.contains("USING gin"));
         assert!(sql.contains("WHERE active = true"));
     }
@@ -1053,7 +1093,7 @@ mod tests {
             when_clause: Some("OLD.status IS DISTINCT FROM NEW.status".to_string()),
         };
 
-        let sql = generate_create_trigger("users", &trigger);
+        let sql = generate_create_trigger("\"public\".\"users\"", &trigger);
         assert!(sql.contains("WHEN (OLD.status IS DISTINCT FROM NEW.status)"));
     }
 
@@ -1068,7 +1108,7 @@ mod tests {
             on_update: "SET NULL".to_string(),
         };
 
-        let sql = generate_add_foreign_key("users", &fk);
+        let sql = generate_add_foreign_key("\"public\".\"users\"", &fk);
         assert!(sql.contains("ON DELETE CASCADE"));
         assert!(sql.contains("ON UPDATE SET NULL"));
     }
@@ -1076,6 +1116,7 @@ mod tests {
     #[test]
     fn test_generate_create_sequence() {
         let seq = SequenceInfo {
+            schema: "public".to_string(),
             name: "user_id_seq".to_string(),
             data_type: "bigint".to_string(),
             start_value: 1,
@@ -1089,7 +1130,7 @@ mod tests {
         };
 
         let sql = generate_create_sequence(&seq);
-        assert!(sql.contains("CREATE SEQUENCE"));
+        assert!(sql.contains("CREATE SEQUENCE \"public\".\"user_id_seq\""));
         assert!(sql.contains("CACHE 10"));
         assert!(sql.contains("OWNED BY users.id"));
     }
@@ -1097,6 +1138,7 @@ mod tests {
     #[test]
     fn test_generate_create_view() {
         let view = ViewInfo {
+            schema: "public".to_string(),
             name: "active_users".to_string(),
             definition: "SELECT * FROM users WHERE active = true".to_string(),
             is_materialized: false,
@@ -1108,13 +1150,14 @@ mod tests {
         };
 
         let sql = generate_create_view(&view);
-        assert!(sql.contains("CREATE OR REPLACE VIEW"));
+        assert!(sql.contains("CREATE OR REPLACE VIEW \"public\".\"active_users\""));
         assert!(sql.contains("WITH (security_barrier=true)"));
     }
 
     #[test]
     fn test_generate_materialized_view() {
         let view = ViewInfo {
+            schema: "public".to_string(),
             name: "user_stats".to_string(),
             definition: "SELECT user_id, count(*) FROM posts GROUP BY user_id".to_string(),
             is_materialized: true,
@@ -1126,12 +1169,13 @@ mod tests {
         };
 
         let sql = generate_create_view(&view);
-        assert!(sql.contains("CREATE MATERIALIZED VIEW"));
+        assert!(sql.contains("CREATE MATERIALIZED VIEW \"public\".\"user_stats\""));
     }
 
     #[test]
     fn test_generate_create_domain() {
         let domain = DomainInfo {
+            schema: "public".to_string(),
             name: "email_address".to_string(),
             base_type: "text".to_string(),
             default_value: None,
@@ -1145,7 +1189,7 @@ mod tests {
         };
 
         let sql = generate_create_domain(&domain);
-        assert!(sql.contains("CREATE DOMAIN"));
+        assert!(sql.contains("CREATE DOMAIN \"public\".\"email_address\""));
         assert!(sql.contains("NOT NULL"));
         assert!(sql.contains("CONSTRAINT \"valid_email\""));
     }
@@ -1153,6 +1197,7 @@ mod tests {
     #[test]
     fn test_generate_composite_type() {
         let comp_type = CompositeTypeInfo {
+            schema: "public".to_string(),
             name: "address".to_string(),
             attributes: vec![
                 CompositeTypeAttribute {
@@ -1170,7 +1215,7 @@ mod tests {
         };
 
         let sql = generate_create_composite_type(&comp_type);
-        assert!(sql.contains("CREATE TYPE \"address\" AS"));
+        assert!(sql.contains("CREATE TYPE \"public\".\"address\" AS"));
         assert!(sql.contains("\"street\" text"));
         assert!(sql.contains("\"city\" text"));
     }

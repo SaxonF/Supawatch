@@ -838,6 +838,9 @@ mod tests {
             composite_types_to_drop: vec![],
             domains_to_create: vec![],
             domains_to_drop: vec![],
+            roles_to_create: vec![],
+            roles_to_drop: vec![],
+            roles_to_update: vec![],
         };
 
         let summary = diff.summarize();
@@ -853,6 +856,7 @@ mod tests {
         remote.enums.insert(
             "status".to_string(),
             EnumInfo {
+                schema: "public".to_string(),
                 name: "status".to_string(),
                 values: vec!["active".to_string(), "inactive".to_string()],
             },
@@ -862,6 +866,7 @@ mod tests {
         local.enums.insert(
             "status".to_string(),
             EnumInfo {
+                schema: "public".to_string(),
                 name: "status".to_string(),
                 values: vec![
                     "active".to_string(),
