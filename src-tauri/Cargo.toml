@@ -16,6 +16,7 @@ tauri = { version = "2.5.1", features = [
   "tray-icon",
   "image-png",
 ] }
+image = "0.24"
 serde = { version = "1.0.226", features = ["derive"] }
 serde_json = "1.0.140"
 
@@ -44,6 +45,7 @@ urlencoding = "2"
 sqlparser = "0.60.0"
 eszip = "0.106.0"
 futures = "0.3.31"
+async-recursion = "1.1.1"
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem

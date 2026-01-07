@@ -310,7 +310,7 @@ impl SupabaseApi {
 
     /// Deploy an edge function
     ///
-    /// The function_code should be the TypeScript/JavaScript source code.
+    /// files is a vector of (relative_path, content) pairs for all files in the function
     /// entrypoint is the main file name (e.g., "index.ts")
     pub async fn deploy_function(
         &self,
@@ -318,7 +318,7 @@ impl SupabaseApi {
         slug: &str,
         name: &str,
         entrypoint: &str,
-        function_code: Vec<u8>,
+        files: Vec<(String, Vec<u8>)>,
     ) -> Result<DeployResponse, ApiError> {
         let url = format!(
             "{}/v1/projects/{}/functions/deploy?slug={}",
@@ -334,15 +334,29 @@ impl SupabaseApi {
         let metadata_json = serde_json::to_string(&metadata)
             .map_err(|e| ApiError::FileReadError(e.to_string()))?;
 
-        let form = Form::new()
-            .text("metadata", metadata_json)
-            .part(
+        let mut form = Form::new()
+            .text("metadata", metadata_json);
+
+        // Add all files to the form
+        for (path, content) in files {
+            let mime_type = if path.ends_with(".ts") {
+                "application/typescript"
+            } else if path.ends_with(".js") {
+                "application/javascript"
+            } else if path.ends_with(".json") {
+                "application/json"
+            } else {
+                "application/octet-stream"
+            };
+            
+            form = form.part(
                 "file",
-                Part::bytes(function_code)
-                    .file_name(entrypoint.to_string())
-                    .mime_str("application/typescript")
+                Part::bytes(content)
+                    .file_name(path)
+                    .mime_str(mime_type)
                     .map_err(|e| ApiError::FileReadError(e.to_string()))?,
             );
+        }
 
         let response = self
             .client

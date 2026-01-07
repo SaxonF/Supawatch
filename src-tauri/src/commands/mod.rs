@@ -310,7 +310,194 @@ async fn pull_edge_functions(
     Ok(())
 }
 
+// Helper to push edge functions (deploy changed functions)
+async fn push_edge_functions(
+    api: &crate::supabase_api::SupabaseApi,
+    project_ref: &str,
+    project_id: Uuid,
+    project_local_path: &std::path::Path,
+    state: &Arc<AppState>,
+    app_handle: &tauri::AppHandle,
+) -> Result<(), String> {
+    let functions_dir = project_local_path.join("supabase").join("functions");
+    
+    if !functions_dir.exists() {
+        return Ok(()); // No functions directory, nothing to deploy
+    }
 
+    let log = LogEntry::info(
+        Some(project_id),
+        LogSource::EdgeFunction,
+        "Checking edge functions for changes...".to_string(),
+    );
+    state.add_log(log.clone()).await;
+    app_handle.emit("log", &log).ok();
+
+    // Read the functions directory
+    let mut entries = match tokio::fs::read_dir(&functions_dir).await {
+        Ok(e) => e,
+        Err(_) => return Ok(()), // Can't read dir, skip
+    };
+
+    let mut deployed_count = 0;
+
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        
+        // Skip if not a directory (each function should be in its own folder)
+        if !path.is_dir() {
+            continue;
+        }
+
+        let function_slug = match path.file_name().and_then(|n| n.to_str()) {
+            Some(name) => name.to_string(),
+            None => continue,
+        };
+
+        // Collect all files in the function directory
+        let files = match collect_function_files_cmd(&path).await {
+            Ok(f) => f,
+            Err(e) => {
+                let log = LogEntry::warning(
+                    Some(project_id),
+                    LogSource::EdgeFunction,
+                    format!("Failed to read {}: {}", function_slug, e),
+                );
+                state.add_log(log).await;
+                continue;
+            }
+        };
+
+        if files.is_empty() {
+            continue;
+        }
+
+        // Compute hash of all local files for comparison
+        let local_hash = compute_files_hash(&files);
+        
+        // Check if we have a stored hash from last deploy
+        let hash_file = path.join(".supawatch_hash");
+        let should_deploy = match tokio::fs::read_to_string(&hash_file).await {
+            Ok(stored_hash) => stored_hash.trim() != local_hash,
+            Err(_) => true, // No hash file = never deployed or new function
+        };
+
+        if !should_deploy {
+            let log = LogEntry::info(
+                Some(project_id),
+                LogSource::EdgeFunction,
+                format!("Function '{}' unchanged, skipping", function_slug),
+            );
+            state.add_log(log).await;
+            continue;
+        }
+
+        // Determine entrypoint (as owned String to avoid borrow conflict)
+        let entrypoint = if files.iter().any(|(p, _)| p == "index.ts") {
+            "index.ts".to_string()
+        } else if files.iter().any(|(p, _)| p == "index.js") {
+            "index.js".to_string()
+        } else {
+            files.first().map(|(p, _)| p.clone()).unwrap_or_else(|| "index.ts".to_string())
+        };
+
+        // Deploy with all files
+        match api.deploy_function(project_ref, &function_slug, &function_slug, &entrypoint, files).await {
+            Ok(result) => {
+                // Save hash after successful deploy
+                let _ = tokio::fs::write(&hash_file, &local_hash).await;
+                
+                let log = LogEntry::success(
+                    Some(project_id),
+                    LogSource::EdgeFunction,
+                    format!("Deployed '{}' (v{})", result.name, result.version),
+                );
+                state.add_log(log.clone()).await;
+                app_handle.emit("log", &log).ok();
+                deployed_count += 1;
+            }
+            Err(e) => {
+                let log = LogEntry::error(
+                    Some(project_id),
+                    LogSource::EdgeFunction,
+                    format!("Failed to deploy '{}': {}", function_slug, e),
+                );
+                state.add_log(log.clone()).await;
+                app_handle.emit("log", &log).ok();
+            }
+        }
+    }
+
+    if deployed_count > 0 {
+        let log = LogEntry::success(
+            Some(project_id),
+            LogSource::EdgeFunction,
+            format!("Deployed {} edge function(s)", deployed_count),
+        );
+        state.add_log(log.clone()).await;
+        app_handle.emit("log", &log).ok();
+    }
+
+    Ok(())
+}
+
+/// Collect all files in a function directory
+async fn collect_function_files_cmd(dir: &std::path::Path) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let mut files = Vec::new();
+    collect_files_recursive_cmd(dir, dir, &mut files).await?;
+    Ok(files)
+}
+
+async fn collect_files_recursive_cmd(
+    base: &std::path::Path,
+    current: &std::path::Path,
+    files: &mut Vec<(String, Vec<u8>)>,
+) -> Result<(), String> {
+    let mut entries = tokio::fs::read_dir(current).await.map_err(|e| e.to_string())?;
+    
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        
+        if path.is_dir() {
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name == "node_modules" || name.starts_with('.') {
+                continue;
+            }
+            Box::pin(collect_files_recursive_cmd(base, &path, files)).await?;
+        } else {
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if matches!(ext, "ts" | "js" | "json" | "tsx" | "jsx" | "mts" | "mjs") {
+                let relative = path.strip_prefix(base)
+                    .map_err(|e| e.to_string())?
+                    .to_string_lossy()
+                    .to_string();
+                let content = tokio::fs::read(&path).await.map_err(|e| e.to_string())?;
+                files.push((relative, content));
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+/// Compute a hash of all files for change detection
+fn compute_files_hash(files: &[(String, Vec<u8>)]) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    
+    let mut hasher = DefaultHasher::new();
+    
+    // Sort files by path for deterministic ordering
+    let mut sorted_files: Vec<_> = files.iter().collect();
+    sorted_files.sort_by(|a, b| a.0.cmp(&b.0));
+    
+    for (path, content) in sorted_files {
+        path.hash(&mut hasher);
+        content.hash(&mut hasher);
+    }
+    
+    format!("{:x}", hasher.finish())
+}
 
 #[tauri::command]
 pub async fn push_project(
@@ -403,6 +590,10 @@ async fn push_project_internal(
         );
         state.add_log(log.clone()).await;
         app_handle.emit("log", &log).ok();
+        
+        // Still deploy edge functions even if no schema changes
+        push_edge_functions(&api, &project_ref, uuid, std::path::Path::new(&project.local_path), state.inner(), app_handle).await?;
+        
         return Ok("No changes".to_string());
     }
 
@@ -433,6 +624,9 @@ async fn push_project_internal(
     );
     state.add_log(log.clone()).await;
     app_handle.emit("log", &log).ok();
+
+    // 6. Deploy edge functions if any have changed
+    push_edge_functions(&api, &project_ref, uuid, std::path::Path::new(&project.local_path), state.inner(), app_handle).await?;
 
     Ok(migration_sql)
 }
@@ -1027,25 +1221,34 @@ pub async fn deploy_edge_function(
     state.add_log(log.clone()).await;
     app_handle.emit("log", &log).ok();
 
-    // Read the function file
+    // Get function directory from path
     let full_path = Path::new(&project.local_path).join(&function_path);
-    let function_code = tokio::fs::read(&full_path)
-        .await
-        .map_err(|e| format!("Failed to read function file: {}", e))?;
+    let function_dir = full_path.parent().unwrap_or(&full_path);
 
-    // Get entrypoint from path
-    let entrypoint = Path::new(&function_path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("index.ts");
+    // Collect all files from the function directory
+    let files = collect_function_files_cmd(function_dir).await
+        .map_err(|e| format!("Failed to read function files: {}", e))?;
+
+    if files.is_empty() {
+        return Err("No files found in function directory".to_string());
+    }
+
+    // Determine entrypoint (as owned String to avoid borrow conflict)
+    let entrypoint = if files.iter().any(|(p, _)| p == "index.ts") {
+        "index.ts".to_string()
+    } else if files.iter().any(|(p, _)| p == "index.js") {
+        "index.js".to_string()
+    } else {
+        files.first().map(|(p, _)| p.clone()).unwrap_or_else(|| "index.ts".to_string())
+    };
 
     let result = api
         .deploy_function(
             &project_ref,
             &function_slug,
             &function_name,
-            entrypoint,
-            function_code,
+            &entrypoint,
+            files,
         )
         .await
         .map_err(|e| {
