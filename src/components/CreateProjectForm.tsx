@@ -23,6 +23,11 @@ export function CreateProjectForm({
   const [orgs, setOrgs] = useState<Organization[]>([]);
   const [selectedOrgId, setSelectedOrgId] = useState("");
 
+  // Template State
+  const [templates, setTemplates] = useState<string[]>([]);
+  const [selectedTemplate, setSelectedTemplate] = useState("none");
+  const [isEmptyFolder, setIsEmptyFolder] = useState(false);
+
   // Sync Mode State
   const [remoteProjects, setRemoteProjects] = useState<RemoteProject[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
@@ -38,6 +43,10 @@ export function CreateProjectForm({
   const loadData = async () => {
     setIsFetchingData(true);
     try {
+      // Fetch templates
+      const templatesList = await api.getTemplates().catch(() => []);
+      setTemplates(templatesList);
+
       const hasToken = await api.hasAccessToken();
       if (hasToken) {
         // Fetch orgs and projects in parallel
@@ -72,10 +81,16 @@ export function CreateProjectForm({
       });
 
       if (selected) {
-        setLocalPath(selected as string);
+        const path = selected as string;
+        setLocalPath(path);
+
+        // Check if empty
+        const empty = await api.isFolderEmpty(path);
+        setIsEmptyFolder(empty);
+
         // Auto-fill name from folder name if empty and in Create mode
         if (mode === "create" && !name) {
-          const folderName = (selected as string).split("/").pop() || "";
+          const folderName = path.split("/").pop() || "";
           setName(folderName);
         }
       }
@@ -112,6 +127,11 @@ export function CreateProjectForm({
     setIsLoading(true);
     try {
       if (mode === "create") {
+        // Copy template if selected and folder is empty
+        if (isEmptyFolder && selectedTemplate !== "none") {
+          await api.copyTemplate(selectedTemplate, localPath.trim());
+        }
+
         await api.createProject(
           name.trim(),
           localPath.trim(),
@@ -232,6 +252,30 @@ export function CreateProjectForm({
           </button>
         </div>
       </div>
+
+      {mode === "create" && isEmptyFolder && templates.length > 0 && (
+        <div className="form-group">
+          <label htmlFor="template">Template</label>
+          <select
+            id="template"
+            value={selectedTemplate}
+            onChange={(e) => setSelectedTemplate(e.target.value)}
+          >
+            <option value="none">None</option>
+            {templates.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+          <p
+            className="help-text"
+            style={{ fontSize: "0.8em", color: "#888", marginTop: "4px" }}
+          >
+            Your folder is empty. Initialize it with a starter template?
+          </p>
+        </div>
+      )}
 
       {error && <div className="error">{error}</div>}
 

@@ -172,3 +172,19 @@ export async function getAuthLogs(
 ): Promise<unknown> {
   return invoke("get_auth_logs", { projectId, minutes });
 }
+
+// Templates API
+export async function isFolderEmpty(path: string): Promise<boolean> {
+  return invoke("is_folder_empty", { path });
+}
+
+export async function getTemplates(): Promise<string[]> {
+  return invoke("get_templates");
+}
+
+export async function copyTemplate(
+  templateName: string,
+  targetPath: string
+): Promise<void> {
+  return invoke("copy_template", { templateName, targetPath });
+}

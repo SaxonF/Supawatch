@@ -14,6 +14,8 @@ use crate::supabase_api::Organization;
 use crate::watcher;
 use eszip::EszipV2;
 
+pub mod templates;
+
 static INIT: Once = Once::new();
 
 #[tauri::command]

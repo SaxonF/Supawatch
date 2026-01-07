@@ -1,13 +1,13 @@
-import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { useEffect, useState } from "react";
 
-import { Tabs } from "./components/Tabs";
-import { ProjectList } from "./components/ProjectList";
-import { LogsViewer } from "./components/LogsViewer";
-import { Settings } from "./components/Settings";
 import * as api from "./api";
-import type { Tab, FileChange } from "./types";
+import { LogsViewer } from "./components/LogsViewer";
+import { ProjectList } from "./components/ProjectList";
+import { Settings } from "./components/Settings";
+import { Tabs } from "./components/Tabs";
+import type { FileChange, Tab } from "./types";
 
 import "./App.css";
 

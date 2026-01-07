@@ -45,6 +45,10 @@ fn main() {
             commands::update_project,
             commands::delete_project,
             commands::link_supabase_project,
+            // Template commands
+            commands::templates::is_folder_empty,
+            commands::templates::get_templates,
+            commands::templates::copy_template,
             // Watcher commands
             commands::start_watching,
             commands::stop_watching,
