@@ -3,6 +3,14 @@ import { useEffect, useState } from "react";
 import * as api from "../api";
 import { Organization, RemoteProject } from "../types";
 import "./CreateProjectForm.css";
+import { Button } from "./ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
 
 interface CreateProjectFormProps {
   onCreated: () => void;
@@ -163,51 +171,61 @@ export function CreateProjectForm({
   return (
     <form className="create-project-form" onSubmit={handleSubmit}>
       <div className="flex items-center gap-4 mb-4">
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="lg"
           className={
             mode === "create"
-              ? "text-primary text-lg font-semibold"
-              : "text-muted-foreground text-lg font-semibold"
+              ? "text-primary p-0 hover:bg-transparent"
+              : "text-muted-foreground p-0 hover:bg-transparent"
           }
           onClick={() => setMode("create")}
         >
           Create New
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="ghost"
+          size="lg"
           className={
             mode === "sync"
-              ? "text-primary text-lg font-semibold"
-              : "text-muted-foreground text-lg font-semibold"
+              ? "text-primary p-0 hover:bg-transparent"
+              : "text-muted-foreground p-0 hover:bg-transparent"
           }
           onClick={() => setMode("sync")}
         >
           Sync Existing
-        </button>
+        </Button>
       </div>
       <div className="rounded-xl overflow-hidden border border-border divider divider-border mb-4">
         {mode === "create" && (
           <>
-            <div className="grid grid-cols-[1fr_2fr] gap-2 bg-muted/75 hover:bg-muted p-3">
+            <div className="grid grid-cols-[1fr_2fr] items-center gap-2 bg-muted/75 hover:bg-muted p-3 border-b">
               <label htmlFor="org">Organization</label>
-              <select
-                id="org"
+              <Select
                 value={selectedOrgId}
-                onChange={(e) => setSelectedOrgId(e.target.value)}
+                onValueChange={setSelectedOrgId}
                 disabled={isFetchingData}
               >
-                {orgs.map((org) => (
-                  <option key={org.id} value={org.id}>
-                    {org.name}
-                  </option>
-                ))}
-                {orgs.length === 0 && (
-                  <option disabled>No organizations found</option>
-                )}
-              </select>
+                <SelectTrigger id="org" className="w-full">
+                  <SelectValue placeholder="Select organization" />
+                </SelectTrigger>
+                <SelectContent>
+                  {orgs.map((org) => (
+                    <SelectItem key={org.id} value={org.id}>
+                      {org.name}
+                    </SelectItem>
+                  ))}
+                  {orgs.length === 0 && (
+                    <SelectItem value="none" disabled>
+                      No organizations found
+                    </SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
             </div>
-            <div className="grid grid-cols-[1fr_2fr] gap-2 bg-muted/75 hover:bg-muted p-3">
+            <div className="grid grid-cols-[1fr_2fr] items-center gap-2 bg-muted/75 hover:bg-muted p-3 border-b">
               <label htmlFor="name">Project Name</label>
               <input
                 id="name"
@@ -222,51 +240,65 @@ export function CreateProjectForm({
         )}
 
         {mode === "sync" && (
-          <div className="grid grid-cols-[1fr_2fr] gap-2 bg-muted/75 hover:bg-muted p-3">
+          <div className="grid grid-cols-[1fr_2fr] items-center gap-2 bg-muted/75 hover:bg-muted p-3 border-b">
             <label htmlFor="project">Project</label>
-            <select
-              id="project"
-              className="w-full truncate"
+            <Select
               value={selectedProjectId}
-              onChange={(e) => setSelectedProjectId(e.target.value)}
+              onValueChange={setSelectedProjectId}
               disabled={isFetchingData}
             >
-              {remoteProjects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} ({p.id})
-                </option>
-              ))}
-              {remoteProjects.length === 0 && (
-                <option disabled>No projects found</option>
-              )}
-            </select>
+              <SelectTrigger id="project" className="w-full">
+                <SelectValue placeholder="Select project" />
+              </SelectTrigger>
+              <SelectContent>
+                {remoteProjects.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name} ({p.id})
+                  </SelectItem>
+                ))}
+                {remoteProjects.length === 0 && (
+                  <SelectItem value="none" disabled>
+                    No projects found
+                  </SelectItem>
+                )}
+              </SelectContent>
+            </Select>
           </div>
         )}
 
-        <div className="grid grid-cols-[1fr_2fr] gap-2 bg-muted/75 hover:bg-muted p-3">
+        <div className="grid grid-cols-[1fr_2fr] items-center gap-2 bg-muted/75 hover:bg-muted p-3">
           <label htmlFor="path">Local Folder</label>
           <div className="path-input">
-            <button type="button" onClick={selectFolder} className="">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={selectFolder}
+              className="w-full justify-start font-normal"
+            >
               {localPath ? localPath : "Browse"}
-            </button>
+            </Button>
           </div>
         </div>
 
         {mode === "create" && isEmptyFolder && templates.length > 0 && (
-          <div className="grid grid-cols-[1fr_2fr] gap-2 bg-muted/75 hover:bg-muted p-3">
+          <div className="grid grid-cols-[1fr_2fr] items-center gap-2 bg-muted/75 hover:bg-muted p-3 border-t">
             <label htmlFor="template">Template</label>
-            <select
-              id="template"
+            <Select
               value={selectedTemplate}
-              onChange={(e) => setSelectedTemplate(e.target.value)}
+              onValueChange={setSelectedTemplate}
             >
-              <option value="none">None</option>
-              {templates.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger id="template" className="w-full">
+                <SelectValue placeholder="Select template" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">None</SelectItem>
+                {templates.map((t) => (
+                  <SelectItem key={t} value={t}>
+                    {t}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <p
               className="help-text"
               style={{ fontSize: "0.8em", color: "#888", marginTop: "4px" }}
@@ -280,17 +312,18 @@ export function CreateProjectForm({
       {error && <div className="error">{error}</div>}
 
       <div className="flex items-center gap-2">
-        <button
+        <Button
           type="button"
+          variant="outline"
           onClick={onCancel}
-          className="bg-muted rounded-xl h-12 flex-1"
+          className="h-12 flex-1 rounded-xl"
           disabled={isLoading}
         >
           Cancel
-        </button>
-        <button
+        </Button>
+        <Button
           type="submit"
-          className="bg-accent rounded-xl h-12 flex-1"
+          className="h-12 flex-1 rounded-xl"
           disabled={isLoading}
         >
           {isLoading
@@ -300,7 +333,7 @@ export function CreateProjectForm({
             : mode === "create"
             ? "Create Project"
             : "Sync Project"}
-        </button>
+        </Button>
       </div>
     </form>
   );

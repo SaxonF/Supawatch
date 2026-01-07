@@ -59,15 +59,55 @@ function App() {
   }
 
   return (
-    <div className="bg h-full flex flex-col">
-      <header className="shrink-0 flex items-center gap-4 px-5 py-4 bg-muted/50 border-b border-border justify-between">
-        <h1 className="font-semibold">Supawatch</h1>
-        <Tabs activeTab={activeTab} onTabChange={setActiveTab} />
-      </header>
+    <div className="dark h-full border rounded-xl overflow-hidden">
+      <div className="bg h-full flex flex-col">
+        <header className="shrink-0 flex items-center gap-4 px-5 py-4 bg-muted/50 border-b border-border justify-between">
+          <svg
+            width="11"
+            height="11"
+            viewBox="0 0 11 11"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <rect width="1" height="11" fill="white" />
+            <rect x="2" width="1" height="11" fill="white" />
+            <rect x="10" width="1" height="11" fill="white" />
+            <rect x="4" y="6" width="1" height="5" fill="white" />
+            <rect x="4" width="1" height="5" fill="white" />
+            <rect
+              x="9"
+              width="1"
+              height="5"
+              transform="rotate(90 9 0)"
+              fill="white"
+            />
+            <rect
+              x="9"
+              y="2"
+              width="1"
+              height="5"
+              transform="rotate(90 9 2)"
+              fill="white"
+            />
+            <rect
+              x="9"
+              y="4"
+              width="1"
+              height="5"
+              transform="rotate(90 9 4)"
+              fill="white"
+            />
+            <rect x="6" y="6" width="1" height="5" fill="white" />
+            <rect x="8" y="6" width="1" height="5" fill="white" />
+          </svg>
 
-      <main className="flex-1 flex flex-col overflow-hidden">
-        {renderContent()}
-      </main>
+          <Tabs activeTab={activeTab} onTabChange={setActiveTab} />
+        </header>
+
+        <main className="flex-1 flex flex-col overflow-hidden">
+          {renderContent()}
+        </main>
+      </div>
     </div>
   );
 }

@@ -13,6 +13,7 @@ import { useState } from "react";
 import * as api from "../api";
 import type { Project } from "../types";
 import "./ProjectItem.css";
+import { Button } from "./ui/button";
 
 interface ProjectItemProps {
   project: Project;
@@ -145,51 +146,61 @@ export function ProjectItem({ project, onUpdate, onDelete }: ProjectItemProps) {
             {project.name}
           </span>
           <div className="flex items-center gap-1 ml-1">
-            <button
+            <Button
+              variant="ghost"
+              size="icon-sm"
               onClick={handleOpenFolder}
-              className="p-1 text-muted-foreground hover:text-primary transition-colors cursor-pointer"
+              className="text-muted-foreground hover:text-primary"
               title="Open folder in Finder"
             >
               <Folder size={14} />
-            </button>
+            </Button>
             {project.supabase_project_ref && (
-              <button
+              <Button
+                variant="ghost"
+                size="icon-sm"
                 onClick={handleOpenSupabase}
-                className="p-1 text-muted-foreground hover:text-primary transition-colors cursor-pointer"
+                className="text-muted-foreground hover:text-primary"
                 title="Open Supabase Dashboard"
               >
                 <ExternalLink size={14} />
-              </button>
+              </Button>
             )}
           </div>
         </div>
       </div>
 
       <div className="flex items-center gap-2">
-        <button
-          className="p-2 text-muted-foreground hover:text-primary hover:bg-muted rounded-lg transition-colors cursor-pointer"
+        <Button
+          variant="ghost"
+          size="icon"
+          className="text-muted-foreground hover:text-primary"
           onClick={handlePull}
           disabled={isLoading}
           title="Pull from remote"
         >
           <CloudDownload size={18} />
-        </button>
+        </Button>
 
-        <button
-          className="p-2 text-muted-foreground hover:text-primary hover:bg-muted rounded-lg transition-colors cursor-pointer"
+        <Button
+          variant="ghost"
+          size="icon"
+          className="text-muted-foreground hover:text-primary"
           onClick={handlePush}
           disabled={isLoading}
           title="Push to remote"
         >
           <CloudUpload size={18} />
-        </button>
+        </Button>
 
-        <button
-          className={`p-2 rounded-lg transition-colors cursor-pointer ${
+        <Button
+          variant="ghost"
+          size="icon"
+          className={
             isWatching
               ? "text-primary hover:bg-primary/10"
-              : "text-muted-foreground hover:text-primary hover:bg-muted"
-          }`}
+              : "text-muted-foreground hover:text-primary"
+          }
           onClick={toggleWatch}
           disabled={isLoading}
           title={isWatching ? "Stop watching" : "Start watching"}
@@ -201,15 +212,17 @@ export function ProjectItem({ project, onUpdate, onDelete }: ProjectItemProps) {
           ) : (
             <EyeOff size={18} />
           )}
-        </button>
+        </Button>
 
-        <button
-          className="p-2 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
+        <Button
+          variant="ghost"
+          size="icon"
+          className="text-muted-foreground hover:text-red-500 hover:bg-red-500/10"
           onClick={handleDelete}
           title="Delete project"
         >
           <Trash2 size={18} />
-        </button>
+        </Button>
       </div>
     </div>
   );

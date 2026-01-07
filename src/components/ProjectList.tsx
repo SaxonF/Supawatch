@@ -4,6 +4,7 @@ import type { Project } from "../types";
 import { CreateProjectForm } from "./CreateProjectForm";
 import { ProjectItem } from "./ProjectItem";
 import "./ProjectList.css";
+import { Button } from "./ui/button";
 
 export function ProjectList() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -43,12 +44,12 @@ export function ProjectList() {
         />
       ) : (
         <>
-          <button
-            className="add-project-btn mb-4"
+          <Button
+            className="add-project-btn mb-4 w-full h-12 rounded-xl text-lg"
             onClick={() => setShowCreateForm(true)}
           >
             + Add Project
-          </button>
+          </Button>
 
           {projects.length === 0 ? (
             <div className="empty-state">

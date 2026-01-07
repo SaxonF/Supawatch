@@ -1,5 +1,6 @@
 import type { Tab } from "../types";
 import "./Tabs.css";
+import { Button } from "./ui/button";
 
 interface TabsProps {
   activeTab: Tab;
@@ -8,31 +9,37 @@ interface TabsProps {
 
 export function Tabs({ activeTab, onTabChange }: TabsProps) {
   return (
-    <div className="flex items-center gap-4">
-      <button
-        className={`text-muted-foreground ${
-          activeTab === "projects" ? "text-primary" : ""
+    <div className="flex items-center">
+      <Button
+        variant="ghost"
+        size="sm"
+        className={`${
+          activeTab === "projects" ? "text-primary" : "text-muted-foreground"
         }`}
         onClick={() => onTabChange("projects")}
       >
         Projects
-      </button>
-      <button
-        className={`text-muted-foreground ${
-          activeTab === "logs" ? "text-primary" : ""
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className={`${
+          activeTab === "logs" ? "text-primary" : "text-muted-foreground"
         }`}
         onClick={() => onTabChange("logs")}
       >
         Logs
-      </button>
-      <button
-        className={`text-muted-foreground ${
-          activeTab === "settings" ? "text-primary" : ""
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className={`${
+          activeTab === "settings" ? "text-primary" : "text-muted-foreground"
         }`}
         onClick={() => onTabChange("settings")}
       >
         Settings
-      </button>
+      </Button>
     </div>
   );
 }

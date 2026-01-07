@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import * as api from "../api";
+import { Button } from "./ui/button";
 
 export function Settings() {
   const [token, setToken] = useState("");
@@ -7,7 +8,7 @@ export function Settings() {
   const [isValidating, setIsValidating] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
+  const [, setSuccess] = useState<string | null>(null);
 
   useEffect(() => {
     checkToken();
@@ -84,12 +85,13 @@ export function Settings() {
               className="bg-chart-2/25 border border-chart-2 rounded-xl h-12 px-6 block w-full"
               disabled={isSaving}
             />
-            <button
-              className="bg-accent text-primary rounded-xl h-12 px-6"
+            <Button
+              variant="outline"
+              className="h-12 px-6 rounded-xl"
               onClick={handleClear}
             >
               Clear
-            </button>
+            </Button>
           </div>
         ) : (
           <div className="w-full flex items-center gap-2">
@@ -101,13 +103,13 @@ export function Settings() {
               className="bg-input border border-border rounded-xl h-12 px-6 block w-full"
               disabled={isSaving}
             />
-            <button
-              className="bg-accent text-primary rounded-xl h-12 px-6"
+            <Button
+              className="h-12 px-6 rounded-xl"
               onClick={handleSave}
               disabled={isSaving || !token.trim()}
             >
               {isValidating ? "Validating..." : isSaving ? "Saving..." : "Save"}
-            </button>
+            </Button>
           </div>
         )}
 

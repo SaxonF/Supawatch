@@ -4,12 +4,21 @@ import {
   Code,
   Database,
   Filter,
+  RefreshCcw,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import * as api from "../api";
 import type { Project, SupabaseLogEntry } from "../types";
+import { Button } from "./ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
 
 function LogEntryItem({ log }: { log: SupabaseLogEntry }) {
   const [showMetadata, setShowMetadata] = useState(false);
@@ -61,18 +70,18 @@ function LogEntryItem({ log }: { log: SupabaseLogEntry }) {
   return (
     <div className={`bg-muted ${getLogClass(log)}`}>
       <div className="flex items-center gap-3 p-3 shadow-sm rounded-lg">
-        <button
+        <Button
+          variant="ghost"
+          size="icon-sm"
           onClick={() => hasMetadata && setShowMetadata(!showMetadata)}
-          className={`p-1 rounded hover:bg-white/10 ${
-            !hasMetadata ? "opacity-0 pointer-events-none" : ""
-          }`}
+          className={!hasMetadata ? "opacity-0 pointer-events-none" : ""}
         >
           {showMetadata ? (
             <ChevronDown size={14} className="text-muted-foreground" />
           ) : (
             <ChevronRight size={14} className="text-muted-foreground" />
           )}
-        </button>
+        </Button>
         <div className="flex-1 whitespace-pre-wrap break-all flex flex-col gap-1">
           <div className="flex items-baseline gap-2">
             <span className="text-foreground">{log.event_message}</span>
@@ -265,40 +274,48 @@ cross join unnest(m.parsed) as parsed`;
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <div className="flex items-center gap-4 justify-between p-5 pb-0 shrink-0">
-        <select
+        <Select
           value={selectedProjectId}
-          onChange={(e) => setSelectedProjectId(e.target.value)}
+          onValueChange={setSelectedProjectId}
           disabled={projects.length === 0}
-          className="flex-1 h-10"
         >
-          {projects.length === 0 ? (
-            <option value="">No projects found</option>
-          ) : (
-            projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))
-          )}
-        </select>
+          <SelectTrigger className="flex-1 h-10">
+            <SelectValue placeholder="Select project" />
+          </SelectTrigger>
+          <SelectContent>
+            {projects.length === 0 ? (
+              <SelectItem value="none" disabled>
+                No projects found
+              </SelectItem>
+            ) : (
+              projects.map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {p.name}
+                </SelectItem>
+              ))
+            )}
+          </SelectContent>
+        </Select>
         <div className="logs-actions flex items-center gap-2">
-          <button
-            className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${
-              showErrorsOnly
-                ? "bg-red-500/10 text-red-500 border border-red-500/20"
-                : "bg-muted text-muted-foreground hover:bg-white/10"
-            }`}
+          <Button
+            variant={"outline"}
+            size="icon"
             onClick={() => setShowErrorsOnly(!showErrorsOnly)}
             title={showErrorsOnly ? "Showing errors only" : "Showing all logs"}
           >
-            <Filter size={16} />
-          </button>
-          <button
-            className="text-sm h-10 px-4 rounded-xl bg-muted hover:bg-white/10 transition-colors"
+            <Filter
+              size={16}
+              className={showErrorsOnly ? "text-destructive" : ""}
+            />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-10 px-4"
             onClick={() => selectedProjectId && loadLogs(selectedProjectId)}
           >
-            Refresh
-          </button>
+            <RefreshCcw size={16} />
+          </Button>
         </div>
       </div>
       <div className="flex-1 overflow-auto p-5">
