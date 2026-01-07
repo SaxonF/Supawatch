@@ -88,6 +88,27 @@ pub struct DeployResponse {
     pub version: i32,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct ApiKey {
+    pub api_key: String,
+    pub id: String,
+    pub name: String,
+    pub role: Option<String>,
+    #[serde(rename = "type")]
+    pub key_type: String,
+    #[serde(default)]
+    pub reveal: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct CreateApiKeyBody {
+    #[serde(rename = "type")]
+    key_type: String,
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    secret_jwt_template: Option<serde_json::Value>,
+}
+
 /// Represents a single file in a function
 pub struct FunctionFile {
     pub name: String,
@@ -775,5 +796,97 @@ impl SupabaseApi {
             Some(&now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
         )
         .await
+    }
+
+    /// Get API keys for a project
+    pub async fn get_api_keys(&self, project_ref: &str) -> Result<Vec<ApiKey>, ApiError> {
+        let url = format!(
+            "{}/v1/projects/{}/api-keys?reveal=true",
+            SUPABASE_API_BASE, project_ref
+        );
+
+        let response = self
+            .client
+            .get(&url)
+            .header("Authorization", self.auth_header())
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let message = response.text().await.unwrap_or_default();
+            return Err(ApiError::ApiError { status, message });
+        }
+
+        Ok(response.json().await?)
+    }
+
+    /// Create a new API key
+    pub async fn create_api_key(
+        &self,
+        project_ref: &str,
+        key_type: &str,
+        name: &str,
+        role: Option<&str>,
+    ) -> Result<ApiKey, ApiError> {
+        let url = format!(
+            "{}/v1/projects/{}/api-keys?reveal=true",
+            SUPABASE_API_BASE, project_ref
+        );
+
+        let body = CreateApiKeyBody {
+            key_type: key_type.to_string(),
+            name: name.to_string(),
+            secret_jwt_template: role.map(|r| {
+                serde_json::json!({
+                    "role": r
+                })
+            }),
+        };
+
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", self.auth_header())
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let message = response.text().await.unwrap_or_default();
+            return Err(ApiError::ApiError { status, message });
+        }
+
+        Ok(response.json().await?)
+    }
+
+    /// Ensure required API keys exist (publishable and secret)
+    /// Returns the publishable key
+    pub async fn ensure_api_keys(&self, project_ref: &str) -> Result<String, ApiError> {
+        let keys = self.get_api_keys(project_ref).await?;
+
+        // Check for publishable key
+        let publishable_key = keys.iter()
+            .find(|k| k.key_type == "publishable")
+            .map(|k| k.api_key.clone());
+
+        let final_publishable_key = if let Some(pk) = publishable_key {
+            pk
+        } else {
+             // Create publishable key
+             let k = self.create_api_key(project_ref, "publishable", "default", None).await?;
+             k.api_key
+        };
+
+        // Check for secret key
+        let secret_key_exists = keys.iter().any(|k| k.key_type == "secret");
+        if !secret_key_exists {
+            // Create secret key (service_role)
+            let _ = self.create_api_key(project_ref, "secret", "default", Some("service_role")).await?;
+        }
+
+        Ok(final_publishable_key)
     }
 }
