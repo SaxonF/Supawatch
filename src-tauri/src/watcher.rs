@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::models::{FileChange, FileChangeType, LogEntry, LogSource};
 use crate::state::AppState;
+use crate::tray::update_icon;
 
 // Track last push time per project to debounce rapid file changes
 static PUSH_DEBOUNCE: Lazy<Mutex<HashMap<Uuid, Instant>>> = Lazy::new(|| Mutex::new(HashMap::new()));
@@ -200,6 +201,8 @@ async fn handle_schema_push(
     // Get API client
     let api = state.get_api_client().await.map_err(|e| e.to_string())?;
 
+    update_icon(&app_handle, true);
+
     let log = LogEntry::info(
         Some(project_id),
         LogSource::Schema,
@@ -220,6 +223,7 @@ async fn handle_schema_push(
             );
             state.add_log(log.clone()).await;
             app_handle.emit("log", &log).ok();
+            update_icon(&app_handle, false);
             return Err(e);
         }
     };
@@ -242,6 +246,7 @@ async fn handle_schema_push(
             );
             state.add_log(log.clone()).await;
             app_handle.emit("log", &log).ok();
+            update_icon(&app_handle, false);
             return Err("Schema file not found".to_string());
         }
     };
@@ -257,6 +262,7 @@ async fn handle_schema_push(
             );
             state.add_log(log.clone()).await;
             app_handle.emit("log", &log).ok();
+            update_icon(&app_handle, false);
             return Err(e);
         }
     };
@@ -266,13 +272,29 @@ async fn handle_schema_push(
 
     if diff.is_destructive() {
         let summary = diff.summarize();
-        let log = LogEntry::error(
+        let log = LogEntry::warning(
             Some(project_id),
             LogSource::Schema,
-            format!("Destructive changes detected! Auto-push aborted.\nPlease push manually to confirm:\n{}", summary),
+            "Destructive changes detected. Waiting for user confirmation...".to_string(),
         );
         state.add_log(log.clone()).await;
         app_handle.emit("log", &log).ok();
+
+        #[derive(serde::Serialize, Clone)]
+        struct ConfirmationPayload {
+            project_id: Uuid,
+            summary: String,
+        }
+
+        app_handle.emit("schema-push-confirmation-needed", ConfirmationPayload {
+            project_id,
+            summary,
+        }).ok();
+
+        // Request user attention
+        let _ = app_handle.get_webview_window("main").map(|w| w.request_user_attention(Some(tauri::UserAttentionType::Critical)));
+
+        update_icon(&app_handle, false);
         return Ok(());
     }
 
@@ -287,6 +309,7 @@ async fn handle_schema_push(
         );
         state.add_log(log.clone()).await;
         app_handle.emit("log", &log).ok();
+        update_icon(&app_handle, false);
         return Ok(());
     }
 
@@ -309,6 +332,7 @@ async fn handle_schema_push(
         );
         state.add_log(log.clone()).await;
         app_handle.emit("log", &log).ok();
+        update_icon(&app_handle, false);
         return Err(err);
     }
 
@@ -320,6 +344,7 @@ async fn handle_schema_push(
     state.add_log(log.clone()).await;
     app_handle.emit("log", &log).ok();
 
+    update_icon(&app_handle, false);
     Ok(())
 }
 

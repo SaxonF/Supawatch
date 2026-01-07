@@ -19,7 +19,8 @@ const NSWindowStyleMaskNonActivatingPanel: i32 = 1 << 7;
 
 pub fn swizzle_to_menubar_panel(app_handle: &tauri::AppHandle) {
     let panel_delegate = panel_delegate!(SpotlightPanelDelegate {
-        window_did_resign_key
+        window_did_resign_key,
+        window_should_close
     });
 
     let window = app_handle.get_webview_window("main").unwrap();
@@ -29,10 +30,24 @@ pub fn swizzle_to_menubar_panel(app_handle: &tauri::AppHandle) {
     let handle = app_handle.clone();
 
     panel_delegate.set_listener(Box::new(move |delegate_name: String| {
-        if delegate_name.as_str() == "window_did_resign_key" {
-            let _ = handle.emit("menubar_panel_did_resign_key", ());
+        match delegate_name.as_str() {
+            "window_did_resign_key" => {
+                let _ = handle.emit("menubar_panel_did_resign_key", ());
+            }
+            "window_should_close" => {
+                // Return false to prevent the window from closing
+                // The panel should only be hidden, not destroyed
+            }
+            _ => {}
         }
     }));
+
+    // Prevent the window from being released when closed
+    // This is crucial for menu bar apps where the window is hidden, not closed
+    let ns_window: id = window.ns_window().unwrap() as _;
+    unsafe {
+        let _: () = msg_send![ns_window, setReleasedWhenClosed: NO];
+    }
 
     panel.set_level(NSMainMenuWindowLevel + 1);
 
@@ -49,13 +64,17 @@ pub fn swizzle_to_menubar_panel(app_handle: &tauri::AppHandle) {
 
 pub fn setup_menubar_panel_listeners(app_handle: &AppHandle) {
     fn hide_menubar_panel(app_handle: &tauri::AppHandle) {
+        use tauri_nspanel::ManagerExt as _;
+        
         if check_menubar_frontmost() {
             return;
         }
 
         let panel = app_handle.get_webview_panel("main").unwrap();
 
-        panel.order_out(None);
+        if panel.is_visible() {
+             let _ = panel.order_out(None);
+        }
     }
 
     let handle = app_handle.clone();

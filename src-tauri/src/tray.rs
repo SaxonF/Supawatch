@@ -1,7 +1,7 @@
 use tauri::{
     image::Image,
     tray::{MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
-    AppHandle,
+    AppHandle, Manager, Runtime,
 };
 use tauri_nspanel::ManagerExt;
 
@@ -25,11 +25,25 @@ pub fn create(app_handle: &AppHandle) -> tauri::Result<TrayIcon> {
                         return;
                     }
 
-                    position_menubar_panel(app_handle, 0.0);
+                    position_menubar_panel(app_handle, 30.0);
 
                     panel.show();
                 }
             }
         })
         .build(app_handle)
+}
+
+pub fn update_icon<R: Runtime>(app_handle: &AppHandle<R>, is_syncing: bool) {
+    if let Some(tray) = app_handle.tray_by_id("tray") {
+        let icon_bytes = if is_syncing {
+            include_bytes!("../icons/tray-syncing.png").to_vec()
+        } else {
+            include_bytes!("../icons/tray.png").to_vec()
+        };
+        
+        if let Ok(icon) = Image::from_bytes(&icon_bytes) {
+            let _ = tray.set_icon(Some(icon));
+        }
+    }
 }

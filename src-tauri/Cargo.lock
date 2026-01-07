@@ -2692,7 +2692,7 @@ checksum = "b52c1b33ff98142aecea13138bd399b68aa7ab5d9546c300988c345004001eea"
 [[package]]
 name = "monitor"
 version = "0.1.0"
-source = "git+https://github.com/ahkohd/tauri-toolkit?branch=v2#c7f4c56936d60888250d84bd24169f11b7b9e97a"
+source = "git+https://github.com/ahkohd/tauri-toolkit?branch=v2#5a8255e79ea739398787df009be385f8d296834e"
 dependencies = [
  "cocoa",
  "core-foundation 0.10.1",

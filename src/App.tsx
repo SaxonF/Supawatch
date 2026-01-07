@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
 
 import * as api from "./api";
@@ -30,12 +31,42 @@ function App() {
     initialize();
 
     // Listen for file changes to potentially auto-switch to logs
-    const unlisten = listen<FileChange>("file_change", (event) => {
+    const unlistenFileChange = listen<FileChange>("file_change", (event) => {
       console.log("File changed:", event.payload);
     });
 
+    const unlistenConfirmation = listen<{
+      project_id: string;
+      summary: string;
+    }>("schema-push-confirmation-needed", async (event) => {
+      const confirmed = await ask(
+        `Destructive changes detected during auto-push!\n\n${event.payload.summary}\n\nDo you want to force push these changes?`,
+        {
+          title: "Destructive Changes Detected",
+          kind: "warning",
+          okLabel: "Push Changes",
+          cancelLabel: "Cancel",
+        }
+      );
+
+      if (confirmed) {
+        try {
+          await api.pushProject(event.payload.project_id, true);
+          // Optional: Notify user of success via a toast or log
+          console.log("Forced push successful");
+        } catch (err) {
+          console.error("Failed to push project (forced):", err);
+          await ask(`Failed to push project: ${err}`, {
+            title: "Push Failed",
+            kind: "error",
+          });
+        }
+      }
+    });
+
     return () => {
-      unlisten.then((fn) => fn());
+      unlistenFileChange.then((fn) => fn());
+      unlistenConfirmation.then((fn) => fn());
     };
   }, []);
 

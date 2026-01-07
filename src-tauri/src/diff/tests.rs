@@ -514,3 +514,65 @@ fn test_foreign_key_on_update_comparison() {
 
     assert!(tables::foreign_keys_differ(&local, &remote));
 }
+
+#[test]
+fn test_destructive_change_detection() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    // 1. Drop Table -> Destructive
+    remote.tables.insert("users".into(), TableInfo {
+        schema: "public".into(),
+        table_name: "users".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+    });
+    // Local empty -> Drop table
+    let diff = compute_diff(&remote, &local);
+    assert!(diff.is_destructive(), "Dropping a table should be destructive");
+
+    // 2. Drop Column -> Destructive
+    let mut remote_with_col = remote.clone();
+    remote_with_col.tables.get_mut("users").unwrap().columns.insert("email".into(), ColumnInfo {
+        column_name: "email".into(),
+        data_type: "text".into(),
+        is_nullable: true,
+        column_default: None,
+        udt_name: "text".into(),
+        is_primary_key: false,
+        is_unique: false,
+        is_identity: false,
+        identity_generation: None,
+        collation: None,
+        enum_name: None,
+        is_array: false,
+        comment: None,
+    });
+
+    let mut local_with_table = local.clone();
+    local_with_table.tables.insert("users".into(), TableInfo {
+        schema: "public".into(),
+        table_name: "users".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+    }); // Table exists but no column -> Drop column
+
+    let diff = compute_diff(&remote_with_col, &local_with_table);
+    assert!(diff.is_destructive(), "Dropping a column should be destructive");
+
+    // 3. Safe change (Add table) -> Not Destructive
+    let diff = compute_diff(&local, &remote); // Inverse
+    assert!(!diff.is_destructive(), "Adding a table should NOT be destructive");
+}

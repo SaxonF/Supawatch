@@ -2,7 +2,6 @@ use std::path::Path;
 use std::sync::{Arc, Once};
 
 use tauri::{Emitter, Manager};
-use tauri_nspanel::ManagerExt;
 use uuid::Uuid;
 
 use crate::fns::{
@@ -12,6 +11,7 @@ use crate::models::{LogEntry, LogSource, Project, RemoteProject};
 use crate::state::AppState;
 use crate::supabase_api::Organization;
 use crate::watcher;
+use crate::tray::update_icon;
 use eszip::EszipV2;
 
 pub mod templates;
@@ -31,9 +31,10 @@ pub fn init(app_handle: tauri::AppHandle) {
 
 #[tauri::command]
 pub fn show_menubar_panel(app_handle: tauri::AppHandle) {
-    let panel = app_handle.get_webview_panel("main").unwrap();
-
-    panel.show();
+    if let Some(window) = app_handle.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
 }
 
 // Access token commands
@@ -117,6 +118,16 @@ pub async fn pull_project(
     app_handle: tauri::AppHandle,
     project_id: String,
 ) -> Result<String, String> {
+    update_icon(&app_handle, true);
+    let result = pull_project_internal(&app_handle, project_id).await;
+    update_icon(&app_handle, false);
+    result
+}
+
+async fn pull_project_internal(
+    app_handle: &tauri::AppHandle,
+    project_id: String,
+) -> Result<String, String> {
     let state = app_handle.state::<Arc<AppState>>();
     let uuid = Uuid::parse_str(&project_id).map_err(|e| e.to_string())?;
 
@@ -176,7 +187,7 @@ pub async fn pull_project(
     app_handle.emit("log", &log).ok();
 
     // 4. Pull Edge Functions
-    pull_edge_functions(&api, &project_ref, uuid, std::path::Path::new(&project.local_path), state.inner(), &app_handle).await?;
+    pull_edge_functions(&api, &project_ref, uuid, std::path::Path::new(&project.local_path), state.inner(), app_handle).await?;
 
     Ok(sql)
 }
@@ -302,9 +313,19 @@ async fn pull_edge_functions(
 
 
 #[tauri::command]
-
 pub async fn push_project(
     app_handle: tauri::AppHandle,
+    project_id: String,
+    force: Option<bool>,
+) -> Result<String, String> {
+    update_icon(&app_handle, true);
+    let result = push_project_internal(&app_handle, project_id, force).await;
+    update_icon(&app_handle, false);
+    result
+}
+
+async fn push_project_internal(
+    app_handle: &tauri::AppHandle,
     project_id: String,
     force: Option<bool>,
 ) -> Result<String, String> {

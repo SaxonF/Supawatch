@@ -1,3 +1,4 @@
+import { ask } from "@tauri-apps/plugin-dialog";
 import { open } from "@tauri-apps/plugin-shell";
 import {
   CloudDownload,
@@ -43,19 +44,30 @@ export function ProjectItem({ project, onUpdate, onDelete }: ProjectItemProps) {
   };
 
   const handlePull = async () => {
-    if (
-      !confirm(
-        `Overwrite local changes for "${project.name}"? This cannot be undone.`
-      )
-    )
-      return;
+    const confirmed = await ask(
+      `Overwrite local changes for "${project.name}"? This cannot be undone.`,
+      {
+        title: "Confirm Pull",
+        kind: "warning",
+        okLabel: "Overwrite",
+        cancelLabel: "Cancel",
+      }
+    );
+
+    if (!confirmed) return;
     setIsLoading(true);
     try {
       await api.pullProject(project.id);
-      alert("Project pulled successfully");
+      await ask("Project pulled successfully", {
+        title: "Success",
+        kind: "info",
+      });
     } catch (err) {
       console.error("Failed to pull project:", err);
-      alert("Failed to pull project: " + String(err));
+      await ask("Failed to pull project: " + String(err), {
+        title: "Error",
+        kind: "error",
+      });
     } finally {
       setIsLoading(false);
     }
@@ -66,30 +78,51 @@ export function ProjectItem({ project, onUpdate, onDelete }: ProjectItemProps) {
     try {
       const result = await api.pushProject(project.id);
       if (result === "No changes") {
-        alert("No schema changes detected");
+        await ask("No schema changes detected", {
+          title: "Info",
+          kind: "info",
+        });
       } else {
-        alert("Schema changes pushed successfully");
+        await ask("Schema changes pushed successfully", {
+          title: "Success",
+          kind: "info",
+        });
       }
     } catch (err) {
       const errorMsg = String(err);
       if (errorMsg.startsWith("CONFIRMATION_NEEDED:")) {
         const summary = errorMsg.replace("CONFIRMATION_NEEDED:", "");
-        if (
-          confirm(
-            `Destructive changes detected!\n${summary}\n\nAre you sure you want to proceed? This cannot be undone.`
-          )
-        ) {
+        const confirmed = await ask(
+          `Destructive changes detected!\n\n${summary}\n\nDo you want to force push these changes?`,
+          {
+            title: "Destructive Changes Detected",
+            kind: "warning",
+            okLabel: "Push Changes",
+            cancelLabel: "Cancel",
+          }
+        );
+
+        if (confirmed) {
           try {
             await api.pushProject(project.id, true);
-            alert("Schema changes pushed successfully");
+            await ask("Schema changes pushed successfully", {
+              title: "Success",
+              kind: "info",
+            });
           } catch (retryErr) {
             console.error("Failed to push project (forced):", retryErr);
-            alert("Failed to push project: " + String(retryErr));
+            await ask("Failed to push project: " + String(retryErr), {
+              title: "Error",
+              kind: "error",
+            });
           }
         }
       } else {
         console.error("Failed to push project:", err);
-        alert("Failed to push project: " + String(err));
+        await ask("Failed to push project: " + String(err), {
+          title: "Error",
+          kind: "error",
+        });
       }
     } finally {
       setIsLoading(false);
@@ -97,7 +130,14 @@ export function ProjectItem({ project, onUpdate, onDelete }: ProjectItemProps) {
   };
 
   const handleDelete = async () => {
-    if (!confirm(`Delete project "${project.name}"?`)) return;
+    const confirmed = await ask(`Delete project "${project.name}"?`, {
+      title: "Confirm Delete",
+      kind: "warning",
+      okLabel: "Delete",
+      cancelLabel: "Cancel",
+    });
+
+    if (!confirmed) return;
     try {
       await api.deleteProject(project.id);
       onDelete();
