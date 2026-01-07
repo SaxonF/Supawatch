@@ -53,6 +53,8 @@ pub async fn set_access_token(
     Ok(())
 }
 
+
+
 #[tauri::command]
 pub async fn has_access_token(app_handle: tauri::AppHandle) -> Result<bool, String> {
     let state = app_handle.state::<Arc<AppState>>();
@@ -296,6 +298,8 @@ async fn pull_edge_functions(
     }
     Ok(())
 }
+
+
 
 #[tauri::command]
 
@@ -796,6 +800,8 @@ pub async fn delete_project(app_handle: tauri::AppHandle, id: String) -> Result<
     Ok(())
 }
 
+
+
 #[tauri::command]
 pub async fn link_supabase_project(
     app_handle: tauri::AppHandle,
@@ -894,6 +900,23 @@ pub async fn clear_logs(
 
     state.clear_logs(uuid).await;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn reveal_in_finder(path: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-R")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to reveal in finder: {}", e))?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("Not supported on this OS".to_string())
+    }
 }
 
 // Supabase API commands

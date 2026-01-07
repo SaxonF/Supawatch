@@ -61,7 +61,7 @@ function App() {
   return (
     <div className="dark h-full border rounded-xl overflow-hidden">
       <div className="bg h-full flex flex-col">
-        <header className="shrink-0 flex items-center gap-4 px-5 py-4 bg-muted/50 border-b border-border justify-between">
+        <header className="shrink-0 flex items-center gap-4 px-5 py-4 border-b justify-between">
           <svg
             width="11"
             height="11"

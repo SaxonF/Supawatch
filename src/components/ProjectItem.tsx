@@ -108,7 +108,7 @@ export function ProjectItem({ project, onUpdate, onDelete }: ProjectItemProps) {
 
   const handleOpenFolder = async () => {
     try {
-      await open(project.local_path);
+      await api.revealInFinder(project.local_path);
     } catch (err) {
       console.error("Failed to open folder:", err);
     }
@@ -145,7 +145,7 @@ export function ProjectItem({ project, onUpdate, onDelete }: ProjectItemProps) {
           <span className="font-semibold whitespace-nowrap">
             {project.name}
           </span>
-          <div className="flex items-center gap-1 ml-1">
+          <div className="flex items-center gap-0">
             <Button
               variant="ghost"
               size="icon-sm"
@@ -170,7 +170,7 @@ export function ProjectItem({ project, onUpdate, onDelete }: ProjectItemProps) {
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-0">
         <Button
           variant="ghost"
           size="icon"

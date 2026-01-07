@@ -62,6 +62,10 @@ export async function deleteProject(id: string): Promise<void> {
   return invoke("delete_project", { id });
 }
 
+export async function revealInFinder(path: string): Promise<void> {
+  return invoke("reveal_in_finder", { path });
+}
+
 export async function linkSupabaseProject(
   projectId: string,
   supabaseProjectRef: string

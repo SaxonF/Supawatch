@@ -4,6 +4,7 @@ import * as api from "../api";
 import { Organization, RemoteProject } from "../types";
 import "./CreateProjectForm.css";
 import { Button } from "./ui/button";
+import { Input } from "./ui/input";
 import {
   Select,
   SelectContent,
@@ -208,8 +209,11 @@ export function CreateProjectForm({
                 onValueChange={setSelectedOrgId}
                 disabled={isFetchingData}
               >
-                <SelectTrigger id="org" className="w-full">
-                  <SelectValue placeholder="Select organization" />
+                <SelectTrigger id="org" className="w-full truncate">
+                  <SelectValue
+                    placeholder="Select organization"
+                    className="truncate w-full"
+                  />
                 </SelectTrigger>
                 <SelectContent>
                   {orgs.map((org) => (
@@ -227,7 +231,7 @@ export function CreateProjectForm({
             </div>
             <div className="grid grid-cols-[1fr_2fr] items-center gap-2 bg-muted/75 hover:bg-muted p-3 border-b">
               <label htmlFor="name">Project Name</label>
-              <input
+              <Input
                 id="name"
                 type="text"
                 value={name}

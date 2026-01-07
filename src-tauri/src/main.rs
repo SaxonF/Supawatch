@@ -45,6 +45,7 @@ fn main() {
             commands::update_project,
             commands::delete_project,
             commands::link_supabase_project,
+            commands::reveal_in_finder,
             // Template commands
             commands::templates::is_folder_empty,
             commands::templates::get_templates,
