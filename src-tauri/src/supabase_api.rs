@@ -66,12 +66,16 @@ pub struct EdgeFunction {
     pub version: i32,
     pub created_at: serde_json::Value,
     pub updated_at: serde_json::Value,
+    #[serde(default)]
+    pub entrypoint_path: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 struct FunctionMetadata {
     entrypoint_path: String,
     name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    import_map_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     verify_jwt: Option<bool>,
 }
@@ -84,9 +88,26 @@ pub struct DeployResponse {
     pub version: i32,
 }
 
+/// Represents a single file in a function
+pub struct FunctionFile {
+    pub name: String,
+    pub content: Vec<u8>,
+}
+
+/// Metadata from function body response
+#[derive(Debug, Deserialize, Default)]
+pub struct FunctionBodyMetadata {
+    #[serde(default)]
+    pub deno2_entrypoint_path: Option<String>,
+}
+
 pub struct FunctionBody {
     pub content_type: String,
     pub data: Vec<u8>,
+    /// Individual files (populated when multipart response)
+    pub files: Vec<FunctionFile>,
+    /// Metadata (populated when multipart response)
+    pub metadata: FunctionBodyMetadata,
 }
 
 pub struct SupabaseApi {
@@ -325,9 +346,20 @@ impl SupabaseApi {
             SUPABASE_API_BASE, project_ref, slug
         );
 
+        // Detect import map file (deno.json or import_map.json)
+        let import_map_path = files.iter()
+            .find(|(path, _)| {
+                let lower = path.to_lowercase();
+                lower == "deno.json" || lower == "deno.jsonc" || 
+                lower == "import_map.json" || lower.ends_with("/deno.json") ||
+                lower.ends_with("/deno.jsonc") || lower.ends_with("/import_map.json")
+            })
+            .map(|(path, _)| path.clone());
+
         let metadata = FunctionMetadata {
             entrypoint_path: entrypoint.to_string(),
             name: name.to_string(),
+            import_map_path,
             verify_jwt: Some(true),
         };
 
@@ -403,6 +435,8 @@ impl SupabaseApi {
     }
 
     /// Get edge function body (code)
+    /// 
+    /// Requests multipart/form-data format to get individual source files and metadata
     pub async fn get_function_body(
         &self,
         project_ref: &str,
@@ -417,6 +451,7 @@ impl SupabaseApi {
             .client
             .get(&url)
             .header("Authorization", self.auth_header())
+            .header("Accept", "multipart/form-data")
             .send()
             .await?;
 
@@ -434,8 +469,102 @@ impl SupabaseApi {
             .to_string();
 
         let data = response.bytes().await?.to_vec();
+        
+        // Parse multipart if available
+        let mut files = Vec::new();
+        let mut metadata = FunctionBodyMetadata::default();
+        
+        if content_type.contains("multipart/form-data") {
+            // Extract boundary from content-type
+            if let Some(boundary) = content_type
+                .split(';')
+                .filter_map(|part| {
+                    let part = part.trim();
+                    if part.starts_with("boundary=") {
+                        Some(part.trim_start_matches("boundary=").trim_matches('"'))
+                    } else {
+                        None
+                    }
+                })
+                .next()
+            {
+                // Parse multipart data
+                let boundary_bytes = format!("--{}", boundary);
+                let parts: Vec<&[u8]> = data
+                    .split(|&b| b == b'\n')
+                    .collect::<Vec<_>>()
+                    .split(|line| {
+                        let line_str = String::from_utf8_lossy(line);
+                        line_str.trim() == boundary_bytes || line_str.trim() == format!("{}--", boundary_bytes)
+                    })
+                    .filter(|p| !p.is_empty())
+                    .map(|chunk| {
+                        // Rejoin lines in each chunk
+                        chunk.join(&b'\n')
+                    })
+                    .collect::<Vec<Vec<u8>>>()
+                    .iter()
+                    .map(|v| v.as_slice())
+                    .collect();
+                
+                // Simple multipart parser - look for Content-Disposition headers
+                let data_str = String::from_utf8_lossy(&data);
+                let boundary_str = format!("--{}", boundary);
+                
+                for part in data_str.split(&boundary_str) {
+                    let part = part.trim();
+                    if part.is_empty() || part == "--" {
+                        continue;
+                    }
+                    
+                    // Split headers from body (double CRLF or double LF)
+                    let body_start = if let Some(pos) = part.find("\r\n\r\n") {
+                        pos + 4
+                    } else if let Some(pos) = part.find("\n\n") {
+                        pos + 2
+                    } else {
+                        continue;
+                    };
+                    
+                    let headers = &part[..body_start];
+                    let body = &part[body_start..];
+                    
+                    // Check for filename in Content-Disposition
+                    if let Some(filename) = headers
+                        .lines()
+                        .find(|line| line.to_lowercase().contains("content-disposition"))
+                        .and_then(|line| {
+                            line.split(';')
+                                .find(|part| part.trim().starts_with("filename="))
+                                .map(|part| {
+                                    part.trim()
+                                        .trim_start_matches("filename=")
+                                        .trim_matches('"')
+                                        .to_string()
+                                })
+                        })
+                    {
+                        // This is a file
+                        files.push(FunctionFile {
+                            name: filename,
+                            content: body.trim().as_bytes().to_vec(),
+                        });
+                    } else {
+                        // This might be metadata (JSON without filename)
+                        if let Ok(parsed_meta) = serde_json::from_str::<FunctionBodyMetadata>(body.trim()) {
+                            metadata = parsed_meta;
+                        }
+                    }
+                }
+            }
+        }
 
-        Ok(FunctionBody { content_type, data })
+        Ok(FunctionBody { 
+            content_type, 
+            data,
+            files,
+            metadata,
+        })
     }
 
     /// Get the current database schema (useful for diffing)

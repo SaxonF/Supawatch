@@ -31,7 +31,7 @@ pub fn create(app_handle: &AppHandle) -> tauri::Result<TrayIcon> {
                         return;
                     }
 
-                    position_menubar_panel(app_handle, 30.0);
+                    position_menubar_panel(app_handle, 0.0);
 
                     panel.show();
                 }

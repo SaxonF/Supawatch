@@ -18,7 +18,14 @@ pub async fn is_folder_empty(path: String) -> Result<bool, String> {
 
 #[tauri::command]
 pub async fn get_templates(app_handle: tauri::AppHandle) -> Result<Vec<String>, String> {
-    let resource_path = app_handle.path().resolve("templates", tauri::path::BaseDirectory::Resource).map_err(|e| e.to_string())?;
+    let resource_path = if cfg!(debug_assertions) {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")
+    } else {
+        app_handle
+            .path()
+            .resolve("templates", tauri::path::BaseDirectory::Resource)
+            .map_err(|e| e.to_string())?
+    };
     
     if !resource_path.exists() {
         return Ok(vec![]);
@@ -42,7 +49,14 @@ pub async fn copy_template(
     template_name: String, 
     target_path: String
 ) -> Result<(), String> {
-    let resource_path = app_handle.path().resolve("templates", tauri::path::BaseDirectory::Resource).map_err(|e| e.to_string())?;
+    let resource_path = if cfg!(debug_assertions) {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")
+    } else {
+        app_handle
+            .path()
+            .resolve("templates", tauri::path::BaseDirectory::Resource)
+            .map_err(|e| e.to_string())?
+    };
     let template_path = resource_path.join(&template_name);
     let target_dir = std::path::Path::new(&target_path);
 

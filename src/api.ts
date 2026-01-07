@@ -66,6 +66,10 @@ export async function revealInFinder(path: string): Promise<void> {
   return invoke("reveal_in_finder", { path });
 }
 
+export async function pickProjectFolder(): Promise<string | null> {
+  return invoke("pick_project_folder");
+}
+
 export async function linkSupabaseProject(
   projectId: string,
   supabaseProjectRef: string

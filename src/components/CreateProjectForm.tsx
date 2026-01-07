@@ -1,4 +1,3 @@
-import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
 import * as api from "../api";
 import { Organization, RemoteProject } from "../types";
@@ -83,14 +82,10 @@ export function CreateProjectForm({
 
   const selectFolder = async () => {
     try {
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        title: "Select Supabase Project Folder",
-      });
+      const selected = await api.pickProjectFolder();
 
       if (selected) {
-        const path = selected as string;
+        const path = selected;
         setLocalPath(path);
 
         // Check if empty
@@ -272,16 +267,14 @@ export function CreateProjectForm({
 
         <div className="grid grid-cols-[1fr_2fr] items-center gap-2 bg-muted/75 hover:bg-muted p-3">
           <label htmlFor="path">Local Folder</label>
-          <div className="path-input">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={selectFolder}
-              className="w-full justify-start font-normal"
-            >
-              {localPath ? localPath : "Browse"}
-            </Button>
-          </div>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={selectFolder}
+            className="max-w-full justify-start font-normal truncate"
+          >
+            <span className="truncate">{localPath ? localPath : "Browse"}</span>
+          </Button>
         </div>
 
         {mode === "create" && isEmptyFolder && templates.length > 0 && (
@@ -303,12 +296,6 @@ export function CreateProjectForm({
                 ))}
               </SelectContent>
             </Select>
-            <p
-              className="help-text"
-              style={{ fontSize: "0.8em", color: "#888", marginTop: "4px" }}
-            >
-              Your folder is empty. Initialize it with a starter template?
-            </p>
           </div>
         )}
       </div>

@@ -59,7 +59,7 @@ export function ProjectList() {
               </p>
             </div>
           ) : (
-            <div className="projects space-y-2 rounded-xl overflow-hidden">
+            <div className="space-y-1 rounded-xl overflow-hidden">
               {projects.map((project) => (
                 <ProjectItem
                   key={project.id}

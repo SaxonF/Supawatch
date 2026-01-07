@@ -28,6 +28,7 @@ fn main() {
             // Init commands
             commands::init,
             commands::show_menubar_panel,
+            commands::pick_project_folder,
             // Access token commands
             commands::set_access_token,
             commands::has_access_token,
@@ -77,6 +78,21 @@ fn main() {
             let app_handle = app.app_handle();
 
             tray::create(app_handle)?;
+
+            // Restart watchers for projects that were being watched
+            let app_handle_clone = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                let state = app_handle_clone.state::<Arc<AppState>>();
+                let projects = state.get_projects().await;
+
+                for project in projects {
+                    if project.is_watching {
+                        if let Err(e) = watcher::start_watching(&app_handle_clone, project.id, &project.local_path).await {
+                           eprintln!("Failed to restart watcher for {}: {}", project.name, e);
+                        }
+                    }
+                }
+            });
 
             Ok(())
         })

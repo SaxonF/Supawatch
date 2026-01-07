@@ -12,7 +12,7 @@ use crate::state::AppState;
 use crate::supabase_api::Organization;
 use crate::watcher;
 use crate::tray::update_icon;
-use eszip::EszipV2;
+// use eszip::EszipV2;
 
 pub mod templates;
 
@@ -35,6 +35,46 @@ pub fn show_menubar_panel(app_handle: tauri::AppHandle) {
         let _ = window.show();
         let _ = window.set_focus();
     }
+}
+
+#[tauri::command]
+pub async fn pick_project_folder(app_handle: tauri::AppHandle) -> Result<Option<String>, String> {
+    use crate::fns::IS_DIALOG_OPEN;
+    use std::sync::atomic::Ordering;
+    use tauri_plugin_dialog::DialogExt;
+
+    IS_DIALOG_OPEN.store(true, Ordering::Relaxed);
+    
+    let (tx, rx) = tokio::sync::oneshot::channel();
+
+    app_handle
+        .dialog()
+        .file()
+        .set_title("Select Supabase Project Folder")
+        .set_directory(dirs::home_dir().unwrap_or_default())
+        .pick_folder(move |path| {
+            let _ = tx.send(path);
+        });
+
+    let result = rx
+        .await
+        .map_err(|e| e.to_string())
+        .map(|path| path.map(|p| p.to_string()));
+
+    IS_DIALOG_OPEN.store(false, Ordering::Relaxed);
+
+    // After closing dialog, ensure we re-focus if needed, 
+    // though the blur event might have already fired.
+    // The key is that hide_menubar_panel checked the flag during the blur.
+    
+    // If the panel was hidden for some reason, show it again?
+    // Actually, if we prevented the hide, it should still be there.
+    // But focusing the webview again is good practice.
+    if let Some(window) = app_handle.get_webview_window("main") {
+        let _ = window.set_focus();
+    }
+
+    result
 }
 
 // Access token commands
@@ -230,59 +270,89 @@ async fn pull_edge_functions(
                 
                 match api.get_function_body(project_ref, &func.slug).await {
                     Ok(body) => {
-                        let (filename, is_binary) = if body.content_type == "application/vnd.denoland.eszip" || body.content_type == "application/octet-stream" {
-                             ("function.eszip", true)
-                        } else {
-                             ("index.ts", false)
-                        };
+                        let mut saved_files = false;
                         
-                        let mut unpacked = false;
-                        if is_binary {
-                             let reader = futures::io::Cursor::new(body.data.clone());
-                             let buf_reader = futures::io::BufReader::new(reader);
-                             
-                             if let Ok((eszip, loader)) = eszip::EszipV2::parse(buf_reader).await {
-                                 let loader_handle = tokio::spawn(async move {
-                                     let _ = loader.await;
-                                 });
-
-                                 let specifiers = eszip.specifiers();
-                                 for specifier in specifiers {
-                                     if specifier.starts_with("file:///") {
-                                         if let Some(module) = eszip.get_module(&specifier) {
-                                             if let Some(source) = module.source().await {
-                                                 let path_str = specifier.trim_start_matches("file:///");
-                                                 let output_path = if path_str.ends_with("/index.ts") || path_str == "index.ts" {
-                                                      Some("index.ts")
-                                                 } else if !path_str.contains("node_modules") && !path_str.contains("deno_dir") {
-                                                      std::path::Path::new(path_str).file_name().and_then(|n| n.to_str())
-                                                 } else {
-                                                      None
-                                                 };
-
-                                                 if let Some(out_name) = output_path {
-                                                      let _ = tokio::fs::write(func_dir.join(out_name), source).await;
-                                                      unpacked = true;
-                                                 }
-                                             }
-                                         }
-                                     }
-                                 }
-                                 loader_handle.abort();
-                             }
-                             
-                             if !unpacked {
-                                  let _ = tokio::fs::write(func_dir.join("function.eszip"), &body.data).await;
-                                  let notice = format!("// The source code for function '{}' could not be unpacked.\n// The deployed bundle has been downloaded as 'function.eszip'.", func.slug);
-                                  let _ = tokio::fs::write(func_dir.join("index.ts"), notice).await;
-                             }
-                        } else {
-                             let file_path = func_dir.join("index.ts");
-                             if let Err(e) = tokio::fs::write(&file_path, &body.data).await {
-                                  let log = LogEntry::error(Some(project_id), LogSource::System, format!("Failed to save function {}: {}", func.slug, e));
-                                  state.add_log(log).await;
-                             }
+                        // First: try to use multipart files if available (best option)
+                        if !body.files.is_empty() {
+                            println!("[DEBUG] Got {} multipart files for {}", body.files.len(), func.slug);
+                            for file in &body.files {
+                                // Strip leading "source/" or "src/" prefix if present
+                                let file_name = file.name
+                                    .strip_prefix("source/")
+                                    .or_else(|| file.name.strip_prefix("src/"))
+                                    .unwrap_or(&file.name);
+                                let file_path = func_dir.join(file_name);
+                                // Create any subdirectories if needed (for nested files)
+                                if let Some(parent) = file_path.parent() {
+                                    if parent != func_dir.as_path() {
+                                        let _ = tokio::fs::create_dir_all(parent).await;
+                                    }
+                                }
+                                let _ = tokio::fs::write(&file_path, &file.content).await;
+                                println!("[DEBUG] Wrote {} for {}", file_name, func.slug);
+                            }
+                            // Clean up old eszip if we got real files
+                            let _ = tokio::fs::remove_file(func_dir.join("function.eszip")).await;
+                            // Clean up old source folder if it exists
+                            let _ = tokio::fs::remove_dir_all(func_dir.join("source")).await;
+                            saved_files = true;
                         }
+                        
+                        // Second: if no multipart files, check if it's plain text TypeScript
+                        if !saved_files && body.content_type.contains("text/") || body.content_type.contains("typescript") {
+                            let _ = tokio::fs::write(func_dir.join("index.ts"), &body.data).await;
+                            let _ = tokio::fs::remove_file(func_dir.join("function.eszip")).await;
+                            saved_files = true;
+                        }
+                        
+                        // Third: try eszip unpacking as last resort
+                        if !saved_files && (body.content_type == "application/vnd.denoland.eszip" || body.content_type == "application/octet-stream") {
+                            let reader = futures::io::Cursor::new(body.data.clone());
+                            let buf_reader = futures::io::BufReader::new(reader);
+                            
+                            if let Ok((eszip, loader)) = eszip::EszipV2::parse(buf_reader).await {
+                                let loader_handle = tokio::spawn(async move { loader.await });
+                                let specifiers = eszip.specifiers();
+                                println!("[DEBUG] Found {} specifiers in eszip for {}", specifiers.len(), func.slug);
+                                
+                                // Try file:/// specifiers first (older format)
+                                for specifier in &specifiers {
+                                    if specifier.starts_with("file:///") {
+                                        let path_str = specifier.trim_start_matches("file:///");
+                                        if !path_str.contains("node_modules") && !path_str.contains("deno_dir") {
+                                            if let Some(module) = eszip.get_module(specifier) {
+                                                if let Some(source) = module.source().await {
+                                                    let out_name = std::path::Path::new(path_str)
+                                                        .file_name()
+                                                        .and_then(|n| n.to_str())
+                                                        .unwrap_or("index.ts");
+                                                    let _ = tokio::fs::write(func_dir.join(out_name), source).await;
+                                                    saved_files = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                loader_handle.abort();
+                                
+                                if saved_files {
+                                    let _ = tokio::fs::remove_file(func_dir.join("function.eszip")).await;
+                                }
+                            }
+                        }
+                        
+                        // Fallback: save the raw data
+                        if !saved_files {
+                            let _ = tokio::fs::remove_file(func_dir.join("index.ts")).await;
+                            let _ = tokio::fs::write(func_dir.join("function.eszip"), &body.data).await;
+                            let notice = format!(
+                                "// The source code for function '{}' could not be unpacked.\n// The deployed bundle has been downloaded as 'function.eszip'.",
+                                func.slug
+                            );
+                            let _ = tokio::fs::write(func_dir.join("index.ts"), notice).await;
+                        }
+                        
                         func_count += 1;
                     },
                     Err(e) => {
@@ -751,88 +821,83 @@ pub async fn create_project(
                                
                                match api.get_function_body(&refer, &func.slug).await {
                                    Ok(body) => {
-                                       // Check content type to determine extension
-                                       let (filename, is_binary) = if body.content_type == "application/vnd.denoland.eszip" || body.content_type == "application/octet-stream" {
-                                           ("function.eszip", true)
-                                       } else {
-                                           ("index.ts", false)
-                                       };
+                                       let mut saved_files = false;
                                        
-                                       if is_binary {
-                                            // Attempt to unpack ESZIP
-                                            println!("[DEBUG] Starting ESZIP unpack for {}", func.slug);
-                                            let reader = futures::io::Cursor::new(body.data.clone());
-                                            let buf_reader = futures::io::BufReader::new(reader);
-                                            let mut unpacked = false;
-                                            
-                                            println!("[DEBUG] About to parse ESZIP...");
-                                            // We use a block to capture the result of unpacking attempt
-                                            if let Ok((eszip, loader)) = eszip::EszipV2::parse(buf_reader).await {
-                                                println!("[DEBUG] ESZIP parsed successfully");
-                                                // Spawn the loader to drive it in the background
-                                                // The loader must run for module.source() to return data
-                                                let loader_handle = tokio::spawn(async move {
-                                                    println!("[DEBUG] Loader task started");
-                                                    let _ = loader.await;
-                                                    println!("[DEBUG] Loader task completed");
-                                                });
-
-                                                let specifiers = eszip.specifiers();
-                                                println!("[DEBUG] Found {} specifiers", specifiers.len());
-                                                for specifier in specifiers {
-                                                    // Filter for local files (usually starting with file:///)
-                                                    // and ignore remote dependencies (http/https usually, but eszip might bundle them)
-                                                    if specifier.starts_with("file:///") {
-                                                        println!("[DEBUG] Processing specifier: {}", specifier);
-                                                        if let Some(module) = eszip.get_module(&specifier) {
-                                                            println!("[DEBUG] Got module, awaiting source...");
-                                                            if let Some(source) = module.source().await {
-                                                                println!("[DEBUG] Got source, {} bytes", source.len());
-                                                                // Extract filename from specifier
-                                                                // e.g. file:///src/index.ts -> index.ts
-                                                                // e.g. file:///src/utils/helper.ts -> utils/helper.ts
-                                                                let path_str = specifier.trim_start_matches("file:///");
-                                                                
-                                                                let output_path = if path_str.ends_with("/index.ts") || path_str == "index.ts" {
-                                                                     Some("index.ts")
-                                                                } else if !path_str.contains("node_modules") && !path_str.contains("deno_dir") {
-                                                                     std::path::Path::new(path_str).file_name().and_then(|n| n.to_str())
-                                                                } else {
-                                                                     None
-                                                                };
-
-                                                                if let Some(out_name) = output_path {
-                                                                     let _ = tokio::fs::write(func_dir.join(out_name), source).await;
-                                                                     unpacked = true;
-                                                                }
-                                                            } else {
-                                                                println!("[DEBUG] module.source() returned None");
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                
-                                                println!("[DEBUG] Finished processing specifiers, aborting loader");
-                                                // Abort the loader if we're done
-                                                loader_handle.abort();
-                                            } else {
-                                                println!("[DEBUG] ESZIP parse failed");
-                                            }
-
-                                            if !unpacked {
-                                                 // Fallback: save eszip
-                                                 let _ = tokio::fs::write(func_dir.join("function.eszip"), &body.data).await;
-                                                 let notice = format!("// The source code for function '{}' could not be unpacked.\n// The deployed bundle has been downloaded as 'function.eszip'.", func.slug);
-                                                 let _ = tokio::fs::write(func_dir.join("index.ts"), notice).await;
-                                            }
-                                       } else {
-                                            // Plain text
-                                            let file_path = func_dir.join("index.ts");
-                                            if let Err(e) = tokio::fs::write(&file_path, &body.data).await {
-                                                 let log = LogEntry::error(None, LogSource::System, format!("Failed to save function {}: {}", func.slug, e));
-                                                 state.add_log(log).await;
-                                            }
+                                       // First: try to use multipart files if available (best option)
+                                       if !body.files.is_empty() {
+                                           println!("[DEBUG] Got {} multipart files for {}", body.files.len(), func.slug);
+                                           for file in &body.files {
+                                               // Strip leading "source/" or "src/" prefix if present
+                                               let file_name = file.name
+                                                   .strip_prefix("source/")
+                                                   .or_else(|| file.name.strip_prefix("src/"))
+                                                   .unwrap_or(&file.name);
+                                               let file_path = func_dir.join(file_name);
+                                               if let Some(parent) = file_path.parent() {
+                                                   if parent != func_dir.as_path() {
+                                                       let _ = tokio::fs::create_dir_all(parent).await;
+                                                   }
+                                               }
+                                               let _ = tokio::fs::write(&file_path, &file.content).await;
+                                           }
+                                           let _ = tokio::fs::remove_file(func_dir.join("function.eszip")).await;
+                                           let _ = tokio::fs::remove_dir_all(func_dir.join("source")).await;
+                                           saved_files = true;
                                        }
+                                       
+                                       // Second: if no multipart files, check if it's plain text TypeScript
+                                       if !saved_files && body.content_type.contains("text/") || body.content_type.contains("typescript") {
+                                           let _ = tokio::fs::write(func_dir.join("index.ts"), &body.data).await;
+                                           let _ = tokio::fs::remove_file(func_dir.join("function.eszip")).await;
+                                           saved_files = true;
+                                       }
+                                       
+                                       // Third: try eszip unpacking as last resort
+                                       if !saved_files && (body.content_type == "application/vnd.denoland.eszip" || body.content_type == "application/octet-stream") {
+                                           let reader = futures::io::Cursor::new(body.data.clone());
+                                           let buf_reader = futures::io::BufReader::new(reader);
+                                           
+                                           if let Ok((eszip, loader)) = eszip::EszipV2::parse(buf_reader).await {
+                                               let loader_handle = tokio::spawn(async move { loader.await });
+                                               let specifiers = eszip.specifiers();
+                                               
+                                               for specifier in &specifiers {
+                                                   if specifier.starts_with("file:///") {
+                                                       let path_str = specifier.trim_start_matches("file:///");
+                                                       if !path_str.contains("node_modules") && !path_str.contains("deno_dir") {
+                                                           if let Some(module) = eszip.get_module(specifier) {
+                                                               if let Some(source) = module.source().await {
+                                                                   let out_name = std::path::Path::new(path_str)
+                                                                       .file_name()
+                                                                       .and_then(|n| n.to_str())
+                                                                       .unwrap_or("index.ts");
+                                                                   let _ = tokio::fs::write(func_dir.join(out_name), source).await;
+                                                                   saved_files = true;
+                                                               }
+                                                           }
+                                                       }
+                                                   }
+                                               }
+                                               
+                                               loader_handle.abort();
+                                               
+                                               if saved_files {
+                                                   let _ = tokio::fs::remove_file(func_dir.join("function.eszip")).await;
+                                               }
+                                           }
+                                       }
+                                       
+                                       // Fallback: save the raw data
+                                       if !saved_files {
+                                           let _ = tokio::fs::remove_file(func_dir.join("index.ts")).await;
+                                           let _ = tokio::fs::write(func_dir.join("function.eszip"), &body.data).await;
+                                           let notice = format!(
+                                               "// The source code for function '{}' could not be unpacked.\n// The deployed bundle has been downloaded as 'function.eszip'.",
+                                               func.slug
+                                           );
+                                           let _ = tokio::fs::write(func_dir.join("index.ts"), notice).await;
+                                       }
+                                       
                                        func_count += 1;
                                    },
                                    Err(e) => {
