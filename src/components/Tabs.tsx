@@ -8,21 +8,27 @@ interface TabsProps {
 
 export function Tabs({ activeTab, onTabChange }: TabsProps) {
   return (
-    <div className="tabs">
+    <div className="flex items-center gap-4">
       <button
-        className={`tab ${activeTab === "projects" ? "active" : ""}`}
+        className={`text-muted-foreground ${
+          activeTab === "projects" ? "text-primary" : ""
+        }`}
         onClick={() => onTabChange("projects")}
       >
         Projects
       </button>
       <button
-        className={`tab ${activeTab === "logs" ? "active" : ""}`}
+        className={`text-muted-foreground ${
+          activeTab === "logs" ? "text-primary" : ""
+        }`}
         onClick={() => onTabChange("logs")}
       >
         Logs
       </button>
       <button
-        className={`tab ${activeTab === "settings" ? "active" : ""}`}
+        className={`text-muted-foreground ${
+          activeTab === "settings" ? "text-primary" : ""
+        }`}
         onClick={() => onTabChange("settings")}
       >
         Settings

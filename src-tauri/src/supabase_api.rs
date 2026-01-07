@@ -588,20 +588,18 @@ impl SupabaseApi {
         // Select metadata to get error_severity, user_name, query etc.
         // Filter to only show errors to reduce noise
         let sql = r#"select 
+                    identifier, 
+                    postgres_logs.timestamp, 
                     id, 
-                    datetime(t.timestamp) as timestamp, 
                     event_message, 
-                    p.error_severity, 
-                    p.query, 
-                    p.user_name,
-                    p.detail,
-                    p.hint
-                     from postgres_logs as t
-                     cross join unnest(metadata) as m
-                     cross join unnest(m.parsed) as p
-                     where p.error_severity in ('ERROR', 'FATAL', 'PANIC')
-                     order by timestamp desc
-                     limit 100"#;
+                    parsed.error_severity, 
+                    parsed.detail, 
+                    parsed.hint 
+                    from postgres_logs
+                    cross join unnest(metadata) as m
+                    cross join unnest(m.parsed) as parsed
+                    order by timestamp desc
+                    limit 100"#;
 
         self.query_logs(
             project_ref,

@@ -59,14 +59,15 @@ function App() {
   }
 
   return (
-    <div className="app">
-      <header className="app-header">
-        <h1>Supawatch</h1>
+    <div className="bg h-full flex flex-col">
+      <header className="shrink-0 flex items-center gap-4 px-5 py-4 bg-muted/50 border-b border-border justify-between">
+        <h1 className="font-semibold">Supawatch</h1>
+        <Tabs activeTab={activeTab} onTabChange={setActiveTab} />
       </header>
 
-      <Tabs activeTab={activeTab} onTabChange={setActiveTab} />
-
-      <main className="app-content">{renderContent()}</main>
+      <main className="flex-1 flex flex-col overflow-hidden">
+        {renderContent()}
+      </main>
     </div>
   );
 }

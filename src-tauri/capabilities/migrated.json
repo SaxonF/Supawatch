@@ -2,9 +2,7 @@
   "identifier": "migrated",
   "description": "Supawatch app permissions",
   "local": true,
-  "windows": [
-    "main"
-  ],
+  "windows": ["main"],
   "permissions": [
     "core:path:default",
     "core:event:default",
@@ -23,6 +21,7 @@
     "fs:allow-read-dir",
     "shell:default",
     "shell:allow-spawn",
-    "shell:allow-execute"
+    "shell:allow-execute",
+    "shell:allow-open"
   ]
 }

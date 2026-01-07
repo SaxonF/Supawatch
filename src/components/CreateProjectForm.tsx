@@ -162,133 +162,137 @@ export function CreateProjectForm({
 
   return (
     <form className="create-project-form" onSubmit={handleSubmit}>
-      <h3>Add Project</h3>
-
-      <div className="mode-toggle">
+      <div className="flex items-center gap-4 mb-4">
         <button
           type="button"
-          className={mode === "create" ? "active" : ""}
+          className={
+            mode === "create"
+              ? "text-primary text-lg font-semibold"
+              : "text-muted-foreground text-lg font-semibold"
+          }
           onClick={() => setMode("create")}
         >
           Create New
         </button>
         <button
           type="button"
-          className={mode === "sync" ? "active" : ""}
+          className={
+            mode === "sync"
+              ? "text-primary text-lg font-semibold"
+              : "text-muted-foreground text-lg font-semibold"
+          }
           onClick={() => setMode("sync")}
         >
           Sync Existing
         </button>
       </div>
+      <div className="rounded-xl overflow-hidden border border-border divider divider-border mb-4">
+        {mode === "create" && (
+          <>
+            <div className="grid grid-cols-[1fr_2fr] gap-2 bg-muted/75 hover:bg-muted p-3">
+              <label htmlFor="org">Organization</label>
+              <select
+                id="org"
+                value={selectedOrgId}
+                onChange={(e) => setSelectedOrgId(e.target.value)}
+                disabled={isFetchingData}
+              >
+                {orgs.map((org) => (
+                  <option key={org.id} value={org.id}>
+                    {org.name}
+                  </option>
+                ))}
+                {orgs.length === 0 && (
+                  <option disabled>No organizations found</option>
+                )}
+              </select>
+            </div>
+            <div className="grid grid-cols-[1fr_2fr] gap-2 bg-muted/75 hover:bg-muted p-3">
+              <label htmlFor="name">Project Name</label>
+              <input
+                id="name"
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="My Supabase Project"
+                autoFocus
+              />
+            </div>
+          </>
+        )}
 
-      {mode === "create" && (
-        <>
-          <div className="form-group">
-            <label htmlFor="org">Organization</label>
+        {mode === "sync" && (
+          <div className="grid grid-cols-[1fr_2fr] gap-2 bg-muted/75 hover:bg-muted p-3">
+            <label htmlFor="project">Project</label>
             <select
-              id="org"
-              value={selectedOrgId}
-              onChange={(e) => setSelectedOrgId(e.target.value)}
+              id="project"
+              className="w-full truncate"
+              value={selectedProjectId}
+              onChange={(e) => setSelectedProjectId(e.target.value)}
               disabled={isFetchingData}
             >
-              {orgs.map((org) => (
-                <option key={org.id} value={org.id}>
-                  {org.name}
+              {remoteProjects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} ({p.id})
                 </option>
               ))}
-              {orgs.length === 0 && (
-                <option disabled>No organizations found</option>
+              {remoteProjects.length === 0 && (
+                <option disabled>No projects found</option>
               )}
             </select>
           </div>
-          <div className="form-group">
-            <label htmlFor="name">Project Name</label>
-            <input
-              id="name"
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="My Supabase Project"
-              autoFocus
-            />
+        )}
+
+        <div className="grid grid-cols-[1fr_2fr] gap-2 bg-muted/75 hover:bg-muted p-3">
+          <label htmlFor="path">Local Folder</label>
+          <div className="path-input">
+            <button type="button" onClick={selectFolder} className="">
+              {localPath ? localPath : "Browse"}
+            </button>
           </div>
-        </>
-      )}
-
-      {mode === "sync" && (
-        <div className="form-group">
-          <label htmlFor="project">Select Remote Project</label>
-          <select
-            id="project"
-            value={selectedProjectId}
-            onChange={(e) => setSelectedProjectId(e.target.value)}
-            disabled={isFetchingData}
-          >
-            {remoteProjects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} ({p.id})
-              </option>
-            ))}
-            {remoteProjects.length === 0 && (
-              <option disabled>No projects found</option>
-            )}
-          </select>
         </div>
-      )}
 
-      <div className="form-group">
-        <label htmlFor="path">Local Folder</label>
-        <div className="path-input">
-          <input
-            id="path"
-            type="text"
-            value={localPath}
-            onChange={(e) => setLocalPath(e.target.value)}
-            placeholder="/path/to/supabase/project"
-            readOnly
-          />
-          <button type="button" onClick={selectFolder} className="browse-btn">
-            Browse
-          </button>
-        </div>
+        {mode === "create" && isEmptyFolder && templates.length > 0 && (
+          <div className="grid grid-cols-[1fr_2fr] gap-2 bg-muted/75 hover:bg-muted p-3">
+            <label htmlFor="template">Template</label>
+            <select
+              id="template"
+              value={selectedTemplate}
+              onChange={(e) => setSelectedTemplate(e.target.value)}
+            >
+              <option value="none">None</option>
+              {templates.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+            <p
+              className="help-text"
+              style={{ fontSize: "0.8em", color: "#888", marginTop: "4px" }}
+            >
+              Your folder is empty. Initialize it with a starter template?
+            </p>
+          </div>
+        )}
       </div>
-
-      {mode === "create" && isEmptyFolder && templates.length > 0 && (
-        <div className="form-group">
-          <label htmlFor="template">Template</label>
-          <select
-            id="template"
-            value={selectedTemplate}
-            onChange={(e) => setSelectedTemplate(e.target.value)}
-          >
-            <option value="none">None</option>
-            {templates.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-          <p
-            className="help-text"
-            style={{ fontSize: "0.8em", color: "#888", marginTop: "4px" }}
-          >
-            Your folder is empty. Initialize it with a starter template?
-          </p>
-        </div>
-      )}
 
       {error && <div className="error">{error}</div>}
 
-      <div className="form-actions">
+      <div className="flex items-center gap-2">
         <button
           type="button"
           onClick={onCancel}
-          className="cancel-btn"
+          className="bg-muted rounded-xl h-12 flex-1"
           disabled={isLoading}
         >
           Cancel
         </button>
-        <button type="submit" className="submit-btn" disabled={isLoading}>
+        <button
+          type="submit"
+          className="bg-accent rounded-xl h-12 flex-1"
+          disabled={isLoading}
+        >
           {isLoading
             ? mode === "create"
               ? "Creating..."
