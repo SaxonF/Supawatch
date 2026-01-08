@@ -81,10 +81,6 @@ impl AppState {
         data_dir
     }
 
-    fn get_data_path() -> PathBuf {
-        Self::get_data_dir().join("data.json")
-    }
-
     fn load_data(path: &PathBuf) -> Result<(AppData, Option<String>), StateError> {
         if !path.exists() {
             return Ok((AppData::default(), None));

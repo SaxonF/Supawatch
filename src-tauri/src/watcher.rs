@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::models::{FileChange, FileChangeType, LogEntry, LogSource};
 use crate::state::AppState;
+use crate::sync;
 use crate::tray::update_icon;
 
 // Track last push time per project to debounce rapid file changes
@@ -224,33 +225,9 @@ async fn handle_schema_push(
     state.add_log(log.clone()).await;
     app_handle.emit("log", &log).ok();
 
-    // 1. Introspect Remote
-    let introspector = crate::introspection::Introspector::new(&api, project_ref.clone());
-    let remote_schema = match introspector.introspect().await {
-        Ok(schema) => schema,
-        Err(e) => {
-            let log = LogEntry::error(
-                Some(project_id),
-                LogSource::Schema,
-                format!("Introspection failed: {}", e),
-            );
-            state.add_log(log.clone()).await;
-            app_handle.emit("log", &log).ok();
-            update_icon(&app_handle, false);
-            return Err(e);
-        }
-    };
-
-    // 2. Parse Local - try multiple schema paths
-    let schema_paths = [
-        std::path::Path::new(&project.local_path).join("supabase/schemas/schema.sql"),
-        std::path::Path::new(&project.local_path).join("supabase/schema.sql"),
-    ];
-    
-    let schema_path = schema_paths.iter().find(|p| p.exists());
-    
-    let schema_path = match schema_path {
-        Some(p) => p.clone(),
+    // Find schema path using shared sync module
+    let schema_path = match sync::find_schema_path(Path::new(&project.local_path)) {
+        Some(p) => p,
         None => {
             let log = LogEntry::error(
                 Some(project_id),
@@ -264,14 +241,14 @@ async fn handle_schema_push(
         }
     };
 
-    let local_sql = tokio::fs::read_to_string(&schema_path).await.map_err(|e| e.to_string())?;
-    let local_schema = match crate::parsing::parse_schema_sql(&local_sql) {
-        Ok(schema) => schema,
+    // Compute diff using shared sync module (introspect remote, parse local, compute diff)
+    let diff_result = match sync::compute_schema_diff(&api, &project_ref, &schema_path).await {
+        Ok(r) => r,
         Err(e) => {
             let log = LogEntry::error(
                 Some(project_id),
                 LogSource::Schema,
-                format!("Failed to parse schema: {}", e),
+                format!("Failed to compute schema diff: {}", e),
             );
             state.add_log(log.clone()).await;
             app_handle.emit("log", &log).ok();
@@ -280,8 +257,7 @@ async fn handle_schema_push(
         }
     };
 
-    // 3. Diff (Remote -> Local)
-    let diff = crate::diff::compute_diff(&remote_schema, &local_schema);
+    let diff = diff_result.diff;
 
     if diff.is_destructive() {
         let summary = diff.summarize();
@@ -311,8 +287,8 @@ async fn handle_schema_push(
         return Ok(());
     }
 
-    // 4. Generate Migration SQL
-    let migration_sql = crate::generator::generate_sql(&diff, &local_schema);
+    // Use migration SQL from diff result
+    let migration_sql = &diff_result.migration_sql;
 
     if migration_sql.trim().is_empty() {
         let log = LogEntry::success(
@@ -413,7 +389,8 @@ async fn handle_edge_function_push(
         .join("functions")
         .join(&function_slug);
 
-    let files = match collect_function_files(&function_dir).await {
+    // Use shared sync module for file collection
+    let files = match sync::collect_function_files(&function_dir).await {
         Ok(f) => f,
         Err(e) => {
             let log = LogEntry::error(
@@ -440,17 +417,11 @@ async fn handle_edge_function_push(
         return Ok(());
     }
 
-    // Determine entrypoint (as owned String to avoid borrow conflict)
-    let entrypoint = if files.iter().any(|(p, _)| p == "index.ts") {
-        "index.ts".to_string()
-    } else if files.iter().any(|(p, _)| p == "index.js") {
-        "index.js".to_string()
-    } else {
-        files.first().map(|(p, _)| p.clone()).unwrap_or_else(|| "index.ts".to_string())
-    };
+    // Determine entrypoint using shared sync module
+    let entrypoint = sync::determine_entrypoint(&files);
 
-    // Compute hash of all files for tracking
-    let local_hash = compute_files_hash_watcher(&files);
+    // Compute hash of all files for tracking using shared sync module
+    let local_hash = sync::compute_files_hash(&files);
 
     let log = LogEntry::info(
         Some(project_id),
@@ -492,67 +463,6 @@ async fn handle_edge_function_push(
 
     update_icon(&app_handle, false);
     Ok(())
-}
-
-/// Collect all files in a function directory recursively
-async fn collect_function_files(dir: &std::path::Path) -> Result<Vec<(String, Vec<u8>)>, String> {
-    let mut files = Vec::new();
-    collect_files_recursive(dir, dir, &mut files).await?;
-    Ok(files)
-}
-
-#[async_recursion::async_recursion]
-async fn collect_files_recursive(
-    base: &std::path::Path,
-    current: &std::path::Path,
-    files: &mut Vec<(String, Vec<u8>)>,
-) -> Result<(), String> {
-    let mut entries = tokio::fs::read_dir(current).await.map_err(|e| e.to_string())?;
-    
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        let path = entry.path();
-        
-        if path.is_dir() {
-            // Skip node_modules and hidden directories
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if name == "node_modules" || name.starts_with('.') {
-                continue;
-            }
-            collect_files_recursive(base, &path, files).await?;
-        } else {
-            // Only include source files
-            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if matches!(ext, "ts" | "js" | "json" | "tsx" | "jsx" | "mts" | "mjs") {
-                let relative = path.strip_prefix(base)
-                    .map_err(|e| e.to_string())?
-                    .to_string_lossy()
-                    .to_string();
-                let content = tokio::fs::read(&path).await.map_err(|e| e.to_string())?;
-                files.push((relative, content));
-            }
-        }
-    }
-    
-    Ok(())
-}
-
-/// Compute a hash of all files for change detection
-fn compute_files_hash_watcher(files: &[(String, Vec<u8>)]) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    
-    let mut hasher = DefaultHasher::new();
-    
-    // Sort files by path for deterministic ordering
-    let mut sorted_files: Vec<_> = files.iter().collect();
-    sorted_files.sort_by(|a, b| a.0.cmp(&b.0));
-    
-    for (path, content) in sorted_files {
-        path.hash(&mut hasher);
-        content.hash(&mut hasher);
-    }
-    
-    format!("{:x}", hasher.finish())
 }
 
 /// Extract function slug from a relative path like "supabase/functions/my-function/index.ts"

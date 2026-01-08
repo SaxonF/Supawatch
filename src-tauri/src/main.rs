@@ -12,6 +12,7 @@ mod parsing;
 mod schema;
 mod state;
 mod supabase_api;
+mod sync;
 mod tray;
 mod watcher;
 

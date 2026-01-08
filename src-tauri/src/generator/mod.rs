@@ -4,6 +4,7 @@ mod roles;
 mod tables;
 mod types;
 
+use crate::defaults;
 use crate::diff::{EnumChangeType, SchemaDiff};
 use crate::schema::{
     CompositeTypeInfo, DbSchema, DomainInfo, ExtensionInfo, RoleInfo, SequenceInfo, TableInfo, ViewInfo,
@@ -78,17 +79,8 @@ pub fn generate_sql(diff: &SchemaDiff, local_schema: &DbSchema) -> String {
     let mut sorted_schemas: Vec<String> = schemas.into_iter().collect();
     sorted_schemas.sort();
 
-    // System schemas to exclude from output (managed by Supabase)
-    let excluded_schemas = [
-        "public", "information_schema", "pg_catalog",
-        "auth", "storage", "extensions", "realtime", "graphql", 
-        "graphql_public", "vault", "pgsodium", "pgsodium_masks",
-        "supa_audit", "net", "pgtle", "repack", "tiger", "topology",
-        "supabase_migrations", "supabase_functions", "cron", "pgbouncer"
-    ];
-
     for schema in sorted_schemas {
-        if !excluded_schemas.contains(&schema.as_str()) && !schema.starts_with("pg_") {
+        if !defaults::is_excluded_schema(&schema) {
             statements.push(format!("CREATE SCHEMA IF NOT EXISTS \"{}\";", schema));
         }
     }

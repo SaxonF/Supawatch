@@ -10,9 +10,9 @@ use crate::fns::{
 use crate::models::{LogEntry, LogSource, Project, RemoteProject};
 use crate::state::AppState;
 use crate::supabase_api::Organization;
-use crate::watcher;
+use crate::sync;
 use crate::tray::update_icon;
-// use eszip::EszipV2;
+use crate::watcher;
 
 pub mod templates;
 
@@ -227,157 +227,9 @@ async fn pull_project_internal(
     app_handle.emit("log", &log).ok();
 
     // 4. Pull Edge Functions
-    pull_edge_functions(&api, &project_ref, uuid, std::path::Path::new(&project.local_path), state.inner(), app_handle).await?;
+    sync::pull_edge_functions(&api, &project_ref, Some(uuid), std::path::Path::new(&project.local_path), state.inner(), app_handle).await?;
 
     Ok(sql)
-}
-
-// Helper to pull edge functions
-async fn pull_edge_functions(
-    api: &crate::supabase_api::SupabaseApi,
-    project_ref: &str,
-    project_id: Uuid,
-    project_local_path: &std::path::Path,
-    state: &Arc<AppState>,
-    app_handle: &tauri::AppHandle,
-) -> Result<(), String> {
-    let log = LogEntry::info(
-        Some(project_id),
-        LogSource::System,
-        "Syncing edge functions...".to_string(),
-    );
-    state.add_log(log.clone()).await;
-    app_handle.emit("log", &log).ok();
-
-    match api.list_functions(project_ref).await {
-        Ok(funcs) => {
-            let supabase_dir = project_local_path.join("supabase");
-            let functions_dir = supabase_dir.join("functions");
-            if !functions_dir.exists() {
-                tokio::fs::create_dir_all(&functions_dir)
-                    .await
-                    .map_err(|e| e.to_string())?;
-            }
-
-            let mut func_count = 0;
-            for func in funcs {
-                let func_dir = functions_dir.join(&func.slug);
-                if !func_dir.exists() {
-                    tokio::fs::create_dir_all(&func_dir)
-                        .await
-                        .map_err(|e| e.to_string())?;
-                }
-                
-                match api.get_function_body(project_ref, &func.slug).await {
-                    Ok(body) => {
-                        let mut saved_files = false;
-                        
-                        // First: try to use multipart files if available (best option)
-                        if !body.files.is_empty() {
-                            println!("[DEBUG] Got {} multipart files for {}", body.files.len(), func.slug);
-                            for file in &body.files {
-                                // Strip leading "source/" or "src/" prefix if present
-                                let file_name = file.name
-                                    .strip_prefix("source/")
-                                    .or_else(|| file.name.strip_prefix("src/"))
-                                    .unwrap_or(&file.name);
-                                let file_path = func_dir.join(file_name);
-                                // Create any subdirectories if needed (for nested files)
-                                if let Some(parent) = file_path.parent() {
-                                    if parent != func_dir.as_path() {
-                                        let _ = tokio::fs::create_dir_all(parent).await;
-                                    }
-                                }
-                                let _ = tokio::fs::write(&file_path, &file.content).await;
-                                println!("[DEBUG] Wrote {} for {}", file_name, func.slug);
-                            }
-                            // Clean up old eszip if we got real files
-                            let _ = tokio::fs::remove_file(func_dir.join("function.eszip")).await;
-                            // Clean up old source folder if it exists
-                            let _ = tokio::fs::remove_dir_all(func_dir.join("source")).await;
-                            saved_files = true;
-                        }
-                        
-                        // Second: if no multipart files, check if it's plain text TypeScript
-                        if !saved_files && body.content_type.contains("text/") || body.content_type.contains("typescript") {
-                            let _ = tokio::fs::write(func_dir.join("index.ts"), &body.data).await;
-                            let _ = tokio::fs::remove_file(func_dir.join("function.eszip")).await;
-                            saved_files = true;
-                        }
-                        
-                        // Third: try eszip unpacking as last resort
-                        if !saved_files && (body.content_type == "application/vnd.denoland.eszip" || body.content_type == "application/octet-stream") {
-                            let reader = futures::io::Cursor::new(body.data.clone());
-                            let buf_reader = futures::io::BufReader::new(reader);
-                            
-                            if let Ok((eszip, loader)) = eszip::EszipV2::parse(buf_reader).await {
-                                let loader_handle = tokio::spawn(async move { loader.await });
-                                let specifiers = eszip.specifiers();
-                                println!("[DEBUG] Found {} specifiers in eszip for {}", specifiers.len(), func.slug);
-                                
-                                // Try file:/// specifiers first (older format)
-                                for specifier in &specifiers {
-                                    if specifier.starts_with("file:///") {
-                                        let path_str = specifier.trim_start_matches("file:///");
-                                        if !path_str.contains("node_modules") && !path_str.contains("deno_dir") {
-                                            if let Some(module) = eszip.get_module(specifier) {
-                                                if let Some(source) = module.source().await {
-                                                    let out_name = std::path::Path::new(path_str)
-                                                        .file_name()
-                                                        .and_then(|n| n.to_str())
-                                                        .unwrap_or("index.ts");
-                                                    let _ = tokio::fs::write(func_dir.join(out_name), source).await;
-                                                    saved_files = true;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                
-                                loader_handle.abort();
-                                
-                                if saved_files {
-                                    let _ = tokio::fs::remove_file(func_dir.join("function.eszip")).await;
-                                }
-                            }
-                        }
-                        
-                        // Fallback: save the raw data
-                        if !saved_files {
-                            let _ = tokio::fs::remove_file(func_dir.join("index.ts")).await;
-                            let _ = tokio::fs::write(func_dir.join("function.eszip"), &body.data).await;
-                            let notice = format!(
-                                "// The source code for function '{}' could not be unpacked.\n// The deployed bundle has been downloaded as 'function.eszip'.",
-                                func.slug
-                            );
-                            let _ = tokio::fs::write(func_dir.join("index.ts"), notice).await;
-                        }
-                        
-                        func_count += 1;
-                    },
-                    Err(e) => {
-                         let log = LogEntry::error(Some(project_id), LogSource::System, format!("Failed to download function {}: {}", func.slug, e));
-                         state.add_log(log).await;
-                    }
-                }
-            }
-            
-            if func_count > 0 {
-                let log = LogEntry::success(
-                    Some(project_id),
-                    LogSource::System,
-                    format!("Synced {} edge functions", func_count),
-                );
-                state.add_log(log.clone()).await;
-                app_handle.emit("log", &log).ok();
-            }
-        },
-        Err(e) => {
-             let log = LogEntry::error(Some(project_id), LogSource::System, format!("Failed to list functions: {}", e));
-             state.add_log(log).await;
-        }
-    }
-    Ok(())
 }
 
 // Helper to push edge functions (deploy changed functions)
@@ -390,7 +242,7 @@ async fn push_edge_functions(
     app_handle: &tauri::AppHandle,
 ) -> Result<(), String> {
     let functions_dir = project_local_path.join("supabase").join("functions");
-    
+
     if !functions_dir.exists() {
         return Ok(()); // No functions directory, nothing to deploy
     }
@@ -413,7 +265,7 @@ async fn push_edge_functions(
 
     while let Ok(Some(entry)) = entries.next_entry().await {
         let path = entry.path();
-        
+
         // Skip if not a directory (each function should be in its own folder)
         if !path.is_dir() {
             continue;
@@ -424,8 +276,8 @@ async fn push_edge_functions(
             None => continue,
         };
 
-        // Collect all files in the function directory
-        let files = match collect_function_files_cmd(&path).await {
+        // Collect all files in the function directory using shared sync module
+        let files = match sync::collect_function_files(&path).await {
             Ok(f) => f,
             Err(e) => {
                 let log = LogEntry::warning(
@@ -442,9 +294,9 @@ async fn push_edge_functions(
             continue;
         }
 
-        // Compute hash of all local files for comparison
-        let local_hash = compute_files_hash(&files);
-        
+        // Compute hash of all local files for comparison using shared sync module
+        let local_hash = sync::compute_files_hash(&files);
+
         // Check if we have a stored hash from last deploy
         let hash_file = path.join(".supawatch_hash");
         let should_deploy = match tokio::fs::read_to_string(&hash_file).await {
@@ -462,21 +314,18 @@ async fn push_edge_functions(
             continue;
         }
 
-        // Determine entrypoint (as owned String to avoid borrow conflict)
-        let entrypoint = if files.iter().any(|(p, _)| p == "index.ts") {
-            "index.ts".to_string()
-        } else if files.iter().any(|(p, _)| p == "index.js") {
-            "index.js".to_string()
-        } else {
-            files.first().map(|(p, _)| p.clone()).unwrap_or_else(|| "index.ts".to_string())
-        };
+        // Determine entrypoint using shared sync module
+        let entrypoint = sync::determine_entrypoint(&files);
 
         // Deploy with all files
-        match api.deploy_function(project_ref, &function_slug, &function_slug, &entrypoint, files).await {
+        match api
+            .deploy_function(project_ref, &function_slug, &function_slug, &entrypoint, files)
+            .await
+        {
             Ok(result) => {
                 // Save hash after successful deploy
                 let _ = tokio::fs::write(&hash_file, &local_hash).await;
-                
+
                 let log = LogEntry::success(
                     Some(project_id),
                     LogSource::EdgeFunction,
@@ -511,64 +360,6 @@ async fn push_edge_functions(
     Ok(())
 }
 
-/// Collect all files in a function directory
-async fn collect_function_files_cmd(dir: &std::path::Path) -> Result<Vec<(String, Vec<u8>)>, String> {
-    let mut files = Vec::new();
-    collect_files_recursive_cmd(dir, dir, &mut files).await?;
-    Ok(files)
-}
-
-async fn collect_files_recursive_cmd(
-    base: &std::path::Path,
-    current: &std::path::Path,
-    files: &mut Vec<(String, Vec<u8>)>,
-) -> Result<(), String> {
-    let mut entries = tokio::fs::read_dir(current).await.map_err(|e| e.to_string())?;
-    
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        let path = entry.path();
-        
-        if path.is_dir() {
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if name == "node_modules" || name.starts_with('.') {
-                continue;
-            }
-            Box::pin(collect_files_recursive_cmd(base, &path, files)).await?;
-        } else {
-            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if matches!(ext, "ts" | "js" | "json" | "tsx" | "jsx" | "mts" | "mjs") {
-                let relative = path.strip_prefix(base)
-                    .map_err(|e| e.to_string())?
-                    .to_string_lossy()
-                    .to_string();
-                let content = tokio::fs::read(&path).await.map_err(|e| e.to_string())?;
-                files.push((relative, content));
-            }
-        }
-    }
-    
-    Ok(())
-}
-
-/// Compute a hash of all files for change detection
-fn compute_files_hash(files: &[(String, Vec<u8>)]) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    
-    let mut hasher = DefaultHasher::new();
-    
-    // Sort files by path for deterministic ordering
-    let mut sorted_files: Vec<_> = files.iter().collect();
-    sorted_files.sort_by(|a, b| a.0.cmp(&b.0));
-    
-    for (path, content) in sorted_files {
-        path.hash(&mut hasher);
-        content.hash(&mut hasher);
-    }
-    
-    format!("{:x}", hasher.finish())
-}
-
 #[tauri::command]
 pub async fn push_project(
     app_handle: tauri::AppHandle,
@@ -601,29 +392,13 @@ async fn push_project_internal(
     state.add_log(log.clone()).await;
     app_handle.emit("log", &log).ok();
 
-    // 1. Introspect Remote
-    let introspector = crate::introspection::Introspector::new(&api, project_ref.clone());
-    let remote_schema = introspector.introspect().await.map_err(|e| e.to_string())?;
+    // Find schema path using shared sync module
+    let schema_path = sync::find_schema_path(Path::new(&project.local_path))
+        .ok_or("Schema file not found (checked supabase/schemas/schema.sql and supabase/schema.sql)")?;
 
-    // 2. Parse Local - try multiple schema paths
-    let schema_paths = [
-        std::path::Path::new(&project.local_path).join("supabase/schemas/schema.sql"),
-        std::path::Path::new(&project.local_path).join("supabase/schema.sql"),
-    ];
-    
-    let schema_path = schema_paths.iter().find(|p| p.exists());
-    
-    let schema_path = match schema_path {
-        Some(p) => p.clone(),
-        None => {
-            return Err("Schema file not found (checked supabase/schemas/schema.sql and supabase/schema.sql)".to_string());
-        }
-    };
-    let local_sql = tokio::fs::read_to_string(&schema_path).await.map_err(|e| e.to_string())?;
-    let local_schema = crate::parsing::parse_schema_sql(&local_sql).map_err(|e| e.to_string())?;
-
-    // 3. Diff (Remote -> Local)
-    let diff = crate::diff::compute_diff(&remote_schema, &local_schema);
+    // Compute diff using shared sync module (introspect remote, parse local, compute diff)
+    let diff_result = sync::compute_schema_diff(&api, &project_ref, &schema_path).await?;
+    let diff = diff_result.diff;
 
     let summary = diff.summarize();
     
@@ -649,8 +424,8 @@ async fn push_project_internal(
     state.add_log(log.clone()).await;
     app_handle.emit("log", &log).ok();
 
-    // 4. Generate Migration SQL
-    let migration_sql = crate::generator::generate_sql(&diff, &local_schema);
+    // Use migration SQL from diff result
+    let migration_sql = &diff_result.migration_sql;
 
     if migration_sql.trim().is_empty() {
          let log = LogEntry::success(
@@ -802,126 +577,17 @@ pub async fn create_project(
                         }
                    }
 
-                   // Auto-pull Edge Functions
+                   // Auto-pull Edge Functions using shared sync module
                    println!("[DEBUG] Starting function sync...");
-                   match api.list_functions(&refer).await {
-                       Ok(funcs) => {
-                           println!("[DEBUG] Listed {} functions", funcs.len());
-                           let functions_dir = supabase_dir.join("functions");
-                           if !functions_dir.exists() {
-                               tokio::fs::create_dir_all(&functions_dir).await.ok();
-                           }
-
-                           let mut func_count = 0;
-                           for func in funcs {
-                               let func_dir = functions_dir.join(&func.slug);
-                               if !func_dir.exists() {
-                                   tokio::fs::create_dir_all(&func_dir).await.ok();
-                               }
-                               
-                               match api.get_function_body(&refer, &func.slug).await {
-                                   Ok(body) => {
-                                       let mut saved_files = false;
-                                       
-                                       // First: try to use multipart files if available (best option)
-                                       if !body.files.is_empty() {
-                                           println!("[DEBUG] Got {} multipart files for {}", body.files.len(), func.slug);
-                                           for file in &body.files {
-                                               // Strip leading "source/" or "src/" prefix if present
-                                               let file_name = file.name
-                                                   .strip_prefix("source/")
-                                                   .or_else(|| file.name.strip_prefix("src/"))
-                                                   .unwrap_or(&file.name);
-                                               let file_path = func_dir.join(file_name);
-                                               if let Some(parent) = file_path.parent() {
-                                                   if parent != func_dir.as_path() {
-                                                       let _ = tokio::fs::create_dir_all(parent).await;
-                                                   }
-                                               }
-                                               let _ = tokio::fs::write(&file_path, &file.content).await;
-                                           }
-                                           let _ = tokio::fs::remove_file(func_dir.join("function.eszip")).await;
-                                           let _ = tokio::fs::remove_dir_all(func_dir.join("source")).await;
-                                           saved_files = true;
-                                       }
-                                       
-                                       // Second: if no multipart files, check if it's plain text TypeScript
-                                       if !saved_files && body.content_type.contains("text/") || body.content_type.contains("typescript") {
-                                           let _ = tokio::fs::write(func_dir.join("index.ts"), &body.data).await;
-                                           let _ = tokio::fs::remove_file(func_dir.join("function.eszip")).await;
-                                           saved_files = true;
-                                       }
-                                       
-                                       // Third: try eszip unpacking as last resort
-                                       if !saved_files && (body.content_type == "application/vnd.denoland.eszip" || body.content_type == "application/octet-stream") {
-                                           let reader = futures::io::Cursor::new(body.data.clone());
-                                           let buf_reader = futures::io::BufReader::new(reader);
-                                           
-                                           if let Ok((eszip, loader)) = eszip::EszipV2::parse(buf_reader).await {
-                                               let loader_handle = tokio::spawn(async move { loader.await });
-                                               let specifiers = eszip.specifiers();
-                                               
-                                               for specifier in &specifiers {
-                                                   if specifier.starts_with("file:///") {
-                                                       let path_str = specifier.trim_start_matches("file:///");
-                                                       if !path_str.contains("node_modules") && !path_str.contains("deno_dir") {
-                                                           if let Some(module) = eszip.get_module(specifier) {
-                                                               if let Some(source) = module.source().await {
-                                                                   let out_name = std::path::Path::new(path_str)
-                                                                       .file_name()
-                                                                       .and_then(|n| n.to_str())
-                                                                       .unwrap_or("index.ts");
-                                                                   let _ = tokio::fs::write(func_dir.join(out_name), source).await;
-                                                                   saved_files = true;
-                                                               }
-                                                           }
-                                                       }
-                                                   }
-                                               }
-                                               
-                                               loader_handle.abort();
-                                               
-                                               if saved_files {
-                                                   let _ = tokio::fs::remove_file(func_dir.join("function.eszip")).await;
-                                               }
-                                           }
-                                       }
-                                       
-                                       // Fallback: save the raw data
-                                       if !saved_files {
-                                           let _ = tokio::fs::remove_file(func_dir.join("index.ts")).await;
-                                           let _ = tokio::fs::write(func_dir.join("function.eszip"), &body.data).await;
-                                           let notice = format!(
-                                               "// The source code for function '{}' could not be unpacked.\n// The deployed bundle has been downloaded as 'function.eszip'.",
-                                               func.slug
-                                           );
-                                           let _ = tokio::fs::write(func_dir.join("index.ts"), notice).await;
-                                       }
-                                       
-                                       func_count += 1;
-                                   },
-                                   Err(e) => {
-                                        let log = LogEntry::error(None, LogSource::System, format!("Failed to download function {}: {}", func.slug, e));
-                                        state.add_log(log).await;
-                                   }
-                               }
-                           }
-                           
-                           if func_count > 0 {
-                               let log = LogEntry::success(
-                                   None,
-                                   LogSource::System,
-                                   format!("Synced {} edge functions", func_count),
-                               );
-                               state.add_log(log.clone()).await;
-                               app_handle.emit("log", &log).ok();
-                           }
-                       },
-                       Err(e) => {
-                            let log = LogEntry::error(None, LogSource::System, format!("Failed to list functions: {}", e));
-                            state.add_log(log).await;
-                       }
-                   }
+                   let _ = sync::pull_edge_functions(
+                       &api,
+                       &refer,
+                       None,
+                       std::path::Path::new(&local_path),
+                       state.inner(),
+                       app_handle,
+                   )
+                   .await;
                 }
              }
         }
@@ -1377,22 +1043,17 @@ pub async fn deploy_edge_function(
     let full_path = Path::new(&project.local_path).join(&function_path);
     let function_dir = full_path.parent().unwrap_or(&full_path);
 
-    // Collect all files from the function directory
-    let files = collect_function_files_cmd(function_dir).await
+    // Collect all files from the function directory using shared sync module
+    let files = sync::collect_function_files(function_dir)
+        .await
         .map_err(|e| format!("Failed to read function files: {}", e))?;
 
     if files.is_empty() {
         return Err("No files found in function directory".to_string());
     }
 
-    // Determine entrypoint (as owned String to avoid borrow conflict)
-    let entrypoint = if files.iter().any(|(p, _)| p == "index.ts") {
-        "index.ts".to_string()
-    } else if files.iter().any(|(p, _)| p == "index.js") {
-        "index.js".to_string()
-    } else {
-        files.first().map(|(p, _)| p.clone()).unwrap_or_else(|| "index.ts".to_string())
-    };
+    // Determine entrypoint using shared sync module
+    let entrypoint = sync::determine_entrypoint(&files);
 
     let result = api
         .deploy_function(
