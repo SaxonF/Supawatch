@@ -511,7 +511,7 @@ impl SupabaseApi {
             {
                 // Parse multipart data
                 let boundary_bytes = format!("--{}", boundary);
-                let parts: Vec<&[u8]> = data
+                let _parts: Vec<&[u8]> = data
                     .split(|&b| b == b'\n')
                     .collect::<Vec<_>>()
                     .split(|line| {

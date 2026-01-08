@@ -107,7 +107,7 @@ pub async fn download_edge_function(
     func_slug: &str,
     func_dir: &Path,
 ) -> Result<bool, String> {
-    let body = api.get_function_body(project_ref, func_slug).await?;
+    let body = api.get_function_body(project_ref, func_slug).await.map_err(|e| e.to_string())?;
     let mut saved_files = false;
 
     // First: try to use multipart files if available (best option)

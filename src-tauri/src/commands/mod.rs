@@ -473,7 +473,7 @@ async fn push_project_internal(
     // 6. Deploy edge functions if any have changed
     push_edge_functions(&api, &project_ref, uuid, std::path::Path::new(&project.local_path), state.inner(), app_handle).await?;
 
-    Ok(migration_sql)
+    Ok(migration_sql.to_string())
 }
 
 // Project commands
@@ -585,7 +585,7 @@ pub async fn create_project(
                        None,
                        std::path::Path::new(&local_path),
                        state.inner(),
-                       app_handle,
+                       &app_handle,
                    )
                    .await;
                 }
