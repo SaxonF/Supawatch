@@ -38,7 +38,15 @@ pub async fn get_sequences(
           AND n.nspname NOT LIKE 'pg_toast%'
           AND n.nspname NOT LIKE 'pg_temp%'
           AND n.nspname NOT IN ('auth', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium', 'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger', 'topology', 'supabase_migrations', 'supabase_functions', 'cron', 'pgbouncer')
-        AND s.relkind = 'S'
+          AND s.relkind = 'S'
+          -- Exclude identity sequences (they're managed by GENERATED AS IDENTITY columns)
+          AND NOT EXISTS (
+              SELECT 1 FROM pg_depend d2
+              JOIN pg_attribute a2 ON a2.attrelid = d2.refobjid AND a2.attnum = d2.refobjsubid
+              WHERE d2.objid = s.oid AND d2.deptype = 'i' AND a2.attidentity != ''
+          )
+          -- Also exclude sequences owned by identity columns
+          AND (a.attidentity IS NULL OR a.attidentity = '')
     "#;
 
     #[derive(Deserialize)]

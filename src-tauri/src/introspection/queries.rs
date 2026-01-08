@@ -71,5 +71,5 @@ pub const ROLES_QUERY: &str = r#"
     FROM pg_roles
     WHERE rolname NOT LIKE 'pg_%'
       AND rolname NOT LIKE 'supabase%'
-      AND rolname NOT IN ('postgres', 'authenticator', 'anon', 'service_role', 'dashboard_user', 'pgbouncer')
+      AND rolname NOT IN ('postgres', 'authenticator', 'authenticated', 'anon', 'service_role', 'dashboard_user', 'pgbouncer')
 "#;

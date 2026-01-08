@@ -126,7 +126,7 @@ pub fn generate_sql(diff: &SchemaDiff, local_schema: &DbSchema) -> String {
 
     // Drop sequences
     for name in &diff.sequences_to_drop {
-        statements.push(format!("DROP SEQUENCE IF EXISTS \"{}\" CASCADE;", name));
+        statements.push(format!("DROP SEQUENCE IF EXISTS {} CASCADE;", objects::ensure_quoted(name)));
     }
 
     // Drop tables

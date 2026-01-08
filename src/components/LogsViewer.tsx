@@ -311,7 +311,6 @@ cross join unnest(m.parsed) as parsed`;
           <Button
             variant="outline"
             size="icon"
-            className="h-10 px-4"
             onClick={() => selectedProjectId && loadLogs(selectedProjectId)}
           >
             <RefreshCcw size={16} />

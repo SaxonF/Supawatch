@@ -1,3 +1,4 @@
+use crate::defaults;
 use crate::schema::{
     CompositeTypeInfo, DbSchema, DomainInfo, EnumInfo, ExtensionInfo, ForeignKeyInfo, FunctionInfo,
     IndexInfo, PolicyInfo, RoleInfo, SequenceInfo, TableInfo, TriggerInfo, ViewInfo,
@@ -167,13 +168,19 @@ pub fn compute_diff(remote: &DbSchema, local: &DbSchema) -> SchemaDiff {
         }
     }
 
-    // Extensions
+    // Extensions (filter out default Supabase extensions)
     for (name, local_ext) in &local.extensions {
+        if defaults::is_default_extension(name) {
+            continue; // Skip default extensions
+        }
         if !remote.extensions.contains_key(name) {
             diff.extensions_to_create.push(local_ext.clone());
         }
     }
     for (name, _) in &remote.extensions {
+        if defaults::is_default_extension(name) {
+            continue; // Skip default extensions
+        }
         if !local.extensions.contains_key(name) {
             diff.extensions_to_drop.push(name.clone());
         }
@@ -257,8 +264,11 @@ pub fn compute_diff(remote: &DbSchema, local: &DbSchema) -> SchemaDiff {
         }
     }
 
-    // Roles
+    // Roles (filter out default Supabase roles)
     for (name, local_role) in &local.roles {
+        if defaults::is_default_role(name) {
+            continue; // Skip default roles
+        }
         if !remote.roles.contains_key(name) {
             diff.roles_to_create.push(local_role.clone());
         } else {
@@ -269,6 +279,9 @@ pub fn compute_diff(remote: &DbSchema, local: &DbSchema) -> SchemaDiff {
         }
     }
     for (name, _) in &remote.roles {
+        if defaults::is_default_role(name) {
+            continue; // Skip default roles
+        }
         if !local.roles.contains_key(name) {
             diff.roles_to_drop.push(name.clone());
         }

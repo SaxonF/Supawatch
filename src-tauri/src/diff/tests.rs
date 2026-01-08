@@ -576,3 +576,41 @@ fn test_destructive_change_detection() {
     let diff = compute_diff(&local, &remote); // Inverse
     assert!(!diff.is_destructive(), "Adding a table should NOT be destructive");
 }
+
+#[test]
+fn test_policy_comparison_normalized() {
+    // Policies with equivalent expressions but different formatting should be considered the same
+    let local = PolicyInfo {
+        name: "Users can view their own tasks".to_string(),
+        cmd: "SELECT".to_string(),
+        roles: vec!["public".to_string()],
+        qual: Some("auth.uid() = user_id".to_string()),
+        with_check: None,
+    };
+
+    // Remote might have extra parentheses or different spacing
+    let remote = PolicyInfo {
+        name: "Users can view their own tasks".to_string(),
+        cmd: "SELECT".to_string(),
+        roles: vec!["public".to_string()],
+        qual: Some("(auth.uid() = user_id)".to_string()),
+        with_check: None,
+    };
+
+    // These should NOT differ (the expressions are equivalent)
+    assert!(!tables::policies_differ(&local, &remote), 
+        "Policies with equivalent expressions should not differ");
+
+    // But different commands should differ
+    let remote_different_cmd = PolicyInfo {
+        name: "Users can view their own tasks".to_string(),
+        cmd: "INSERT".to_string(),
+        roles: vec!["public".to_string()],
+        qual: Some("auth.uid() = user_id".to_string()),
+        with_check: None,
+    };
+
+    assert!(tables::policies_differ(&local, &remote_different_cmd),
+        "Policies with different commands should differ");
+}
+

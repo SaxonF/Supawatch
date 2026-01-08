@@ -126,7 +126,7 @@ pub fn compute_table_diff(remote: &TableInfo, local: &TableInfo) -> TableDiff {
             diff.policies_to_create.push(p.clone());
         } else {
             let remote_p = remote_policies.get(&p.name).unwrap();
-            if p != *remote_p {
+            if policies_differ(p, remote_p) {
                 diff.policies_to_drop.push((*remote_p).clone());
                 diff.policies_to_create.push(p.clone());
             }
@@ -249,6 +249,33 @@ pub fn compute_table_diff(remote: &TableInfo, local: &TableInfo) -> TableDiff {
     }
 
     diff
+}
+
+pub fn policies_differ(local: &PolicyInfo, remote: &PolicyInfo) -> bool {
+    // Command must match
+    if local.cmd.to_uppercase() != remote.cmd.to_uppercase() {
+        return true;
+    }
+    
+    // Normalize and compare roles (sort for consistent comparison)
+    let mut local_roles: Vec<String> = local.roles.iter().map(|r| r.to_lowercase()).collect();
+    let mut remote_roles: Vec<String> = remote.roles.iter().map(|r| r.to_lowercase()).collect();
+    local_roles.sort();
+    remote_roles.sort();
+    if local_roles != remote_roles {
+        return true;
+    }
+    
+    // Normalize and compare expressions
+    if normalize_option(&local.qual) != normalize_option(&remote.qual) {
+        return true;
+    }
+    
+    if normalize_option(&local.with_check) != normalize_option(&remote.with_check) {
+        return true;
+    }
+    
+    false
 }
 
 pub fn triggers_differ(local: &TriggerInfo, remote: &TriggerInfo) -> bool {
