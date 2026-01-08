@@ -1,8 +1,16 @@
-import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
 import * as api from "../api";
 import { Organization, RemoteProject } from "../types";
 import "./CreateProjectForm.css";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
 
 interface CreateProjectFormProps {
   onCreated: () => void;
@@ -23,6 +31,11 @@ export function CreateProjectForm({
   const [orgs, setOrgs] = useState<Organization[]>([]);
   const [selectedOrgId, setSelectedOrgId] = useState("");
 
+  // Template State
+  const [templates, setTemplates] = useState<string[]>([]);
+  const [selectedTemplate, setSelectedTemplate] = useState("none");
+  const [isEmptyFolder, setIsEmptyFolder] = useState(false);
+
   // Sync Mode State
   const [remoteProjects, setRemoteProjects] = useState<RemoteProject[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
@@ -38,6 +51,10 @@ export function CreateProjectForm({
   const loadData = async () => {
     setIsFetchingData(true);
     try {
+      // Fetch templates
+      const templatesList = await api.getTemplates().catch(() => []);
+      setTemplates(templatesList);
+
       const hasToken = await api.hasAccessToken();
       if (hasToken) {
         // Fetch orgs and projects in parallel
@@ -65,17 +82,19 @@ export function CreateProjectForm({
 
   const selectFolder = async () => {
     try {
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        title: "Select Supabase Project Folder",
-      });
+      const selected = await api.pickProjectFolder();
 
       if (selected) {
-        setLocalPath(selected as string);
+        const path = selected;
+        setLocalPath(path);
+
+        // Check if empty
+        const empty = await api.isFolderEmpty(path);
+        setIsEmptyFolder(empty);
+
         // Auto-fill name from folder name if empty and in Create mode
         if (mode === "create" && !name) {
-          const folderName = (selected as string).split("/").pop() || "";
+          const folderName = path.split("/").pop() || "";
           setName(folderName);
         }
       }
@@ -112,6 +131,11 @@ export function CreateProjectForm({
     setIsLoading(true);
     try {
       if (mode === "create") {
+        // Copy template if selected and folder is empty
+        if (isEmptyFolder && selectedTemplate !== "none") {
+          await api.copyTemplate(selectedTemplate, localPath.trim());
+        }
+
         await api.createProject(
           name.trim(),
           localPath.trim(),
@@ -142,109 +166,157 @@ export function CreateProjectForm({
 
   return (
     <form className="create-project-form" onSubmit={handleSubmit}>
-      <h3>Add Project</h3>
-
-      <div className="mode-toggle">
-        <button
+      <div className="flex items-center gap-4 mb-4">
+        <Button
           type="button"
-          className={mode === "create" ? "active" : ""}
+          variant="ghost"
+          size="lg"
+          className={
+            mode === "create"
+              ? "text-primary p-0 hover:bg-transparent"
+              : "text-muted-foreground p-0 hover:bg-transparent"
+          }
           onClick={() => setMode("create")}
         >
           Create New
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
-          className={mode === "sync" ? "active" : ""}
+          variant="ghost"
+          size="lg"
+          className={
+            mode === "sync"
+              ? "text-primary p-0 hover:bg-transparent"
+              : "text-muted-foreground p-0 hover:bg-transparent"
+          }
           onClick={() => setMode("sync")}
         >
           Sync Existing
-        </button>
+        </Button>
       </div>
+      <div className="rounded-xl overflow-hidden border border-border divider divider-border mb-4">
+        {mode === "create" && (
+          <>
+            <div className="grid grid-cols-[1fr_2fr] items-center gap-2 bg-muted/75 hover:bg-muted p-3 border-b">
+              <label htmlFor="org">Organization</label>
+              <Select
+                value={selectedOrgId}
+                onValueChange={setSelectedOrgId}
+                disabled={isFetchingData}
+              >
+                <SelectTrigger id="org" className="w-full truncate">
+                  <SelectValue
+                    placeholder="Select organization"
+                    className="truncate w-full"
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {orgs.map((org) => (
+                    <SelectItem key={org.id} value={org.id}>
+                      {org.name}
+                    </SelectItem>
+                  ))}
+                  {orgs.length === 0 && (
+                    <SelectItem value="none" disabled>
+                      No organizations found
+                    </SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-[1fr_2fr] items-center gap-2 bg-muted/75 hover:bg-muted p-3 border-b">
+              <label htmlFor="name">Project Name</label>
+              <Input
+                id="name"
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="My Supabase Project"
+                autoFocus
+              />
+            </div>
+          </>
+        )}
 
-      {mode === "create" && (
-        <>
-          <div className="form-group">
-            <label htmlFor="org">Organization</label>
-            <select
-              id="org"
-              value={selectedOrgId}
-              onChange={(e) => setSelectedOrgId(e.target.value)}
+        {mode === "sync" && (
+          <div className="grid grid-cols-[1fr_2fr] items-center gap-2 bg-muted/75 hover:bg-muted p-3 border-b">
+            <label htmlFor="project">Project</label>
+            <Select
+              value={selectedProjectId}
+              onValueChange={setSelectedProjectId}
               disabled={isFetchingData}
             >
-              {orgs.map((org) => (
-                <option key={org.id} value={org.id}>
-                  {org.name}
-                </option>
-              ))}
-              {orgs.length === 0 && (
-                <option disabled>No organizations found</option>
-              )}
-            </select>
+              <SelectTrigger id="project" className="w-full">
+                <SelectValue placeholder="Select project" />
+              </SelectTrigger>
+              <SelectContent>
+                {remoteProjects.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name} ({p.id})
+                  </SelectItem>
+                ))}
+                {remoteProjects.length === 0 && (
+                  <SelectItem value="none" disabled>
+                    No projects found
+                  </SelectItem>
+                )}
+              </SelectContent>
+            </Select>
           </div>
-          <div className="form-group">
-            <label htmlFor="name">Project Name</label>
-            <input
-              id="name"
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="My Supabase Project"
-              autoFocus
-            />
-          </div>
-        </>
-      )}
+        )}
 
-      {mode === "sync" && (
-        <div className="form-group">
-          <label htmlFor="project">Select Remote Project</label>
-          <select
-            id="project"
-            value={selectedProjectId}
-            onChange={(e) => setSelectedProjectId(e.target.value)}
-            disabled={isFetchingData}
+        <div className="grid grid-cols-[1fr_2fr] items-center gap-2 bg-muted/75 hover:bg-muted p-3">
+          <label htmlFor="path">Local Folder</label>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={selectFolder}
+            className="max-w-full justify-start font-normal truncate"
           >
-            {remoteProjects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} ({p.id})
-              </option>
-            ))}
-            {remoteProjects.length === 0 && (
-              <option disabled>No projects found</option>
-            )}
-          </select>
+            <span className="truncate">{localPath ? localPath : "Browse"}</span>
+          </Button>
         </div>
-      )}
 
-      <div className="form-group">
-        <label htmlFor="path">Local Folder</label>
-        <div className="path-input">
-          <input
-            id="path"
-            type="text"
-            value={localPath}
-            onChange={(e) => setLocalPath(e.target.value)}
-            placeholder="/path/to/supabase/project"
-            readOnly
-          />
-          <button type="button" onClick={selectFolder} className="browse-btn">
-            Browse
-          </button>
-        </div>
+        {mode === "create" && isEmptyFolder && templates.length > 0 && (
+          <div className="grid grid-cols-[1fr_2fr] items-center gap-2 bg-muted/75 hover:bg-muted p-3 border-t">
+            <label htmlFor="template">Template</label>
+            <Select
+              value={selectedTemplate}
+              onValueChange={setSelectedTemplate}
+            >
+              <SelectTrigger id="template" className="w-full">
+                <SelectValue placeholder="Select template" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">None</SelectItem>
+                {templates.map((t) => (
+                  <SelectItem key={t} value={t}>
+                    {t}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       </div>
 
       {error && <div className="error">{error}</div>}
 
-      <div className="form-actions">
-        <button
+      <div className="flex items-center gap-2">
+        <Button
           type="button"
+          variant="outline"
           onClick={onCancel}
-          className="cancel-btn"
+          className="h-12 flex-1 rounded-xl"
           disabled={isLoading}
         >
           Cancel
-        </button>
-        <button type="submit" className="submit-btn" disabled={isLoading}>
+        </Button>
+        <Button
+          type="submit"
+          className="h-12 flex-1 rounded-xl"
+          disabled={isLoading}
+        >
           {isLoading
             ? mode === "create"
               ? "Creating..."
@@ -252,7 +324,7 @@ export function CreateProjectForm({
             : mode === "create"
             ? "Create Project"
             : "Sync Project"}
-        </button>
+        </Button>
       </div>
     </form>
   );

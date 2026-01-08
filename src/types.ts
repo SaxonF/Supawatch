@@ -46,3 +46,14 @@ export interface Organization {
   id: string;
   name: string;
 }
+
+export interface SupabaseLogEntry {
+  id: string;
+  timestamp: string;
+  event_message: string;
+  metadata: any;
+  request: any;
+  source: "postgres" | "edge_function" | "auth" | "unknown";
+  error_severity?: string;
+  status?: number;
+}

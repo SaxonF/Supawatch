@@ -17,9 +17,14 @@ use tauri_nspanel::{
 #[allow(non_upper_case_globals)]
 const NSWindowStyleMaskNonActivatingPanel: i32 = 1 << 7;
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
+pub static IS_DIALOG_OPEN: AtomicBool = AtomicBool::new(false);
+
 pub fn swizzle_to_menubar_panel(app_handle: &tauri::AppHandle) {
     let panel_delegate = panel_delegate!(SpotlightPanelDelegate {
-        window_did_resign_key
+        window_did_resign_key,
+        window_should_close
     });
 
     let window = app_handle.get_webview_window("main").unwrap();
@@ -29,10 +34,24 @@ pub fn swizzle_to_menubar_panel(app_handle: &tauri::AppHandle) {
     let handle = app_handle.clone();
 
     panel_delegate.set_listener(Box::new(move |delegate_name: String| {
-        if delegate_name.as_str() == "window_did_resign_key" {
-            let _ = handle.emit("menubar_panel_did_resign_key", ());
+        match delegate_name.as_str() {
+            "window_did_resign_key" => {
+                let _ = handle.emit("menubar_panel_did_resign_key", ());
+            }
+            "window_should_close" => {
+                // Return false to prevent the window from closing
+                // The panel should only be hidden, not destroyed
+            }
+            _ => {}
         }
     }));
+
+    // Prevent the window from being released when closed
+    // This is crucial for menu bar apps where the window is hidden, not closed
+    let ns_window: id = window.ns_window().unwrap() as _;
+    unsafe {
+        let _: () = msg_send![ns_window, setReleasedWhenClosed: NO];
+    }
 
     panel.set_level(NSMainMenuWindowLevel + 1);
 
@@ -49,13 +68,21 @@ pub fn swizzle_to_menubar_panel(app_handle: &tauri::AppHandle) {
 
 pub fn setup_menubar_panel_listeners(app_handle: &AppHandle) {
     fn hide_menubar_panel(app_handle: &tauri::AppHandle) {
+        use tauri_nspanel::ManagerExt as _;
+        
+        if IS_DIALOG_OPEN.load(Ordering::Relaxed) {
+             return;
+        }
+
         if check_menubar_frontmost() {
             return;
         }
 
         let panel = app_handle.get_webview_panel("main").unwrap();
 
-        panel.order_out(None);
+        if panel.is_visible() {
+             let _ = panel.order_out(None);
+        }
     }
 
     let handle = app_handle.clone();
@@ -120,9 +147,14 @@ pub fn position_menubar_panel(app_handle: &tauri::AppHandle, padding_top: f64) {
 
     let mut win_frame: NSRect = unsafe { msg_send![handle, frame] };
 
-    win_frame.origin.y = (monitor_pos.y + monitor_size.height) - win_frame.size.height;
+    // Get the menu bar height - typically this is the difference between the screen height
+    // and the visible area height
+    let screen: id = unsafe { msg_send![class!(NSScreen), mainScreen] };
+    let screen_frame: NSRect = unsafe { msg_send![screen, frame] };
+    let menu_bar_height = screen_frame.size.height - (monitor_pos.y + monitor_size.height);
 
-    win_frame.origin.y -= padding_top;
+    // Position the panel directly below the menu bar
+    win_frame.origin.y = screen_frame.size.height - menu_bar_height - win_frame.size.height - padding_top;
 
     win_frame.origin.x = {
         let top_right = mouse_location.x + (win_frame.size.width / 2.0);

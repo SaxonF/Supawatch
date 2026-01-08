@@ -45,3 +45,29 @@
   color: rgba(255, 255, 255, 0.5);
   font-size: 14px;
 }
+
+.tray-arrow {
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-bottom: 8px solid hsl(var(--border));
+  z-index: 100;
+}
+
+.tray-arrow::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-bottom: 7px solid hsl(var(--background));
+}

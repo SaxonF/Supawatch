@@ -142,8 +142,8 @@ impl FileChange {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppData {
     pub projects: Vec<Project>,
-    /// Supabase personal access token (stored encrypted in production)
-    #[serde(default)]
+    /// Supabase personal access token (stored in system keyring)
+    #[serde(skip)]
     pub access_token: Option<String>,
     pub version: String,
 }

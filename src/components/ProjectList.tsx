@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
-import type { Project } from "../types";
-import { ProjectItem } from "./ProjectItem";
-import { CreateProjectForm } from "./CreateProjectForm";
+import { useEffect, useState } from "react";
 import * as api from "../api";
+import type { Project } from "../types";
+import { CreateProjectForm } from "./CreateProjectForm";
+import { ProjectItem } from "./ProjectItem";
 import "./ProjectList.css";
+import { Button } from "./ui/button";
 
 export function ProjectList() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -35,7 +36,7 @@ export function ProjectList() {
   }
 
   return (
-    <div className="project-list">
+    <div className="flex-1 overflow-auto p-5">
       {showCreateForm ? (
         <CreateProjectForm
           onCreated={handleProjectCreated}
@@ -43,20 +44,22 @@ export function ProjectList() {
         />
       ) : (
         <>
-          <button
-            className="add-project-btn"
+          <Button
+            className="add-project-btn mb-4 w-full h-12 rounded-xl text-lg"
             onClick={() => setShowCreateForm(true)}
           >
             + Add Project
-          </button>
+          </Button>
 
           {projects.length === 0 ? (
             <div className="empty-state">
               <p>No projects yet</p>
-              <p className="hint">Add a project to start watching for changes</p>
+              <p className="hint">
+                Add a project to start watching for changes
+              </p>
             </div>
           ) : (
-            <div className="projects">
+            <div className="space-y-1 rounded-xl overflow-hidden">
               {projects.map((project) => (
                 <ProjectItem
                   key={project.id}

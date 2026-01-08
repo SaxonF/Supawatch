@@ -62,6 +62,14 @@ export async function deleteProject(id: string): Promise<void> {
   return invoke("delete_project", { id });
 }
 
+export async function revealInFinder(path: string): Promise<void> {
+  return invoke("reveal_in_finder", { path });
+}
+
+export async function pickProjectFolder(): Promise<string | null> {
+  return invoke("pick_project_folder");
+}
+
 export async function linkSupabaseProject(
   projectId: string,
   supabaseProjectRef: string
@@ -125,6 +133,13 @@ export async function pullProject(projectId: string): Promise<void> {
   return invoke("pull_project", { projectId });
 }
 
+export async function pushProject(
+  projectId: string,
+  force?: boolean
+): Promise<string> {
+  return invoke("push_project", { projectId, force });
+}
+
 // Supabase Logs API
 export async function querySupabaseLogs(
   projectId: string,
@@ -164,4 +179,20 @@ export async function getAuthLogs(
   minutes?: number
 ): Promise<unknown> {
   return invoke("get_auth_logs", { projectId, minutes });
+}
+
+// Templates API
+export async function isFolderEmpty(path: string): Promise<boolean> {
+  return invoke("is_folder_empty", { path });
+}
+
+export async function getTemplates(): Promise<string[]> {
+  return invoke("get_templates");
+}
+
+export async function copyTemplate(
+  templateName: string,
+  targetPath: string
+): Promise<void> {
+  return invoke("copy_template", { templateName, targetPath });
 }
