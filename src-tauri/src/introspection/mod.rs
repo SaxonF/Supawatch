@@ -275,4 +275,433 @@ mod tests {
         let row_int: Row = serde_json::from_str(json_int).expect("Failed to parse int i64");
         assert_eq!(row_int.val, 123);
     }
+
+    // ============================================================================
+    // Additional Introspection Tests for Full Postgres Feature Coverage
+    // ============================================================================
+
+    #[test]
+    fn test_parse_pg_array_json_array() {
+        let val = json!(["a", "b", "c"]);
+        let result = parse_pg_array(&val);
+        assert_eq!(result, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn test_parse_pg_array_string_format() {
+        let val = json!("{a,b,c}");
+        let result = parse_pg_array(&val);
+        assert_eq!(result, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn test_parse_pg_array_empty() {
+        let val = json!("{}");
+        let result = parse_pg_array(&val);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_pg_array_null() {
+        let val = json!(null);
+        let result = parse_pg_array(&val);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_policy_cmd_select() {
+        assert_eq!(parse_policy_cmd("r"), "SELECT");
+    }
+
+    #[test]
+    fn test_parse_policy_cmd_insert() {
+        assert_eq!(parse_policy_cmd("a"), "INSERT");
+    }
+
+    #[test]
+    fn test_parse_policy_cmd_update() {
+        assert_eq!(parse_policy_cmd("w"), "UPDATE");
+    }
+
+    #[test]
+    fn test_parse_policy_cmd_delete() {
+        assert_eq!(parse_policy_cmd("d"), "DELETE");
+    }
+
+    #[test]
+    fn test_parse_policy_cmd_all() {
+        assert_eq!(parse_policy_cmd("*"), "ALL");
+    }
+
+    #[test]
+    fn test_extract_trigger_when_clause_complex() {
+        let def = "CREATE TRIGGER audit_trigger BEFORE UPDATE ON orders FOR EACH ROW WHEN ((OLD.amount IS DISTINCT FROM NEW.amount) AND (NEW.status <> 'cancelled')) EXECUTE FUNCTION audit_changes()";
+        let when = extract_trigger_when_clause(def);
+        assert!(when.is_some());
+        let clause = when.unwrap();
+        assert!(clause.contains("OLD.amount"));
+        assert!(clause.contains("NEW.status"));
+    }
+
+    #[test]
+    fn test_extract_trigger_when_clause_none() {
+        let def = "CREATE TRIGGER simple_trigger AFTER INSERT ON users FOR EACH ROW EXECUTE FUNCTION notify()";
+        let when = extract_trigger_when_clause(def);
+        assert!(when.is_none());
+    }
+
+    #[test]
+    fn test_extract_index_expressions_lower() {
+        let def = "CREATE INDEX idx_email ON users (lower(email))";
+        let exprs = extract_index_expressions(def);
+        assert_eq!(exprs.len(), 1);
+        assert!(exprs[0].contains("lower"));
+    }
+
+    #[test]
+    fn test_extract_index_expressions_multiple() {
+        let def = "CREATE INDEX idx_multi ON data (lower(name), upper(code), length(description))";
+        let exprs = extract_index_expressions(def);
+        assert!(exprs.len() >= 2); // At least 2 expressions with parens
+    }
+
+    #[test]
+    fn test_extract_index_expressions_none() {
+        let def = "CREATE INDEX idx_simple ON users (id, email)";
+        let exprs = extract_index_expressions(def);
+        assert!(exprs.is_empty()); // No function expressions
+    }
+
+    #[test]
+    fn test_parse_function_args_variadic() {
+        let args = parse_function_args("VARIADIC args text[]");
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0].mode, Some("VARIADIC".to_string()));
+    }
+
+    #[test]
+    fn test_parse_function_args_inout() {
+        let args = parse_function_args("INOUT value integer");
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0].mode, Some("INOUT".to_string()));
+    }
+
+    #[test]
+    fn test_parse_function_args_empty() {
+        let args = parse_function_args("");
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn test_parse_function_args_complex_defaults() {
+        let args = parse_function_args("name text DEFAULT 'unknown', age integer DEFAULT 0, active boolean DEFAULT true");
+        assert_eq!(args.len(), 3);
+        assert_eq!(args[0].default_value, Some("'unknown'".to_string()));
+        assert_eq!(args[1].default_value, Some("0".to_string()));
+        assert_eq!(args[2].default_value, Some("true".to_string()));
+    }
+
+    #[test]
+    fn test_parse_bulk_response_with_indexes() {
+        let data = json!({
+            "tables": [{"schema": "public", "name": "users"}],
+            "columns": [],
+            "foreign_keys": [],
+            "indexes": [
+                {
+                    "schema": "public",
+                    "table_name": "users",
+                    "index_name": "idx_email",
+                    "index_method": "btree",
+                    "is_unique": true,
+                    "is_primary": false,
+                    "columns": ["email"],
+                    "constraint_name": "unique_email",
+                    "index_def": "CREATE UNIQUE INDEX idx_email ON users (email)"
+                }
+            ],
+            "triggers": [],
+            "policies": [],
+            "rls": [],
+            "check_constraints": [],
+            "table_comments": []
+        });
+
+        let result = tables::parse_bulk_response(&data).unwrap();
+        let table = result.get("\"public\".\"users\"").unwrap();
+        assert!(!table.indexes.is_empty());
+        let idx = &table.indexes[0];
+        assert!(idx.is_unique);
+        assert_eq!(idx.index_method, "btree");
+    }
+
+    #[test]
+    fn test_parse_bulk_response_with_policies() {
+        let data = json!({
+            "tables": [{"schema": "public", "name": "posts"}],
+            "columns": [],
+            "foreign_keys": [],
+            "indexes": [],
+            "triggers": [],
+            "policies": [
+                {
+                    "schema": "public",
+                    "table_name": "posts",
+                    "policy_name": "select_own",
+                    "cmd": "r",
+                    "roles": [0],
+                    "qual": "user_id = auth.uid()",
+                    "with_check": null
+                }
+            ],
+            "rls": [{"schema": "public", "table_name": "posts", "rls_enabled": true}],
+            "check_constraints": [],
+            "table_comments": []
+        });
+
+        let result = tables::parse_bulk_response(&data).unwrap();
+        let table = result.get("\"public\".\"posts\"").unwrap();
+        assert!(table.rls_enabled);
+        assert_eq!(table.policies.len(), 1);
+        assert_eq!(table.policies[0].name, "select_own");
+        assert_eq!(table.policies[0].cmd, "SELECT");
+    }
+
+    #[test]
+    fn test_parse_bulk_response_with_foreign_keys() {
+        let data = json!({
+            "tables": [{"schema": "public", "name": "posts"}],
+            "columns": [],
+            "foreign_keys": [
+                {
+                    "schema": "public",
+                    "table_name": "posts",
+                    "constraint_name": "fk_user",
+                    "column_name": "user_id",
+                    "foreign_table": "users",
+                    "foreign_column": "id",
+                    "on_delete": "CASCADE",
+                    "on_update": "NO ACTION"
+                }
+            ],
+            "indexes": [],
+            "triggers": [],
+            "policies": [],
+            "rls": [],
+            "check_constraints": [],
+            "table_comments": []
+        });
+
+        let result = tables::parse_bulk_response(&data).unwrap();
+        let table = result.get("\"public\".\"posts\"").unwrap();
+        assert_eq!(table.foreign_keys.len(), 1);
+        let fk = &table.foreign_keys[0];
+        assert_eq!(fk.constraint_name, "fk_user");
+        assert_eq!(fk.on_delete, "CASCADE");
+    }
+
+    #[test]
+    fn test_parse_bulk_response_with_table_comment() {
+        let data = json!({
+            "tables": [{"schema": "public", "name": "users"}],
+            "columns": [],
+            "foreign_keys": [],
+            "indexes": [],
+            "triggers": [],
+            "policies": [],
+            "rls": [],
+            "check_constraints": [],
+            "table_comments": [
+                {
+                    "schema": "public",
+                    "table_name": "users",
+                    "comment": "Main users table"
+                }
+            ]
+        });
+
+        let result = tables::parse_bulk_response(&data).unwrap();
+        let table = result.get("\"public\".\"users\"").unwrap();
+        assert_eq!(table.comment, Some("Main users table".to_string()));
+    }
+
+    #[test]
+    fn test_parse_bulk_response_with_column_details() {
+        let data = json!({
+            "tables": [{"schema": "public", "name": "items"}],
+            "columns": [
+                {
+                    "schema": "public",
+                    "table_name": "items",
+                    "column_name": "id",
+                    "data_type": "integer",
+                    "is_nullable": "NO",
+                    "column_default": null,
+                    "udt_name": "int4",
+                    "is_identity": "YES",
+                    "identity_generation": "ALWAYS",
+                    "is_primary_key": true,
+                    "is_unique": true,
+                    "comment": "Primary key"
+                },
+                {
+                    "schema": "public",
+                    "table_name": "items",
+                    "column_name": "name",
+                    "data_type": "character varying",
+                    "is_nullable": "YES",
+                    "column_default": "'unnamed'::character varying",
+                    "udt_name": "varchar",
+                    "is_identity": "NO",
+                    "is_primary_key": false,
+                    "is_unique": false,
+                    "comment": null,
+                    "collation_name": "C"
+                }
+            ],
+            "foreign_keys": [],
+            "indexes": [],
+            "triggers": [],
+            "policies": [],
+            "rls": [],
+            "check_constraints": [],
+            "table_comments": []
+        });
+
+        let result = tables::parse_bulk_response(&data).unwrap();
+        let table = result.get("\"public\".\"items\"").unwrap();
+
+        let id_col = table.columns.get("id").unwrap();
+        assert!(id_col.is_primary_key);
+        assert!(id_col.is_identity);
+        assert_eq!(id_col.identity_generation, Some("ALWAYS".to_string()));
+        assert_eq!(id_col.comment, Some("Primary key".to_string()));
+
+        let name_col = table.columns.get("name").unwrap();
+        assert!(name_col.is_nullable);
+        assert!(name_col.column_default.is_some());
+    }
+
+    #[test]
+    fn test_parse_bulk_response_gin_index() {
+        let data = json!({
+            "tables": [{"schema": "public", "name": "documents"}],
+            "columns": [],
+            "foreign_keys": [],
+            "indexes": [
+                {
+                    "schema": "public",
+                    "table_name": "documents",
+                    "index_name": "idx_content_gin",
+                    "index_method": "gin",
+                    "is_unique": false,
+                    "is_primary": false,
+                    "columns": ["content"],
+                    "constraint_name": null,
+                    "index_def": "CREATE INDEX idx_content_gin ON documents USING gin (content)"
+                }
+            ],
+            "triggers": [],
+            "policies": [],
+            "rls": [],
+            "check_constraints": [],
+            "table_comments": []
+        });
+
+        let result = tables::parse_bulk_response(&data).unwrap();
+        let table = result.get("\"public\".\"documents\"").unwrap();
+        let idx = &table.indexes[0];
+        assert_eq!(idx.index_method, "gin");
+    }
+
+    #[test]
+    fn test_parse_bulk_response_partial_index() {
+        let data = json!({
+            "tables": [{"schema": "public", "name": "users"}],
+            "columns": [],
+            "foreign_keys": [],
+            "indexes": [
+                {
+                    "schema": "public",
+                    "table_name": "users",
+                    "index_name": "idx_active_users",
+                    "index_method": "btree",
+                    "is_unique": false,
+                    "is_primary": false,
+                    "columns": ["id"],
+                    "constraint_name": null,
+                    "index_def": "CREATE INDEX idx_active_users ON users (id) WHERE active = true"
+                }
+            ],
+            "triggers": [],
+            "policies": [],
+            "rls": [],
+            "check_constraints": [],
+            "table_comments": []
+        });
+
+        let result = tables::parse_bulk_response(&data).unwrap();
+        let table = result.get("\"public\".\"users\"").unwrap();
+        let idx = &table.indexes[0];
+        assert!(idx.where_clause.is_some());
+        assert!(idx.where_clause.as_ref().unwrap().contains("active"));
+    }
+
+    #[test]
+    fn test_parse_bulk_response_statement_level_trigger() {
+        let data = json!({
+            "tables": [{"schema": "public", "name": "events"}],
+            "columns": [],
+            "foreign_keys": [],
+            "indexes": [],
+            "triggers": [
+                {
+                    "schema": "public",
+                    "table_name": "events",
+                    "trigger_name": "notify_all",
+                    "tgtype": 17,
+                    "function_name": "notify_func",
+                    "trigger_def": "CREATE TRIGGER notify_all AFTER INSERT ON events FOR EACH STATEMENT EXECUTE FUNCTION notify_func()"
+                }
+            ],
+            "policies": [],
+            "rls": [],
+            "check_constraints": [],
+            "table_comments": []
+        });
+
+        let result = tables::parse_bulk_response(&data).unwrap();
+        let table = result.get("\"public\".\"events\"").unwrap();
+        let trigger = &table.triggers[0];
+        assert_eq!(trigger.orientation, "STATEMENT");
+    }
+
+    #[test]
+    fn test_parse_bulk_response_before_trigger() {
+        let data = json!({
+            "tables": [{"schema": "public", "name": "data"}],
+            "columns": [],
+            "foreign_keys": [],
+            "indexes": [],
+            "triggers": [
+                {
+                    "schema": "public",
+                    "table_name": "data",
+                    "trigger_name": "validate_data",
+                    "tgtype": 6,
+                    "function_name": "validate_func",
+                    "trigger_def": "CREATE TRIGGER validate_data BEFORE INSERT ON data FOR EACH ROW EXECUTE FUNCTION validate_func()"
+                }
+            ],
+            "policies": [],
+            "rls": [],
+            "check_constraints": [],
+            "table_comments": []
+        });
+
+        let result = tables::parse_bulk_response(&data).unwrap();
+        let table = result.get("\"public\".\"data\"").unwrap();
+        let trigger = &table.triggers[0];
+        assert_eq!(trigger.timing, "BEFORE");
+    }
 }
