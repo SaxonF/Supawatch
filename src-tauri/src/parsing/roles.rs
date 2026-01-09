@@ -70,7 +70,7 @@ pub fn handle_create_extension(
         ext_name.clone(),
         ExtensionInfo {
             name: ext_name,
-            version: version.map(|v| v.to_string()),
+            version: version.map(|v| v.to_string().trim_matches('\'').to_string()),
             schema: Some(ext_schema),
         },
     );

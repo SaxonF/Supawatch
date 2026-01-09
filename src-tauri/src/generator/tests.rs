@@ -693,6 +693,7 @@ fn test_generate_check_constraint_add() {
             CheckConstraintInfo {
                 name: "valid_age".into(),
                 expression: "CHECK (age >= 0 AND age < 200)".into(),
+                columns: vec![],
             }
         ],
         comment: None,
@@ -713,6 +714,7 @@ fn test_generate_check_constraint_add() {
             CheckConstraintInfo {
                 name: "valid_age".into(),
                 expression: "CHECK (age >= 0 AND age < 200)".into(),
+                columns: vec![],
             }
         ],
         check_constraints_to_drop: vec![],

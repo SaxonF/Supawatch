@@ -447,7 +447,7 @@ mod tests {
                 {
                     "schema": "public",
                     "table_name": "posts",
-                    "policy_name": "select_own",
+                    "name": "select_own",
                     "cmd": "r",
                     "roles": [0],
                     "qual": "user_id = auth.uid()",
@@ -630,7 +630,8 @@ mod tests {
                     "is_primary": false,
                     "columns": ["id"],
                     "constraint_name": null,
-                    "index_def": "CREATE INDEX idx_active_users ON users (id) WHERE active = true"
+                    "index_def": "CREATE INDEX idx_active_users ON users (id) WHERE active = true",
+                    "where_clause": "active = true"
                 }
             ],
             "triggers": [],
@@ -659,7 +660,7 @@ mod tests {
                     "schema": "public",
                     "table_name": "events",
                     "trigger_name": "notify_all",
-                    "tgtype": 17,
+                    "tgtype": 4,
                     "function_name": "notify_func",
                     "trigger_def": "CREATE TRIGGER notify_all AFTER INSERT ON events FOR EACH STATEMENT EXECUTE FUNCTION notify_func()"
                 }

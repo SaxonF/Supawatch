@@ -640,6 +640,7 @@ fn test_default_roles_excluded_from_diff() {
                 bypass_rls: false,
                 connection_limit: -1,
                 valid_until: None,
+                password: None,
             },
         );
     }
@@ -680,6 +681,7 @@ fn test_pg_prefixed_roles_excluded_from_diff() {
                 bypass_rls: false,
                 connection_limit: -1,
                 valid_until: None,
+                password: None,
             },
         );
     }
@@ -752,6 +754,7 @@ fn test_custom_roles_can_be_dropped() {
             bypass_rls: false,
             connection_limit: -1,
             valid_until: None,
+            password: None,
         },
     );
 
@@ -1016,6 +1019,7 @@ fn test_full_schema_diff_does_not_drop_system_objects() {
                 bypass_rls: false,
                 connection_limit: -1,
                 valid_until: None,
+                password: None,
             },
         );
     }

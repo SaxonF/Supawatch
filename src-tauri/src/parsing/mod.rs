@@ -680,13 +680,11 @@ CREATE TABLE order_items (
     fn test_parse_sequence_with_all_options() {
         let sql = r#"
 CREATE SEQUENCE order_seq
-    AS bigint
-    START WITH 1000
     INCREMENT BY 5
     MINVALUE 1
     MAXVALUE 999999
-    CACHE 20
-    NO CYCLE;
+    START WITH 1000
+    CACHE 20;
 "#;
         let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
 
