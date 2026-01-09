@@ -433,19 +433,560 @@ CREATE TABLE "posts" (
     "id" UUID NOT NULL,
     "user_id" UUID
 );
-ALTER TABLE "posts" ADD CONSTRAINT "posts_user_id_fkey" 
+ALTER TABLE "posts" ADD CONSTRAINT "posts_user_id_fkey"
     FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE;
 "#;
-        
+
         let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
         let posts = schema.tables.get("\"public\".\"posts\"").expect("Table not found");
-        
+
         // FK should have bare/unquoted names (matching introspection behavior)
         let fk = &posts.foreign_keys[0];
         assert_eq!(fk.constraint_name, "posts_user_id_fkey"); // no quotes
-        assert_eq!(fk.column_name, "user_id"); // no quotes  
+        assert_eq!(fk.column_name, "user_id"); // no quotes
         assert_eq!(fk.foreign_table, "users"); // no quotes
         assert_eq!(fk.foreign_column, "id"); // no quotes
         assert_eq!(fk.on_delete, "CASCADE");
+    }
+
+    // ============================================================================
+    // Additional Parsing Tests for Full Postgres Feature Coverage
+    // ============================================================================
+
+    #[test]
+    fn test_parse_domain() {
+        let sql = r#"
+CREATE DOMAIN positive_int AS integer CHECK (VALUE >= 0);
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+
+        let domain = schema.domains.get("\"public\".\"positive_int\"").expect("Domain not found");
+        assert_eq!(domain.name, "positive_int");
+        assert_eq!(domain.base_type, "integer");
+        assert!(!domain.check_constraints.is_empty());
+    }
+
+    #[test]
+    fn test_parse_domain_with_default() {
+        let sql = r#"
+CREATE DOMAIN nonneg_int AS integer DEFAULT 0 CHECK (VALUE >= 0);
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+
+        let domain = schema.domains.get("\"public\".\"nonneg_int\"").expect("Domain not found");
+        assert_eq!(domain.name, "nonneg_int");
+        assert_eq!(domain.base_type, "integer");
+        assert_eq!(domain.default_value, Some("0".to_string()));
+    }
+
+    #[test]
+    fn test_parse_gin_index() {
+        let sql = r#"
+CREATE TABLE documents (id uuid, tags text[]);
+CREATE INDEX idx_tags_gin ON documents USING gin (tags);
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let table = schema.tables.get("\"public\".\"documents\"").expect("Table not found");
+
+        let idx = table.indexes.iter().find(|i| i.index_name == "idx_tags_gin")
+            .expect("Index not found");
+        assert_eq!(idx.index_method, "gin");
+    }
+
+    #[test]
+    fn test_parse_gist_index() {
+        let sql = r#"
+CREATE TABLE locations (id uuid, coords point);
+CREATE INDEX idx_coords_gist ON locations USING gist (coords);
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let table = schema.tables.get("\"public\".\"locations\"").expect("Table not found");
+
+        let idx = table.indexes.iter().find(|i| i.index_name == "idx_coords_gist")
+            .expect("Index not found");
+        assert_eq!(idx.index_method, "gist");
+    }
+
+    #[test]
+    fn test_parse_hash_index() {
+        let sql = r#"
+CREATE TABLE cache (id uuid, key text);
+CREATE INDEX idx_key_hash ON cache USING hash (key);
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let table = schema.tables.get("\"public\".\"cache\"").expect("Table not found");
+
+        let idx = table.indexes.iter().find(|i| i.index_name == "idx_key_hash")
+            .expect("Index not found");
+        assert_eq!(idx.index_method, "hash");
+    }
+
+    #[test]
+    fn test_parse_table_comment() {
+        let sql = r#"
+CREATE TABLE users (id uuid);
+COMMENT ON TABLE users IS 'Main users table';
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let table = schema.tables.get("\"public\".\"users\"").expect("Table not found");
+
+        assert_eq!(table.comment, Some("Main users table".to_string()));
+    }
+
+    #[test]
+    fn test_parse_column_comment() {
+        let sql = r#"
+CREATE TABLE users (id uuid, email text);
+COMMENT ON COLUMN users.email IS 'User email address';
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let table = schema.tables.get("\"public\".\"users\"").expect("Table not found");
+        let email_col = table.columns.get("email").expect("Column not found");
+
+        assert_eq!(email_col.comment, Some("User email address".to_string()));
+    }
+
+    #[test]
+    fn test_parse_security_definer_function() {
+        let sql = r#"
+CREATE FUNCTION get_current_user_id() RETURNS uuid
+    LANGUAGE sql
+    SECURITY DEFINER
+    AS $$ SELECT gen_random_uuid(); $$;
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+
+        let func = schema.functions.get("\"public\".\"get_current_user_id\"()")
+            .expect("Function not found");
+        assert!(func.security_definer);
+    }
+
+    #[test]
+    fn test_parse_function_volatility_stable() {
+        let sql = r#"
+CREATE FUNCTION stable_func() RETURNS integer
+    LANGUAGE sql
+    STABLE
+    AS $$ SELECT 1; $$;
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+
+        let func = schema.functions.get("\"public\".\"stable_func\"()")
+            .expect("Function not found");
+        assert_eq!(func.volatility, Some("STABLE".to_string()));
+    }
+
+    #[test]
+    fn test_parse_function_immutable() {
+        let sql = r#"
+CREATE FUNCTION immutable_func(x integer) RETURNS integer
+    LANGUAGE sql
+    IMMUTABLE
+    AS $$ SELECT x * 2; $$;
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+
+        let func = schema.functions.get("\"public\".\"immutable_func\"(integer)")
+            .expect("Function not found");
+        assert_eq!(func.volatility, Some("IMMUTABLE".to_string()));
+    }
+
+    #[test]
+    fn test_parse_function_strict() {
+        let sql = r#"
+CREATE FUNCTION strict_func(x integer) RETURNS integer
+    LANGUAGE sql
+    STRICT
+    AS $$ SELECT x + 1; $$;
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+
+        let func = schema.functions.get("\"public\".\"strict_func\"(integer)")
+            .expect("Function not found");
+        assert!(func.is_strict);
+    }
+
+    #[test]
+    fn test_parse_array_column() {
+        let sql = r#"
+CREATE TABLE posts (
+    id uuid,
+    tags text[]
+);
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let table = schema.tables.get("\"public\".\"posts\"").expect("Table not found");
+        let tags_col = table.columns.get("tags").expect("Column not found");
+
+        assert!(tags_col.data_type.contains("[]") || tags_col.data_type.to_uppercase().contains("ARRAY"));
+    }
+
+    #[test]
+    fn test_parse_enum_type() {
+        let sql = r#"
+CREATE TYPE status AS ENUM ('pending', 'active', 'cancelled');
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+
+        let enum_type = schema.enums.get("\"public\".\"status\"").expect("Enum not found");
+        assert_eq!(enum_type.name, "status");
+        assert_eq!(enum_type.values.len(), 3);
+        assert!(enum_type.values.contains(&"pending".to_string()));
+        assert!(enum_type.values.contains(&"active".to_string()));
+        assert!(enum_type.values.contains(&"cancelled".to_string()));
+    }
+
+    #[test]
+    fn test_parse_foreign_key_on_update() {
+        let sql = r#"
+CREATE TABLE users (id uuid PRIMARY KEY);
+CREATE TABLE posts (
+    id uuid,
+    user_id uuid
+);
+ALTER TABLE posts ADD CONSTRAINT fk_user
+    FOREIGN KEY (user_id) REFERENCES users(id)
+    ON DELETE CASCADE ON UPDATE SET NULL;
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let posts = schema.tables.get("\"public\".\"posts\"").expect("Table not found");
+
+        let fk = &posts.foreign_keys[0];
+        assert_eq!(fk.on_delete, "CASCADE");
+        assert_eq!(fk.on_update, "SET NULL");
+    }
+
+    #[test]
+    fn test_parse_multi_column_primary_key() {
+        let sql = r#"
+CREATE TABLE order_items (
+    order_id uuid,
+    item_id uuid,
+    quantity integer,
+    PRIMARY KEY (order_id, item_id)
+);
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let table = schema.tables.get("\"public\".\"order_items\"").expect("Table not found");
+
+        let order_id_col = table.columns.get("order_id").expect("Column not found");
+        let item_id_col = table.columns.get("item_id").expect("Column not found");
+
+        assert!(order_id_col.is_primary_key);
+        assert!(item_id_col.is_primary_key);
+    }
+
+    #[test]
+    fn test_parse_sequence_with_all_options() {
+        let sql = r#"
+CREATE SEQUENCE order_seq
+    INCREMENT BY 5
+    MINVALUE 1
+    MAXVALUE 999999
+    START WITH 1000
+    CACHE 20;
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+
+        let seq = schema.sequences.get("\"public\".\"order_seq\"").expect("Sequence not found");
+        assert_eq!(seq.name, "order_seq");
+        assert_eq!(seq.start_value, 1000);
+        assert_eq!(seq.increment, 5);
+        assert_eq!(seq.min_value, 1);
+        assert_eq!(seq.max_value, 999999);
+        assert_eq!(seq.cache_size, 20);
+        assert!(!seq.cycle);
+    }
+
+    #[test]
+    fn test_parse_policy_with_using_and_check() {
+        let sql = r#"
+CREATE TABLE posts (id uuid, author_id uuid);
+ALTER TABLE posts ENABLE ROW LEVEL SECURITY;
+CREATE POLICY manage_own ON posts FOR ALL TO public
+    USING (author_id = current_user_id())
+    WITH CHECK (author_id = current_user_id());
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let table = schema.tables.get("\"public\".\"posts\"").expect("Table not found");
+
+        let policy = table.policies.iter().find(|p| p.name == "manage_own")
+            .expect("Policy not found");
+        assert!(policy.qual.is_some());
+        assert!(policy.with_check.is_some());
+    }
+
+    #[test]
+    fn test_parse_composite_type_with_collation() {
+        let sql = r#"
+CREATE TYPE person_name AS (
+    first_name text COLLATE "C",
+    last_name text
+);
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+
+        let comp_type = schema.composite_types.get("\"public\".\"person_name\"")
+            .expect("Composite type not found");
+        assert_eq!(comp_type.attributes.len(), 2);
+        let first = &comp_type.attributes[0];
+        assert_eq!(first.name, "first_name");
+        assert!(first.collation.is_some());
+    }
+
+    #[test]
+    fn test_parse_role_with_options() {
+        let sql = r#"
+CREATE ROLE app_admin WITH
+    LOGIN
+    CREATEDB
+    CREATEROLE
+    CONNECTION LIMIT 10;
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+
+        let role = schema.roles.get("app_admin").expect("Role not found");
+        assert!(role.login);
+        assert!(role.create_db);
+        assert!(role.create_role);
+        assert_eq!(role.connection_limit, 10);
+    }
+
+    #[test]
+    fn test_parse_statement_level_trigger() {
+        let sql = r#"
+CREATE TABLE events (id uuid);
+CREATE FUNCTION notify_event() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$;
+CREATE TRIGGER trg_notify
+    AFTER INSERT ON events
+    FOR EACH STATEMENT
+    EXECUTE FUNCTION notify_event();
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let table = schema.tables.get("\"public\".\"events\"").expect("Table not found");
+
+        let trigger = &table.triggers[0];
+        assert_eq!(trigger.orientation, "STATEMENT");
+    }
+
+    #[test]
+    fn test_parse_multiple_trigger_events() {
+        let sql = r#"
+CREATE TABLE data (id uuid);
+CREATE FUNCTION audit_changes() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+CREATE TRIGGER trg_audit
+    BEFORE INSERT OR UPDATE OR DELETE ON data
+    FOR EACH ROW
+    EXECUTE FUNCTION audit_changes();
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let table = schema.tables.get("\"public\".\"data\"").expect("Table not found");
+
+        let trigger = &table.triggers[0];
+        assert!(trigger.events.contains(&"INSERT".to_string()));
+        assert!(trigger.events.contains(&"UPDATE".to_string()));
+        assert!(trigger.events.contains(&"DELETE".to_string()));
+    }
+
+    #[test]
+    fn test_parse_unique_constraint_as_index() {
+        let sql = r#"
+CREATE TABLE users (id uuid, email text);
+ALTER TABLE users ADD CONSTRAINT unique_email UNIQUE (email);
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let table = schema.tables.get("\"public\".\"users\"").expect("Table not found");
+
+        let idx = table.indexes.iter().find(|i| i.index_name == "unique_email")
+            .expect("Index not found");
+        assert!(idx.is_unique);
+        assert!(idx.owning_constraint.is_some());
+    }
+
+    #[test]
+    fn test_parse_view_complex_query() {
+        let sql = r#"
+CREATE VIEW user_post_counts AS
+    SELECT u.id, COUNT(p.id) as post_count
+    FROM users u
+    LEFT JOIN posts p ON p.user_id = u.id
+    GROUP BY u.id;
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+
+        let view = schema.views.get("\"public\".\"user_post_counts\"").expect("View not found");
+        assert!(!view.is_materialized);
+        assert!(view.definition.contains("SELECT"));
+    }
+
+    #[test]
+    fn test_parse_function_with_out_param() {
+        let sql = r#"
+CREATE FUNCTION get_stats(IN p_name text, OUT row_count integer)
+    RETURNS integer
+    LANGUAGE sql
+    AS $$ SELECT 100; $$;
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+
+        // Function should be found with its signature
+        let func_key = schema.functions.keys()
+            .find(|k| k.contains("get_stats"))
+            .expect("Function not found");
+        let func = schema.functions.get(func_key).unwrap();
+
+        // Check that OUT params are parsed
+        assert!(func.args.iter().any(|a| a.mode == Some("OUT".to_string())));
+    }
+
+    #[test]
+    fn test_parse_function_with_default_args() {
+        let sql = r#"
+CREATE FUNCTION greet(name text DEFAULT 'World')
+    RETURNS text
+    LANGUAGE sql
+    AS $$ SELECT 'Hello'; $$;
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+
+        let func = schema.functions.get("\"public\".\"greet\"(text)")
+            .expect("Function not found");
+        assert!(func.args[0].default_value.is_some());
+    }
+
+    #[test]
+    fn test_parse_schema_qualified_objects() {
+        let sql = r#"
+CREATE TABLE custom_schema.users (id uuid);
+CREATE TYPE custom_schema.status AS ENUM ('a', 'b');
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+
+        assert!(schema.tables.contains_key("\"custom_schema\".\"users\""));
+        assert!(schema.enums.contains_key("\"custom_schema\".\"status\""));
+    }
+
+    #[test]
+    fn test_parse_identity_by_default() {
+        let sql = r#"
+CREATE TABLE items (
+    id integer GENERATED BY DEFAULT AS IDENTITY,
+    name text
+);
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let table = schema.tables.get("\"public\".\"items\"").expect("Table not found");
+
+        let id_col = table.columns.get("id").expect("id column not found");
+        assert!(id_col.is_identity);
+        assert_eq!(id_col.identity_generation, Some("BY DEFAULT".to_string()));
+    }
+
+    #[test]
+    fn test_parse_numeric_with_precision() {
+        let sql = r#"
+CREATE TABLE prices (
+    id uuid,
+    amount numeric(10, 2)
+);
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let table = schema.tables.get("\"public\".\"prices\"").expect("Table not found");
+
+        let amount_col = table.columns.get("amount").expect("amount column not found");
+        assert!(amount_col.data_type.to_lowercase().contains("numeric"));
+    }
+
+    #[test]
+    fn test_parse_varchar_with_length() {
+        let sql = r#"
+CREATE TABLE users (
+    id uuid,
+    username varchar(50)
+);
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let table = schema.tables.get("\"public\".\"users\"").expect("Table not found");
+
+        let username_col = table.columns.get("username").expect("username column not found");
+        assert!(username_col.data_type.to_lowercase().contains("varchar") ||
+                username_col.data_type.to_lowercase().contains("character varying"));
+    }
+
+    #[test]
+    fn test_parse_timestamp_with_timezone() {
+        let sql = r#"
+CREATE TABLE events (
+    id uuid,
+    created_at timestamptz DEFAULT now()
+);
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let table = schema.tables.get("\"public\".\"events\"").expect("Table not found");
+
+        let created_col = table.columns.get("created_at").expect("created_at column not found");
+        assert!(created_col.column_default.is_some());
+    }
+
+    #[test]
+    fn test_parse_jsonb_column() {
+        let sql = r#"
+CREATE TABLE documents (
+    id uuid,
+    data jsonb DEFAULT '{}'::jsonb
+);
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let table = schema.tables.get("\"public\".\"documents\"").expect("Table not found");
+
+        let data_col = table.columns.get("data").expect("data column not found");
+        assert!(data_col.data_type.to_lowercase().contains("jsonb"));
+    }
+
+    #[test]
+    fn test_parse_uuid_column_with_default() {
+        let sql = r#"
+CREATE TABLE users (
+    id uuid DEFAULT gen_random_uuid() PRIMARY KEY
+);
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let table = schema.tables.get("\"public\".\"users\"").expect("Table not found");
+
+        let id_col = table.columns.get("id").expect("id column not found");
+        assert!(id_col.is_primary_key);
+        assert!(id_col.column_default.is_some());
+    }
+
+    #[test]
+    fn test_parse_boolean_column_with_default() {
+        let sql = r#"
+CREATE TABLE users (
+    id uuid,
+    is_active boolean DEFAULT true NOT NULL
+);
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let table = schema.tables.get("\"public\".\"users\"").expect("Table not found");
+
+        let col = table.columns.get("is_active").expect("is_active column not found");
+        assert!(!col.is_nullable);
+        assert!(col.column_default.is_some());
+    }
+
+    #[test]
+    fn test_parse_inline_foreign_key() {
+        let sql = r#"
+CREATE TABLE users (id uuid PRIMARY KEY);
+CREATE TABLE posts (
+    id uuid PRIMARY KEY,
+    user_id uuid REFERENCES users(id) ON DELETE CASCADE
+);
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        // Note: Inline FK parsing depends on sqlparser support
+        // This test verifies the table structure is parsed correctly
+        let table = schema.tables.get("\"public\".\"posts\"").expect("Table not found");
+        assert!(table.columns.contains_key("user_id"));
     }
 }

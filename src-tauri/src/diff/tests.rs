@@ -640,6 +640,7 @@ fn test_default_roles_excluded_from_diff() {
                 bypass_rls: false,
                 connection_limit: -1,
                 valid_until: None,
+                password: None,
             },
         );
     }
@@ -680,6 +681,7 @@ fn test_pg_prefixed_roles_excluded_from_diff() {
                 bypass_rls: false,
                 connection_limit: -1,
                 valid_until: None,
+                password: None,
             },
         );
     }
@@ -752,6 +754,7 @@ fn test_custom_roles_can_be_dropped() {
             bypass_rls: false,
             connection_limit: -1,
             valid_until: None,
+            password: None,
         },
     );
 
@@ -1016,6 +1019,7 @@ fn test_full_schema_diff_does_not_drop_system_objects() {
                 bypass_rls: false,
                 connection_limit: -1,
                 valid_until: None,
+                password: None,
             },
         );
     }
@@ -1090,6 +1094,1110 @@ fn test_full_schema_diff_does_not_drop_system_objects() {
     // Verify no changes to tables
     assert!(diff.tables_to_create.is_empty());
     assert!(diff.tables_to_drop.is_empty());
+    assert!(diff.table_changes.is_empty());
+}
+
+// ============================================================================
+// Additional Diff Tests for Full Postgres Feature Coverage
+// ============================================================================
+
+#[test]
+fn test_view_create() {
+    let remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    local.views.insert(
+        "\"public\".\"user_stats\"".to_string(),
+        crate::schema::ViewInfo {
+            schema: "public".to_string(),
+            name: "user_stats".to_string(),
+            definition: "SELECT id, COUNT(*) FROM users GROUP BY id".to_string(),
+            is_materialized: false,
+            columns: vec![],
+            indexes: vec![],
+            comment: None,
+            with_options: vec![],
+            check_option: None,
+        },
+    );
+
+    let diff = compute_diff(&remote, &local);
+    assert_eq!(diff.views_to_create.len(), 1);
+    assert_eq!(diff.views_to_create[0].name, "user_stats");
+}
+
+#[test]
+fn test_view_drop() {
+    let mut remote = DbSchema::new();
+    let local = DbSchema::new();
+
+    remote.views.insert(
+        "\"public\".\"old_view\"".to_string(),
+        crate::schema::ViewInfo {
+            schema: "public".to_string(),
+            name: "old_view".to_string(),
+            definition: "SELECT 1".to_string(),
+            is_materialized: false,
+            columns: vec![],
+            indexes: vec![],
+            comment: None,
+            with_options: vec![],
+            check_option: None,
+        },
+    );
+
+    let diff = compute_diff(&remote, &local);
+    assert_eq!(diff.views_to_drop.len(), 1);
+    assert!(diff.views_to_drop.contains(&"\"public\".\"old_view\"".to_string()));
+}
+
+#[test]
+fn test_view_update() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    remote.views.insert(
+        "\"public\".\"stats\"".to_string(),
+        crate::schema::ViewInfo {
+            schema: "public".to_string(),
+            name: "stats".to_string(),
+            definition: "SELECT id FROM users".to_string(),
+            is_materialized: false,
+            columns: vec![],
+            indexes: vec![],
+            comment: None,
+            with_options: vec![],
+            check_option: None,
+        },
+    );
+
+    local.views.insert(
+        "\"public\".\"stats\"".to_string(),
+        crate::schema::ViewInfo {
+            schema: "public".to_string(),
+            name: "stats".to_string(),
+            definition: "SELECT id, name FROM users".to_string(), // Changed
+            is_materialized: false,
+            columns: vec![],
+            indexes: vec![],
+            comment: None,
+            with_options: vec![],
+            check_option: None,
+        },
+    );
+
+    let diff = compute_diff(&remote, &local);
+    assert_eq!(diff.views_to_update.len(), 1);
+    assert_eq!(diff.views_to_update[0].name, "stats");
+}
+
+#[test]
+fn test_materialized_view_create() {
+    let remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    local.views.insert(
+        "\"public\".\"cached_stats\"".to_string(),
+        crate::schema::ViewInfo {
+            schema: "public".to_string(),
+            name: "cached_stats".to_string(),
+            definition: "SELECT * FROM users".to_string(),
+            is_materialized: true,
+            columns: vec![],
+            indexes: vec![],
+            comment: None,
+            with_options: vec![],
+            check_option: None,
+        },
+    );
+
+    let diff = compute_diff(&remote, &local);
+    assert_eq!(diff.views_to_create.len(), 1);
+    assert!(diff.views_to_create[0].is_materialized);
+}
+
+#[test]
+fn test_sequence_create() {
+    let remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    local.sequences.insert(
+        "\"public\".\"order_seq\"".to_string(),
+        crate::schema::SequenceInfo {
+            schema: "public".to_string(),
+            name: "order_seq".to_string(),
+            data_type: "bigint".to_string(),
+            start_value: 1,
+            min_value: 1,
+            max_value: 9223372036854775807,
+            increment: 1,
+            cycle: false,
+            cache_size: 1,
+            owned_by: None,
+            comment: None,
+        },
+    );
+
+    let diff = compute_diff(&remote, &local);
+    assert_eq!(diff.sequences_to_create.len(), 1);
+    assert_eq!(diff.sequences_to_create[0].name, "order_seq");
+}
+
+#[test]
+fn test_sequence_drop() {
+    let mut remote = DbSchema::new();
+    let local = DbSchema::new();
+
+    remote.sequences.insert(
+        "\"public\".\"old_seq\"".to_string(),
+        crate::schema::SequenceInfo {
+            schema: "public".to_string(),
+            name: "old_seq".to_string(),
+            data_type: "bigint".to_string(),
+            start_value: 1,
+            min_value: 1,
+            max_value: 9223372036854775807,
+            increment: 1,
+            cycle: false,
+            cache_size: 1,
+            owned_by: None,
+            comment: None,
+        },
+    );
+
+    let diff = compute_diff(&remote, &local);
+    assert_eq!(diff.sequences_to_drop.len(), 1);
+}
+
+#[test]
+fn test_sequence_update() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    remote.sequences.insert(
+        "\"public\".\"my_seq\"".to_string(),
+        crate::schema::SequenceInfo {
+            schema: "public".to_string(),
+            name: "my_seq".to_string(),
+            data_type: "bigint".to_string(),
+            start_value: 1,
+            min_value: 1,
+            max_value: 9223372036854775807,
+            increment: 1,
+            cycle: false,
+            cache_size: 1,
+            owned_by: None,
+            comment: None,
+        },
+    );
+
+    local.sequences.insert(
+        "\"public\".\"my_seq\"".to_string(),
+        crate::schema::SequenceInfo {
+            schema: "public".to_string(),
+            name: "my_seq".to_string(),
+            data_type: "bigint".to_string(),
+            start_value: 1,
+            min_value: 1,
+            max_value: 9223372036854775807,
+            increment: 5, // Changed increment
+            cycle: false,
+            cache_size: 1,
+            owned_by: None,
+            comment: None,
+        },
+    );
+
+    let diff = compute_diff(&remote, &local);
+    assert_eq!(diff.sequences_to_update.len(), 1);
+}
+
+#[test]
+fn test_function_update() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    remote.functions.insert(
+        "\"public\".\"my_func\"()".to_string(),
+        FunctionInfo {
+            schema: "public".to_string(),
+            name: "my_func".to_string(),
+            args: vec![],
+            return_type: "integer".to_string(),
+            language: "sql".to_string(),
+            definition: "SELECT 1".to_string(),
+            volatility: None,
+            is_strict: false,
+            security_definer: false,
+        },
+    );
+
+    local.functions.insert(
+        "\"public\".\"my_func\"()".to_string(),
+        FunctionInfo {
+            schema: "public".to_string(),
+            name: "my_func".to_string(),
+            args: vec![],
+            return_type: "integer".to_string(),
+            language: "sql".to_string(),
+            definition: "SELECT 2".to_string(), // Changed definition
+            volatility: None,
+            is_strict: false,
+            security_definer: false,
+        },
+    );
+
+    let diff = compute_diff(&remote, &local);
+    assert_eq!(diff.functions_to_update.len(), 1);
+    assert_eq!(diff.functions_to_update[0].name, "my_func");
+}
+
+#[test]
+fn test_domain_create() {
+    let remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    local.domains.insert(
+        "\"public\".\"email_addr\"".to_string(),
+        crate::schema::DomainInfo {
+            schema: "public".to_string(),
+            name: "email_addr".to_string(),
+            base_type: "text".to_string(),
+            default_value: None,
+            is_not_null: false,
+            check_constraints: vec![],
+            collation: None,
+            comment: None,
+        },
+    );
+
+    let diff = compute_diff(&remote, &local);
+    assert_eq!(diff.domains_to_create.len(), 1);
+    assert_eq!(diff.domains_to_create[0].name, "email_addr");
+}
+
+#[test]
+fn test_domain_drop() {
+    let mut remote = DbSchema::new();
+    let local = DbSchema::new();
+
+    remote.domains.insert(
+        "\"public\".\"old_domain\"".to_string(),
+        crate::schema::DomainInfo {
+            schema: "public".to_string(),
+            name: "old_domain".to_string(),
+            base_type: "integer".to_string(),
+            default_value: None,
+            is_not_null: false,
+            check_constraints: vec![],
+            collation: None,
+            comment: None,
+        },
+    );
+
+    let diff = compute_diff(&remote, &local);
+    assert_eq!(diff.domains_to_drop.len(), 1);
+}
+
+#[test]
+fn test_composite_type_create() {
+    let remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    local.composite_types.insert(
+        "\"public\".\"address\"".to_string(),
+        crate::schema::CompositeTypeInfo {
+            schema: "public".to_string(),
+            name: "address".to_string(),
+            attributes: vec![
+                crate::schema::CompositeTypeAttribute {
+                    name: "street".to_string(),
+                    data_type: "text".to_string(),
+                    collation: None,
+                },
+            ],
+            comment: None,
+        },
+    );
+
+    let diff = compute_diff(&remote, &local);
+    assert_eq!(diff.composite_types_to_create.len(), 1);
+}
+
+#[test]
+fn test_composite_type_drop() {
+    let mut remote = DbSchema::new();
+    let local = DbSchema::new();
+
+    remote.composite_types.insert(
+        "\"public\".\"old_type\"".to_string(),
+        crate::schema::CompositeTypeInfo {
+            schema: "public".to_string(),
+            name: "old_type".to_string(),
+            attributes: vec![],
+            comment: None,
+        },
+    );
+
+    let diff = compute_diff(&remote, &local);
+    assert_eq!(diff.composite_types_to_drop.len(), 1);
+}
+
+#[test]
+fn test_extension_create() {
+    let remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    local.extensions.insert(
+        "postgis".to_string(),
+        crate::schema::ExtensionInfo {
+            name: "postgis".to_string(),
+            version: Some("3.0".to_string()),
+            schema: Some("public".to_string()),
+        },
+    );
+
+    let diff = compute_diff(&remote, &local);
+    assert_eq!(diff.extensions_to_create.len(), 1);
+    assert_eq!(diff.extensions_to_create[0].name, "postgis");
+}
+
+#[test]
+fn test_role_create() {
+    let remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    local.roles.insert(
+        "app_user".to_string(),
+        crate::schema::RoleInfo {
+            name: "app_user".to_string(),
+            superuser: false,
+            create_db: false,
+            create_role: false,
+            inherit: true,
+            login: true,
+            replication: false,
+            bypass_rls: false,
+            connection_limit: -1,
+            valid_until: None,
+            password: None,
+        },
+    );
+
+    let diff = compute_diff(&remote, &local);
+    assert_eq!(diff.roles_to_create.len(), 1);
+    assert_eq!(diff.roles_to_create[0].name, "app_user");
+}
+
+#[test]
+fn test_role_update() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    remote.roles.insert(
+        "app_user".to_string(),
+        crate::schema::RoleInfo {
+            name: "app_user".to_string(),
+            superuser: false,
+            create_db: false,
+            create_role: false,
+            inherit: true,
+            login: true,
+            replication: false,
+            bypass_rls: false,
+            connection_limit: -1,
+            valid_until: None,
+            password: None,
+        },
+    );
+
+    local.roles.insert(
+        "app_user".to_string(),
+        crate::schema::RoleInfo {
+            name: "app_user".to_string(),
+            superuser: false,
+            create_db: true, // Changed
+            create_role: false,
+            inherit: true,
+            login: true,
+            replication: false,
+            bypass_rls: false,
+            connection_limit: -1,
+            valid_until: None,
+            password: None,
+        },
+    );
+
+    let diff = compute_diff(&remote, &local);
+    assert_eq!(diff.roles_to_update.len(), 1);
+}
+
+#[test]
+fn test_column_default_change() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    let mut remote_table = TableInfo {
+        schema: "public".into(),
+        table_name: "users".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+    };
+
+    remote_table.columns.insert("age".into(), ColumnInfo {
+        column_name: "age".into(),
+        data_type: "integer".into(),
+        is_nullable: true,
+        column_default: None, // No default
+        udt_name: "int4".into(),
+        is_primary_key: false,
+        is_unique: false,
+        is_identity: false,
+        identity_generation: None,
+        collation: None,
+        enum_name: None,
+        is_array: false,
+        comment: None,
+    });
+
+    let mut local_table = remote_table.clone();
+    local_table.columns.insert("age".into(), ColumnInfo {
+        column_name: "age".into(),
+        data_type: "integer".into(),
+        is_nullable: true,
+        column_default: Some("18".into()), // Added default
+        udt_name: "int4".into(),
+        is_primary_key: false,
+        is_unique: false,
+        is_identity: false,
+        identity_generation: None,
+        collation: None,
+        enum_name: None,
+        is_array: false,
+        comment: None,
+    });
+
+    remote.tables.insert("users".into(), remote_table);
+    local.tables.insert("users".into(), local_table);
+
+    let diff = compute_diff(&remote, &local);
+    let table_diff = diff.table_changes.get("users").unwrap();
+    assert_eq!(table_diff.columns_to_modify.len(), 1);
+    assert!(table_diff.columns_to_modify[0].changes.default_change.is_some());
+}
+
+#[test]
+fn test_identity_column_change() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    let mut remote_table = TableInfo {
+        schema: "public".into(),
+        table_name: "items".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+    };
+
+    remote_table.columns.insert("id".into(), ColumnInfo {
+        column_name: "id".into(),
+        data_type: "integer".into(),
+        is_nullable: false,
+        column_default: None,
+        udt_name: "int4".into(),
+        is_primary_key: true,
+        is_unique: true,
+        is_identity: false, // Not identity
+        identity_generation: None,
+        collation: None,
+        enum_name: None,
+        is_array: false,
+        comment: None,
+    });
+
+    let mut local_table = remote_table.clone();
+    local_table.columns.insert("id".into(), ColumnInfo {
+        column_name: "id".into(),
+        data_type: "integer".into(),
+        is_nullable: false,
+        column_default: None,
+        udt_name: "int4".into(),
+        is_primary_key: true,
+        is_unique: true,
+        is_identity: true, // Now identity
+        identity_generation: Some("ALWAYS".into()),
+        collation: None,
+        enum_name: None,
+        is_array: false,
+        comment: None,
+    });
+
+    remote.tables.insert("items".into(), remote_table);
+    local.tables.insert("items".into(), local_table);
+
+    let diff = compute_diff(&remote, &local);
+    let table_diff = diff.table_changes.get("items").unwrap();
+    assert_eq!(table_diff.columns_to_modify.len(), 1);
+    assert!(table_diff.columns_to_modify[0].changes.identity_change.is_some());
+}
+
+#[test]
+fn test_collation_change() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    let mut remote_table = TableInfo {
+        schema: "public".into(),
+        table_name: "data".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+    };
+
+    remote_table.columns.insert("name".into(), ColumnInfo {
+        column_name: "name".into(),
+        data_type: "text".into(),
+        is_nullable: true,
+        column_default: None,
+        udt_name: "text".into(),
+        is_primary_key: false,
+        is_unique: false,
+        is_identity: false,
+        identity_generation: None,
+        collation: None, // No collation
+        enum_name: None,
+        is_array: false,
+        comment: None,
+    });
+
+    let mut local_table = remote_table.clone();
+    local_table.columns.insert("name".into(), ColumnInfo {
+        column_name: "name".into(),
+        data_type: "text".into(),
+        is_nullable: true,
+        column_default: None,
+        udt_name: "text".into(),
+        is_primary_key: false,
+        is_unique: false,
+        is_identity: false,
+        identity_generation: None,
+        collation: Some("\"C\"".into()), // Added collation
+        enum_name: None,
+        is_array: false,
+        comment: None,
+    });
+
+    remote.tables.insert("data".into(), remote_table);
+    local.tables.insert("data".into(), local_table);
+
+    let diff = compute_diff(&remote, &local);
+    let table_diff = diff.table_changes.get("data").unwrap();
+    assert_eq!(table_diff.columns_to_modify.len(), 1);
+    assert!(table_diff.columns_to_modify[0].changes.collation_change.is_some());
+}
+
+#[test]
+fn test_column_comment_change() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    let mut remote_table = TableInfo {
+        schema: "public".into(),
+        table_name: "users".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+    };
+
+    remote_table.columns.insert("email".into(), ColumnInfo {
+        column_name: "email".into(),
+        data_type: "text".into(),
+        is_nullable: true,
+        column_default: None,
+        udt_name: "text".into(),
+        is_primary_key: false,
+        is_unique: false,
+        is_identity: false,
+        identity_generation: None,
+        collation: None,
+        enum_name: None,
+        is_array: false,
+        comment: None,
+    });
+
+    let mut local_table = remote_table.clone();
+    local_table.columns.insert("email".into(), ColumnInfo {
+        column_name: "email".into(),
+        data_type: "text".into(),
+        is_nullable: true,
+        column_default: None,
+        udt_name: "text".into(),
+        is_primary_key: false,
+        is_unique: false,
+        is_identity: false,
+        identity_generation: None,
+        collation: None,
+        enum_name: None,
+        is_array: false,
+        comment: Some("User email address".into()), // Added comment
+    });
+
+    remote.tables.insert("users".into(), remote_table);
+    local.tables.insert("users".into(), local_table);
+
+    let diff = compute_diff(&remote, &local);
+    let table_diff = diff.table_changes.get("users").unwrap();
+    assert_eq!(table_diff.columns_to_modify.len(), 1);
+    assert!(table_diff.columns_to_modify[0].changes.comment_change.is_some());
+}
+
+#[test]
+fn test_table_comment_change() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    let remote_table = TableInfo {
+        schema: "public".into(),
+        table_name: "users".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+    };
+
+    let mut local_table = remote_table.clone();
+    local_table.comment = Some("Main users table".into());
+
+    remote.tables.insert("users".into(), remote_table);
+    local.tables.insert("users".into(), local_table);
+
+    let diff = compute_diff(&remote, &local);
+    let table_diff = diff.table_changes.get("users").unwrap();
+    assert!(table_diff.comment_change.is_some());
+}
+
+#[test]
+fn test_foreign_key_add() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    let remote_table = TableInfo {
+        schema: "public".into(),
+        table_name: "posts".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+    };
+
+    let mut local_table = remote_table.clone();
+    local_table.foreign_keys.push(ForeignKeyInfo {
+        constraint_name: "fk_user".into(),
+        column_name: "user_id".into(),
+        foreign_table: "users".into(),
+        foreign_column: "id".into(),
+        on_delete: "CASCADE".into(),
+        on_update: "NO ACTION".into(),
+    });
+
+    remote.tables.insert("posts".into(), remote_table);
+    local.tables.insert("posts".into(), local_table);
+
+    let diff = compute_diff(&remote, &local);
+    let table_diff = diff.table_changes.get("posts").unwrap();
+    assert_eq!(table_diff.foreign_keys_to_create.len(), 1);
+    assert_eq!(table_diff.foreign_keys_to_create[0].constraint_name, "fk_user");
+}
+
+#[test]
+fn test_foreign_key_drop() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    let mut remote_table = TableInfo {
+        schema: "public".into(),
+        table_name: "posts".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![ForeignKeyInfo {
+            constraint_name: "fk_user".into(),
+            column_name: "user_id".into(),
+            foreign_table: "users".into(),
+            foreign_column: "id".into(),
+            on_delete: "CASCADE".into(),
+            on_update: "NO ACTION".into(),
+        }],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+    };
+
+    let local_table = TableInfo {
+        schema: "public".into(),
+        table_name: "posts".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![], // FK removed
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+    };
+
+    remote.tables.insert("posts".into(), remote_table);
+    local.tables.insert("posts".into(), local_table);
+
+    let diff = compute_diff(&remote, &local);
+    let table_diff = diff.table_changes.get("posts").unwrap();
+    assert_eq!(table_diff.foreign_keys_to_drop.len(), 1);
+}
+
+#[test]
+fn test_trigger_create() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    let remote_table = TableInfo {
+        schema: "public".into(),
+        table_name: "events".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+    };
+
+    let mut local_table = remote_table.clone();
+    local_table.triggers.push(TriggerInfo {
+        name: "audit_trigger".into(),
+        events: vec!["INSERT".into(), "UPDATE".into()],
+        timing: "AFTER".into(),
+        orientation: "ROW".into(),
+        function_name: "audit_func".into(),
+        when_clause: None,
+    });
+
+    remote.tables.insert("events".into(), remote_table);
+    local.tables.insert("events".into(), local_table);
+
+    let diff = compute_diff(&remote, &local);
+    let table_diff = diff.table_changes.get("events").unwrap();
+    assert_eq!(table_diff.triggers_to_create.len(), 1);
+}
+
+#[test]
+fn test_trigger_drop() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    let remote_table = TableInfo {
+        schema: "public".into(),
+        table_name: "events".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![TriggerInfo {
+            name: "old_trigger".into(),
+            events: vec!["INSERT".into()],
+            timing: "BEFORE".into(),
+            orientation: "ROW".into(),
+            function_name: "old_func".into(),
+            when_clause: None,
+        }],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+    };
+
+    let local_table = TableInfo {
+        schema: "public".into(),
+        table_name: "events".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![], // Trigger removed
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+    };
+
+    remote.tables.insert("events".into(), remote_table);
+    local.tables.insert("events".into(), local_table);
+
+    let diff = compute_diff(&remote, &local);
+    let table_diff = diff.table_changes.get("events").unwrap();
+    assert_eq!(table_diff.triggers_to_drop.len(), 1);
+}
+
+#[test]
+fn test_index_with_expression() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    let remote_table = TableInfo {
+        schema: "public".into(),
+        table_name: "users".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+    };
+
+    let mut local_table = remote_table.clone();
+    local_table.indexes.push(IndexInfo {
+        index_name: "idx_lower_email".into(),
+        columns: vec![],
+        is_unique: false,
+        is_primary: false,
+        owning_constraint: None,
+        index_method: "btree".into(),
+        where_clause: None,
+        expressions: vec!["lower(email)".into()],
+    });
+
+    remote.tables.insert("users".into(), remote_table);
+    local.tables.insert("users".into(), local_table);
+
+    let diff = compute_diff(&remote, &local);
+    let table_diff = diff.table_changes.get("users").unwrap();
+    assert_eq!(table_diff.indexes_to_create.len(), 1);
+    assert!(!table_diff.indexes_to_create[0].expressions.is_empty());
+}
+
+#[test]
+fn test_policy_create() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    let remote_table = TableInfo {
+        schema: "public".into(),
+        table_name: "posts".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: true,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+    };
+
+    let mut local_table = remote_table.clone();
+    local_table.policies.push(PolicyInfo {
+        name: "select_own".into(),
+        cmd: "SELECT".into(),
+        roles: vec!["public".into()],
+        qual: Some("user_id = auth.uid()".into()),
+        with_check: None,
+    });
+
+    remote.tables.insert("posts".into(), remote_table);
+    local.tables.insert("posts".into(), local_table);
+
+    let diff = compute_diff(&remote, &local);
+    let table_diff = diff.table_changes.get("posts").unwrap();
+    assert_eq!(table_diff.policies_to_create.len(), 1);
+}
+
+#[test]
+fn test_policy_drop() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    let remote_table = TableInfo {
+        schema: "public".into(),
+        table_name: "posts".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: true,
+        policies: vec![PolicyInfo {
+            name: "old_policy".into(),
+            cmd: "SELECT".into(),
+            roles: vec!["public".into()],
+            qual: Some("true".into()),
+            with_check: None,
+        }],
+        check_constraints: vec![],
+        comment: None,
+    };
+
+    let local_table = TableInfo {
+        schema: "public".into(),
+        table_name: "posts".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: true,
+        policies: vec![], // Policy removed
+        check_constraints: vec![],
+        comment: None,
+    };
+
+    remote.tables.insert("posts".into(), remote_table);
+    local.tables.insert("posts".into(), local_table);
+
+    let diff = compute_diff(&remote, &local);
+    let table_diff = diff.table_changes.get("posts").unwrap();
+    assert_eq!(table_diff.policies_to_drop.len(), 1);
+}
+
+#[test]
+fn test_rls_enable() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    let remote_table = TableInfo {
+        schema: "public".into(),
+        table_name: "posts".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+    };
+
+    let mut local_table = remote_table.clone();
+    local_table.rls_enabled = true;
+
+    remote.tables.insert("posts".into(), remote_table);
+    local.tables.insert("posts".into(), local_table);
+
+    let diff = compute_diff(&remote, &local);
+    let table_diff = diff.table_changes.get("posts").unwrap();
+    assert_eq!(table_diff.rls_change, Some(true));
+}
+
+#[test]
+fn test_rls_disable() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    let remote_table = TableInfo {
+        schema: "public".into(),
+        table_name: "posts".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: true,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+    };
+
+    let mut local_table = remote_table.clone();
+    local_table.rls_enabled = false;
+
+    remote.tables.insert("posts".into(), remote_table);
+    local.tables.insert("posts".into(), local_table);
+
+    let diff = compute_diff(&remote, &local);
+    let table_diff = diff.table_changes.get("posts").unwrap();
+    assert_eq!(table_diff.rls_change, Some(false));
+}
+
+#[test]
+fn test_function_drop() {
+    let mut remote = DbSchema::new();
+    let local = DbSchema::new();
+
+    remote.functions.insert(
+        "\"public\".\"old_func\"()".to_string(),
+        FunctionInfo {
+            schema: "public".to_string(),
+            name: "old_func".to_string(),
+            args: vec![],
+            return_type: "void".to_string(),
+            language: "plpgsql".to_string(),
+            definition: "BEGIN END;".to_string(),
+            volatility: None,
+            is_strict: false,
+            security_definer: false,
+        },
+    );
+
+    let diff = compute_diff(&remote, &local);
+    assert_eq!(diff.functions_to_drop.len(), 1);
+}
+
+#[test]
+fn test_schema_diff_is_empty() {
+    let remote = DbSchema::new();
+    let local = DbSchema::new();
+
+    let diff = compute_diff(&remote, &local);
+    assert!(diff.is_empty());
+}
+
+#[test]
+fn test_table_diff_is_empty() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    let table = TableInfo {
+        schema: "public".into(),
+        table_name: "users".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+    };
+
+    remote.tables.insert("users".into(), table.clone());
+    local.tables.insert("users".into(), table);
+
+    let diff = compute_diff(&remote, &local);
     assert!(diff.table_changes.is_empty());
 }
 
