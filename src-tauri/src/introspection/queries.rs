@@ -1,10 +1,10 @@
 //! SQL query constants for database introspection.
-//! 
+//!
 //! These queries are used by the Introspector to fetch schema information
 //! from PostgreSQL databases via the Supabase API.
-
-/// Schema exclusion list for filtering out system and Supabase internal schemas.
-pub const EXCLUDED_SCHEMAS: &str = "'auth', 'pgbouncer', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium', 'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger', 'topology', 'supabase_migrations', 'supabase_functions', 'cron'";
+//!
+//! NOTE: The excluded schemas list in these queries should match the canonical
+//! list in `crate::defaults::EXCLUDED_SCHEMAS`. Keep them in sync when modifying.
 
 /// Query to fetch enum types.
 pub const ENUMS_QUERY: &str = r#"

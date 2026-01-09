@@ -614,3 +614,482 @@ fn test_policy_comparison_normalized() {
         "Policies with different commands should differ");
 }
 
+// ============================================================================
+// Tests for Default Object Exclusion (Prevent dropping Supabase system objects)
+// ============================================================================
+
+#[test]
+fn test_default_roles_excluded_from_diff() {
+    use crate::defaults;
+
+    let mut remote = DbSchema::new();
+    let local = DbSchema::new();
+
+    // Add default Supabase roles to remote (these exist on every Supabase project)
+    for role_name in defaults::DEFAULT_ROLES {
+        remote.roles.insert(
+            role_name.to_string(),
+            crate::schema::RoleInfo {
+                name: role_name.to_string(),
+                superuser: false,
+                create_db: false,
+                create_role: false,
+                inherit: true,
+                login: true,
+                replication: false,
+                bypass_rls: false,
+                connection_limit: -1,
+                valid_until: None,
+            },
+        );
+    }
+
+    // Local schema has no roles defined
+    let diff = compute_diff(&remote, &local);
+
+    // Default roles should NOT appear in roles_to_drop
+    for role_name in defaults::DEFAULT_ROLES {
+        assert!(
+            !diff.roles_to_drop.contains(&role_name.to_string()),
+            "Default role '{}' should NOT be dropped",
+            role_name
+        );
+    }
+}
+
+#[test]
+fn test_pg_prefixed_roles_excluded_from_diff() {
+    use crate::defaults;
+
+    let mut remote = DbSchema::new();
+    let local = DbSchema::new();
+
+    // Add pg_* prefixed roles (PostgreSQL system roles)
+    let pg_roles = ["pg_read_all_data", "pg_write_all_data", "pg_monitor"];
+    for role_name in pg_roles {
+        remote.roles.insert(
+            role_name.to_string(),
+            crate::schema::RoleInfo {
+                name: role_name.to_string(),
+                superuser: false,
+                create_db: false,
+                create_role: false,
+                inherit: true,
+                login: false,
+                replication: false,
+                bypass_rls: false,
+                connection_limit: -1,
+                valid_until: None,
+            },
+        );
+    }
+
+    let diff = compute_diff(&remote, &local);
+
+    // pg_* roles should be filtered by is_default_role()
+    for role_name in pg_roles {
+        assert!(
+            defaults::is_default_role(role_name),
+            "pg_* role '{}' should be recognized as default",
+            role_name
+        );
+    }
+
+    // And should not appear in diff
+    assert!(
+        diff.roles_to_drop.is_empty(),
+        "pg_* roles should not appear in roles_to_drop"
+    );
+}
+
+#[test]
+fn test_default_extensions_excluded_from_diff() {
+    use crate::defaults;
+
+    let mut remote = DbSchema::new();
+    let local = DbSchema::new();
+
+    // Add default Supabase extensions to remote
+    for ext_name in defaults::DEFAULT_EXTENSIONS {
+        remote.extensions.insert(
+            ext_name.to_string(),
+            crate::schema::ExtensionInfo {
+                name: ext_name.to_string(),
+                version: Some("1.0".to_string()),
+                schema: Some("extensions".to_string()),
+            },
+        );
+    }
+
+    let diff = compute_diff(&remote, &local);
+
+    // Default extensions should NOT appear in extensions_to_drop
+    for ext_name in defaults::DEFAULT_EXTENSIONS {
+        assert!(
+            !diff.extensions_to_drop.contains(&ext_name.to_string()),
+            "Default extension '{}' should NOT be dropped",
+            ext_name
+        );
+    }
+}
+
+#[test]
+fn test_custom_roles_can_be_dropped() {
+    let mut remote = DbSchema::new();
+    let local = DbSchema::new();
+
+    // Add a custom (non-default) role
+    remote.roles.insert(
+        "my_app_admin".to_string(),
+        crate::schema::RoleInfo {
+            name: "my_app_admin".to_string(),
+            superuser: false,
+            create_db: false,
+            create_role: false,
+            inherit: true,
+            login: true,
+            replication: false,
+            bypass_rls: false,
+            connection_limit: -1,
+            valid_until: None,
+        },
+    );
+
+    let diff = compute_diff(&remote, &local);
+
+    // Custom role SHOULD appear in roles_to_drop
+    assert!(
+        diff.roles_to_drop.contains(&"my_app_admin".to_string()),
+        "Custom role 'my_app_admin' should be marked for dropping"
+    );
+}
+
+#[test]
+fn test_custom_extensions_can_be_dropped() {
+    let mut remote = DbSchema::new();
+    let local = DbSchema::new();
+
+    // Add a custom (non-default) extension
+    remote.extensions.insert(
+        "postgis".to_string(),
+        crate::schema::ExtensionInfo {
+            name: "postgis".to_string(),
+            version: Some("3.0".to_string()),
+            schema: Some("public".to_string()),
+        },
+    );
+
+    let diff = compute_diff(&remote, &local);
+
+    // Custom extension SHOULD appear in extensions_to_drop
+    assert!(
+        diff.extensions_to_drop.contains(&"postgis".to_string()),
+        "Custom extension 'postgis' should be marked for dropping"
+    );
+}
+
+// ============================================================================
+// Tests for Destructive Change Detection
+// ============================================================================
+
+#[test]
+fn test_type_change_is_destructive() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    let mut remote_table = TableInfo {
+        schema: "public".into(),
+        table_name: "users".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+    };
+
+    remote_table.columns.insert(
+        "data".into(),
+        ColumnInfo {
+            column_name: "data".into(),
+            data_type: "text".into(),
+            is_nullable: true,
+            column_default: None,
+            udt_name: "text".into(),
+            is_primary_key: false,
+            is_unique: false,
+            is_identity: false,
+            identity_generation: None,
+            collation: None,
+            enum_name: None,
+            is_array: false,
+            comment: None,
+        },
+    );
+
+    let mut local_table = remote_table.clone();
+    // Change the type from text to integer (destructive!)
+    local_table.columns.insert(
+        "data".into(),
+        ColumnInfo {
+            column_name: "data".into(),
+            data_type: "integer".into(),
+            is_nullable: true,
+            column_default: None,
+            udt_name: "int4".into(),
+            is_primary_key: false,
+            is_unique: false,
+            is_identity: false,
+            identity_generation: None,
+            collation: None,
+            enum_name: None,
+            is_array: false,
+            comment: None,
+        },
+    );
+
+    remote.tables.insert("\"public\".\"users\"".into(), remote_table);
+    local.tables.insert("\"public\".\"users\"".into(), local_table);
+
+    let diff = compute_diff(&remote, &local);
+    assert!(
+        diff.is_destructive(),
+        "Type change from text to integer should be destructive"
+    );
+}
+
+#[test]
+fn test_enum_drop_is_destructive() {
+    let mut remote = DbSchema::new();
+    let local = DbSchema::new();
+
+    remote.enums.insert(
+        "\"public\".\"status\"".to_string(),
+        EnumInfo {
+            schema: "public".to_string(),
+            name: "status".to_string(),
+            values: vec!["active".to_string(), "inactive".to_string()],
+        },
+    );
+
+    let diff = compute_diff(&remote, &local);
+    assert!(
+        diff.is_destructive(),
+        "Dropping an enum type should be destructive"
+    );
+}
+
+#[test]
+fn test_add_column_is_not_destructive() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    let remote_table = TableInfo {
+        schema: "public".into(),
+        table_name: "users".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+    };
+
+    let mut local_table = remote_table.clone();
+    local_table.columns.insert(
+        "email".into(),
+        ColumnInfo {
+            column_name: "email".into(),
+            data_type: "text".into(),
+            is_nullable: true,
+            column_default: None,
+            udt_name: "text".into(),
+            is_primary_key: false,
+            is_unique: false,
+            is_identity: false,
+            identity_generation: None,
+            collation: None,
+            enum_name: None,
+            is_array: false,
+            comment: None,
+        },
+    );
+
+    remote.tables.insert("users".into(), remote_table);
+    local.tables.insert("users".into(), local_table);
+
+    let diff = compute_diff(&remote, &local);
+    assert!(
+        !diff.is_destructive(),
+        "Adding a column should NOT be destructive"
+    );
+}
+
+#[test]
+fn test_enum_add_value_is_not_destructive() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    remote.enums.insert(
+        "\"public\".\"status\"".to_string(),
+        EnumInfo {
+            schema: "public".to_string(),
+            name: "status".to_string(),
+            values: vec!["active".to_string(), "inactive".to_string()],
+        },
+    );
+
+    local.enums.insert(
+        "\"public\".\"status\"".to_string(),
+        EnumInfo {
+            schema: "public".to_string(),
+            name: "status".to_string(),
+            values: vec![
+                "active".to_string(),
+                "inactive".to_string(),
+                "pending".to_string(),
+            ],
+        },
+    );
+
+    let diff = compute_diff(&remote, &local);
+    assert!(
+        !diff.is_destructive(),
+        "Adding a value to enum should NOT be destructive"
+    );
+}
+
+#[test]
+fn test_create_function_is_not_destructive() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    local.functions.insert(
+        "\"public\".\"my_function\"()".to_string(),
+        FunctionInfo {
+            schema: "public".to_string(),
+            name: "my_function".to_string(),
+            args: vec![],
+            return_type: "void".to_string(),
+            language: "plpgsql".to_string(),
+            definition: "BEGIN END;".to_string(),
+            volatility: None,
+            is_strict: false,
+            security_definer: false,
+        },
+    );
+
+    let diff = compute_diff(&remote, &local);
+    assert!(
+        !diff.is_destructive(),
+        "Creating a function should NOT be destructive"
+    );
+}
+
+// ============================================================================
+// End-to-End Test: Full Diff Flow
+// ============================================================================
+
+#[test]
+fn test_full_schema_diff_does_not_drop_system_objects() {
+    use crate::defaults;
+
+    // Simulate a remote schema with Supabase system objects
+    let mut remote = DbSchema::new();
+
+    // Add system roles
+    for role_name in defaults::DEFAULT_ROLES {
+        remote.roles.insert(
+            role_name.to_string(),
+            crate::schema::RoleInfo {
+                name: role_name.to_string(),
+                superuser: false,
+                create_db: false,
+                create_role: false,
+                inherit: true,
+                login: true,
+                replication: false,
+                bypass_rls: false,
+                connection_limit: -1,
+                valid_until: None,
+            },
+        );
+    }
+
+    // Add system extensions
+    for ext_name in defaults::DEFAULT_EXTENSIONS {
+        remote.extensions.insert(
+            ext_name.to_string(),
+            crate::schema::ExtensionInfo {
+                name: ext_name.to_string(),
+                version: Some("1.0".to_string()),
+                schema: Some("extensions".to_string()),
+            },
+        );
+    }
+
+    // Add a user table
+    let mut users_table = TableInfo {
+        schema: "public".into(),
+        table_name: "users".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+    };
+    users_table.columns.insert(
+        "id".into(),
+        ColumnInfo {
+            column_name: "id".into(),
+            data_type: "uuid".into(),
+            is_nullable: false,
+            column_default: Some("gen_random_uuid()".into()),
+            udt_name: "uuid".into(),
+            is_primary_key: true,
+            is_unique: true,
+            is_identity: false,
+            identity_generation: None,
+            collation: None,
+            enum_name: None,
+            is_array: false,
+            comment: None,
+        },
+    );
+    remote.tables.insert("\"public\".\"users\"".into(), users_table.clone());
+
+    // Local schema: same user table, no system objects defined (typical local schema file)
+    let mut local = DbSchema::new();
+    local.tables.insert("\"public\".\"users\"".into(), users_table);
+
+    // Compute diff
+    let diff = compute_diff(&remote, &local);
+
+    // Verify no system objects are dropped
+    assert!(
+        diff.roles_to_drop.is_empty(),
+        "No roles should be dropped: {:?}",
+        diff.roles_to_drop
+    );
+    assert!(
+        diff.extensions_to_drop.is_empty(),
+        "No extensions should be dropped: {:?}",
+        diff.extensions_to_drop
+    );
+
+    // Verify the diff is not destructive
+    assert!(!diff.is_destructive(), "Diff should not be destructive");
+
+    // Verify no changes to tables
+    assert!(diff.tables_to_create.is_empty());
+    assert!(diff.tables_to_drop.is_empty());
+    assert!(diff.table_changes.is_empty());
+}
+
