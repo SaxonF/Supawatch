@@ -9,6 +9,13 @@ Supawatch is a macOS Menu Bar application built with Tauri that acts as a powerf
 - **Safety Checks**: Warns you before applying destructive changes (like dropping tables or columns).
 - **Edge Functions**: Supports deploying Supabase Edge Functions.
 
+## Security & Storage
+
+Supawatch securely stores your Supabase Personal Access Token.
+
+- **Current Implementation**: Tokens are stored in a designated `.token` file within the application data directory (`~/Library/Application Support/supawatch/` on macOS). The content is XOR-obfuscated to prevent being read as plain text. `src/components/Settings.tsx` handles the UI interactions for these tokens.
+- **Future Plans**: We are transitioning to using the native macOS Keychain for identifying and managing secrets in Signed builds throughout the future.
+
 ## Architecture & Code Structure
 
 The backend logic resides in `src-tauri/src` and is structured around the lifecycle of a schema change:
