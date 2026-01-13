@@ -32,7 +32,7 @@ fn test_generate_sql_full() {
             is_strict: false,
             security_definer: false,
         }],
-        functions_to_drop: vec!["old_func".to_string()],
+        functions_to_drop: vec!["\"old_func\"".to_string()],
         functions_to_update: vec![],
         views_to_create: vec![],
         views_to_drop: vec![],
@@ -885,7 +885,7 @@ fn test_generate_drop_table() {
 
     let schema = DbSchema::new();
     let sql = generate_sql(&diff, &schema);
-    assert!(sql.contains("DROP TABLE IF EXISTS \"\"public\".\"old_table\"\" CASCADE"));
+    assert!(sql.contains("DROP TABLE IF EXISTS \"public\".\"old_table\" CASCADE"));
 }
 
 #[test]

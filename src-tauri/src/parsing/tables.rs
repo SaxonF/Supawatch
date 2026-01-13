@@ -62,7 +62,7 @@ pub fn handle_create_table(
 
                 check_constraints.push(CheckConstraintInfo {
                     name: constraint_name,
-                    expression: format!("CHECK ({})", chk.expr),
+                    expression: super::helpers::format_check_expression(chk.expr.to_string()),
                     columns: vec![],
                 });
             }
@@ -161,7 +161,7 @@ pub fn handle_alter_table(
 
                             t_info.check_constraints.push(CheckConstraintInfo {
                                 name: constraint_name,
-                                expression: format!("CHECK ({})", chk.expr),
+                                expression: super::helpers::format_check_expression(chk.expr.to_string()),
                                 columns: vec![],
                             });
                         }
@@ -286,7 +286,7 @@ pub fn parse_columns(
     Vec<CheckConstraintInfo>,
 ) {
     let mut infos = HashMap::new();
-    let fks = Vec::new();
+    let mut fks = Vec::new();
     let _option_indexes: Vec<IndexInfo> = Vec::new(); // Note: unused for now to match mod.rs logic
     let mut check_constraints = Vec::new();
 
@@ -329,8 +329,39 @@ pub fn parse_columns(
 
                     check_constraints.push(CheckConstraintInfo {
                         name: constraint_name,
-                        expression: format!("CHECK ({})", check_expr),
+                        expression: super::helpers::format_check_expression(check_expr.to_string()),
                         columns: vec![name.clone()],
+                    });
+                }
+                ColumnOption::ForeignKey(fk_constraint) => {
+                    // Handle inline REFERENCES like: user_id uuid REFERENCES users(id)
+                    let (_, ref_table) = parse_object_name(&fk_constraint.foreign_table);
+                    let ref_column = fk_constraint
+                        .referred_columns
+                        .first()
+                        .map(|c| strip_quotes(&c.to_string()))
+                        .unwrap_or_else(|| "id".to_string());
+                    let constraint_name = fk_constraint
+                        .name
+                        .as_ref()
+                        .map(|n| strip_quotes(&n.value))
+                        .unwrap_or_else(|| format!("fk_{}_{}", table_name, name));
+
+                    fks.push(ForeignKeyInfo {
+                        constraint_name,
+                        column_name: name.clone(),
+                        foreign_table: ref_table,
+                        foreign_column: ref_column,
+                        on_delete: fk_constraint
+                            .on_delete
+                            .as_ref()
+                            .map(|a| a.to_string())
+                            .unwrap_or("NO ACTION".to_string()),
+                        on_update: fk_constraint
+                            .on_update
+                            .as_ref()
+                            .map(|a| a.to_string())
+                            .unwrap_or("NO ACTION".to_string()),
                     });
                 }
                 _ => {}

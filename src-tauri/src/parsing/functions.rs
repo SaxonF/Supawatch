@@ -1,7 +1,7 @@
 use crate::schema::{FunctionArg, FunctionInfo};
 use sqlparser::ast::{CreateFunction, CreateFunctionBody, Expr, OperateFunctionArg, Value};
 use std::collections::HashMap;
-use super::helpers::parse_object_name;
+use super::helpers::{parse_object_name, strip_quotes};
 
 pub fn handle_create_function(
     functions: &mut HashMap<String, FunctionInfo>,
@@ -36,7 +36,7 @@ pub fn handle_create_function(
 
             let type_str = data_type.to_string().to_lowercase();
             fn_args.push(FunctionArg {
-                name: arg_name.map(|n| n.value.clone()).unwrap_or_default(),
+                name: arg_name.map(|n| strip_quotes(&n.value)).unwrap_or_default(),
                 type_: type_str,
                 mode: mode.map(|m| m.to_string()),
                 default_value: default_expr.map(|d| d.to_string()),
@@ -80,4 +80,32 @@ pub fn handle_create_function(
             security_definer,
         },
     );
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlparser::dialect::PostgreSqlDialect;
+    use sqlparser::parser::Parser;
+
+    #[test]
+    fn test_parse_create_function_quoted_args() {
+        let sql = r#"CREATE OR REPLACE FUNCTION "public"."generate_world"("seed" integer DEFAULT 0) RETURNS void LANGUAGE plpgsql VOLATILE AS $$BEGIN END;$$;"#;
+        let dialect = PostgreSqlDialect {};
+        let mut ast = Parser::parse_sql(&dialect, sql).unwrap();
+        let stmt = ast.pop().unwrap();
+
+        match stmt {
+            sqlparser::ast::Statement::CreateFunction(stmt) => {
+                let mut functions = HashMap::new();
+                handle_create_function(&mut functions, stmt, false);
+
+                let func = functions.values().next().unwrap();
+                let arg = &func.args[0];
+                assert_eq!(arg.name, "seed"); // Should be unquoted
+            }
+            _ => panic!("Expected CreateFunction"),
+        }
+    }
 }

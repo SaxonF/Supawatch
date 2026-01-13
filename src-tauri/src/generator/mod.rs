@@ -101,19 +101,19 @@ pub fn generate_sql(diff: &SchemaDiff, local_schema: &DbSchema) -> String {
         // Check if it was a materialized view in the local schema
         if let Some(view) = local_schema.views.get(name) {
             if view.is_materialized {
-                statements.push(format!("DROP MATERIALIZED VIEW IF EXISTS \"{}\";", name));
+                statements.push(format!("DROP MATERIALIZED VIEW IF EXISTS {};", name));
             } else {
-                statements.push(format!("DROP VIEW IF EXISTS \"{}\";", name));
+                statements.push(format!("DROP VIEW IF EXISTS {};", name));
             }
         } else {
             // Default to regular view if not found
-            statements.push(format!("DROP VIEW IF EXISTS \"{}\";", name));
+            statements.push(format!("DROP VIEW IF EXISTS {};", name));
         }
     }
 
     // Drop functions
     for name in &diff.functions_to_drop {
-        statements.push(format!("DROP FUNCTION IF EXISTS \"{}\" CASCADE;", name));
+        statements.push(format!("DROP FUNCTION IF EXISTS {} CASCADE;", name));
     }
 
     // Drop sequences
@@ -123,7 +123,7 @@ pub fn generate_sql(diff: &SchemaDiff, local_schema: &DbSchema) -> String {
 
     // Drop tables
     for name in &diff.tables_to_drop {
-        statements.push(format!("DROP TABLE IF EXISTS \"{}\" CASCADE;", name));
+        statements.push(format!("DROP TABLE IF EXISTS {} CASCADE;", name));
     }
 
     // Drop enums
@@ -367,3 +367,4 @@ pub fn escape_string(s: &str) -> String {
 
 #[cfg(test)]
 mod tests;
+

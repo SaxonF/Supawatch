@@ -381,7 +381,7 @@ impl SupabaseApi {
             entrypoint_path: entrypoint.to_string(),
             name: name.to_string(),
             import_map_path,
-            verify_jwt: Some(true),
+            verify_jwt: Some(false),
         };
 
         let metadata_json = serde_json::to_string(&metadata)

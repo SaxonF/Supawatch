@@ -67,7 +67,8 @@ pub fn generate_create_function(func: &FunctionInfo) -> String {
         "CREATE OR REPLACE FUNCTION \"{}\".\"{}\"({}) RETURNS {} LANGUAGE {} ",
         func.schema, func.name, 
         func.args.iter().map(|a| {
-            let mut arg_def = format!("\"{}\" {}", a.name, a.type_);
+            let arg_name = a.name.trim_matches('"');
+            let mut arg_def = format!("\"{}\" {}", arg_name, a.type_);
             if let Some(mode) = &a.mode {
                 arg_def = format!("{} {}", mode, arg_def);
             }

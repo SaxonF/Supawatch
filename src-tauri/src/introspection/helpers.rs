@@ -73,7 +73,7 @@ pub fn parse_function_args(args_str: &str) -> Vec<FunctionArg> {
             let name_type_parts: Vec<&str> = name_type.splitn(2, ' ').collect();
             let (name, type_str) = if name_type_parts.len() >= 2 {
                 (
-                    name_type_parts[0].to_string(),
+                    name_type_parts[0].trim_matches('"').to_string(),
                     name_type_parts[1..].join(" "),
                 )
             } else {

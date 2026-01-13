@@ -804,6 +804,22 @@ ALTER TABLE users ADD CONSTRAINT unique_email UNIQUE (email);
     }
 
     #[test]
+    fn test_repro_double_check() {
+        let sql = r#"
+CREATE TABLE "quest_instances" (
+  "status" text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed', 'failed', 'abandoned'))
+);
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let table = schema.tables.get("\"public\".\"quest_instances\"").expect("Table not found");
+
+        let constraint = &table.check_constraints[0];
+        // This is what we EXPECT it to be:
+        assert_eq!(constraint.expression, "CHECK (status IN ('active', 'completed', 'failed', 'abandoned'))");
+    }
+
+
+    #[test]
     fn test_parse_view_complex_query() {
         let sql = r#"
 CREATE VIEW user_post_counts AS
@@ -984,9 +1000,15 @@ CREATE TABLE posts (
 );
 "#;
         let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
-        // Note: Inline FK parsing depends on sqlparser support
-        // This test verifies the table structure is parsed correctly
         let table = schema.tables.get("\"public\".\"posts\"").expect("Table not found");
-        assert!(table.columns.contains_key("user_id"));
+        
+        // Verify the FK is captured
+        assert_eq!(table.foreign_keys.len(), 1);
+        let fk = &table.foreign_keys[0];
+        assert_eq!(fk.column_name, "user_id");
+        assert_eq!(fk.foreign_table, "users");
+        assert_eq!(fk.foreign_column, "id");
+        assert_eq!(fk.on_delete, "CASCADE");
+        assert_eq!(fk.on_update, "NO ACTION");
     }
 }

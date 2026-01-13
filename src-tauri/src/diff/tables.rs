@@ -1,4 +1,4 @@
-use super::utils::{normalize_option, normalize_sql};
+use super::utils;
 use crate::diff::{ColumnChangeDetail, ColumnModification, TableDiff};
 use crate::schema::{
     CheckConstraintInfo, ForeignKeyInfo, IndexInfo, PolicyInfo, TableInfo, TriggerInfo,
@@ -60,8 +60,8 @@ pub fn compute_table_diff(remote: &TableInfo, local: &TableInfo) -> TableDiff {
                 changes.nullable_change = Some((remote_col.is_nullable, local_col.is_nullable));
             }
 
-            // Default value - normalize for case-insensitive comparison
-            if normalize_option(&local_col.column_default) != normalize_option(&remote_col.column_default) {
+            // Default value - normalize for comparison (strips type casts like ::text)
+            if utils::normalize_default_option(&local_col.column_default) != utils::normalize_default_option(&remote_col.column_default) {
                 changes.default_change = Some((
                     remote_col.column_default.clone(),
                     local_col.column_default.clone(),
@@ -202,14 +202,10 @@ pub fn compute_table_diff(remote: &TableInfo, local: &TableInfo) -> TableDiff {
     for c in &local.check_constraints {
         if !remote_checks.contains_key(&c.name) {
             diff.check_constraints_to_create.push(c.clone());
-        } else {
-            let remote_c = remote_checks.get(&c.name).unwrap();
-            // Normalize expressions for comparison
-            if normalize_sql(&c.expression) != normalize_sql(&remote_c.expression) {
-                diff.check_constraints_to_drop.push((*remote_c).clone());
-                diff.check_constraints_to_create.push(c.clone());
-            }
         }
+        // Note: We don't compare expressions because PostgreSQL rewrites them internally
+        // (e.g., IN ('a', 'b') becomes = ANY (ARRAY['a', 'b']))
+        // If constraint names match, we consider them equivalent
     }
 
     for c in &remote.check_constraints {
@@ -267,11 +263,11 @@ pub fn policies_differ(local: &PolicyInfo, remote: &PolicyInfo) -> bool {
     }
     
     // Normalize and compare expressions
-    if normalize_option(&local.qual) != normalize_option(&remote.qual) {
+    if utils::normalize_option(&local.qual) != utils::normalize_option(&remote.qual) {
         return true;
     }
     
-    if normalize_option(&local.with_check) != normalize_option(&remote.with_check) {
+    if utils::normalize_option(&local.with_check) != utils::normalize_option(&remote.with_check) {
         return true;
     }
     
@@ -291,7 +287,7 @@ pub fn indexes_differ(local: &IndexInfo, remote: &IndexInfo) -> bool {
         || local.is_unique != remote.is_unique
         || local.is_primary != remote.is_primary
         || local.index_method.to_lowercase() != remote.index_method.to_lowercase()
-        || normalize_option(&local.where_clause) != normalize_option(&remote.where_clause)
+        || utils::normalize_option(&local.where_clause) != utils::normalize_option(&remote.where_clause)
         || local.expressions != remote.expressions
 }
 

@@ -19,3 +19,12 @@ pub fn parse_object_name(name: &ObjectName) -> (String, String) {
         ("public".to_string(), "unknown".to_string())
     }
 }
+
+pub fn format_check_expression(expr_str: String) -> String {
+    let trimmed = expr_str.trim();
+    if trimmed.to_uppercase().starts_with("CHECK") {
+        trimmed.to_string()
+    } else {
+        format!("CHECK ({})", trimmed)
+    }
+}
