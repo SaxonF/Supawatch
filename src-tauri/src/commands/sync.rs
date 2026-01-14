@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
-use crate::models::{LogEntry, LogSource};
+use crate::models::{LogEntry, LogSource, Project};
 use crate::state::AppState;
 use crate::sync;
 use crate::tray::update_icon;
@@ -81,7 +81,10 @@ async fn pull_project_internal(
     state.add_log(log.clone()).await;
     app_handle.emit("log", &log).ok();
 
-    // 4. Pull Edge Functions
+    // 4. Generate TypeScript types from the pulled schema
+    generate_typescript_for_project(&project, &schema_path, state.inner(), app_handle).await;
+
+    // 5. Pull Edge Functions
     sync::pull_edge_functions(&api, &project_ref, Some(uuid), std::path::Path::new(&project.local_path), state.inner(), app_handle).await?;
 
     Ok(sql)
@@ -325,7 +328,10 @@ async fn push_project_internal(
     state.add_log(log.clone()).await;
     app_handle.emit("log", &log).ok();
 
-    // 6. Deploy edge functions if any have changed
+    // 6. Generate TypeScript types after successful push
+    generate_typescript_for_project(&project, &schema_path, state.inner(), app_handle).await;
+
+    // 7. Deploy edge functions if any have changed
     push_edge_functions(&api, &project_ref, uuid, std::path::Path::new(&project.local_path), state.inner(), app_handle).await?;
 
     Ok(migration_sql.to_string())
@@ -505,4 +511,60 @@ pub async fn get_remote_schema(
     app_handle.emit("log", &log).ok();
 
     Ok(schema)
+}
+
+/// Helper to generate TypeScript types for a project.
+/// This is called after pull and push operations.
+async fn generate_typescript_for_project(
+    project: &Project,
+    schema_path: &Path,
+    state: &AppState,
+    app_handle: &AppHandle,
+) {
+    // Check if TypeScript generation is enabled for this project
+    if !project.generate_typescript {
+        return;
+    }
+
+    let project_path = Path::new(&project.local_path);
+
+    // Get TypeScript output path (use custom path if configured)
+    let ts_output_path = sync::get_typescript_output_path(
+        project_path,
+        project.typescript_output_path.as_deref(),
+    );
+
+    let log = LogEntry::info(
+        Some(project.id),
+        LogSource::Schema,
+        "Generating TypeScript types...".to_string(),
+    );
+    state.add_log(log.clone()).await;
+    app_handle.emit("log", &log).ok();
+
+    // Generate TypeScript types
+    match sync::generate_typescript_types(schema_path, &ts_output_path).await {
+        Ok(()) => {
+            let relative_output = ts_output_path
+                .strip_prefix(project_path)
+                .unwrap_or(&ts_output_path)
+                .to_string_lossy();
+            let log = LogEntry::success(
+                Some(project.id),
+                LogSource::Schema,
+                format!("TypeScript types generated: {}", relative_output),
+            );
+            state.add_log(log.clone()).await;
+            app_handle.emit("log", &log).ok();
+        }
+        Err(e) => {
+            let log = LogEntry::error(
+                Some(project.id),
+                LogSource::Schema,
+                format!("TypeScript generation failed: {}", e),
+            );
+            state.add_log(log.clone()).await;
+            app_handle.emit("log", &log).ok();
+        }
+    }
 }
