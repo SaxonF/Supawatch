@@ -29,6 +29,7 @@ async fn pull_project_internal(
     let project = state.get_project(uuid).await.map_err(|e| e.to_string())?;
     let project_ref = project
         .supabase_project_ref
+        .clone()
         .ok_or("Project not linked to Supabase")?;
 
     let api = state.get_api_client().await.map_err(|e| e.to_string())?;
@@ -241,6 +242,7 @@ async fn push_project_internal(
     let project = state.get_project(uuid).await.map_err(|e| e.to_string())?;
     let project_ref = project
         .supabase_project_ref
+        .clone()
         .ok_or("Project not linked to Supabase")?;
 
     let api = state.get_api_client().await.map_err(|e| e.to_string())?;
