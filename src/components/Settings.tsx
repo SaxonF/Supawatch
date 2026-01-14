@@ -65,14 +65,14 @@ export function Settings() {
   };
 
   return (
-    <div className="flex-1 overflow-auto p-5">
-      <p className="mb-4 text-muted-foreground">
+    <div className="space-y-4">
+      <p className="text-muted-foreground">
         Supawatch monitors your local Supabase project folders for changes to
         schema files and edge functions, then syncs them to your remote Supabase
         project.
       </p>
 
-      <div className="mb-4">
+      <div>
         <label className="block mb-2">Supabase Personal Access Token</label>
         {hasToken ? (
           <div className="flex items-center gap-2">
@@ -113,11 +113,11 @@ export function Settings() {
           </div>
         )}
 
-        {error && <div className="mt-4">{error}</div>}
+        {error && <div className="mt-2 text-destructive text-sm">{error}</div>}
       </div>
       <div>
         <label className="block mb-2">Audit Logs</label>
-        <div className="border border-border rounded-xl overflow-hidden">
+        <div className="border border-border rounded-xl overflow-hidden max-h-48 overflow-auto">
           <AuditLogs />
         </div>
       </div>

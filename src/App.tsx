@@ -4,17 +4,41 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
 
 import * as api from "./api";
-import { LogsViewer } from "./components/LogsViewer";
-import { ProjectList } from "./components/ProjectList";
+import { CreateProjectForm } from "./components/CreateProjectForm";
+import { ProjectHeader } from "./components/ProjectHeader";
+import { ProjectLogs } from "./components/ProjectLogs";
 import { Settings } from "./components/Settings";
-import { Tabs } from "./components/Tabs";
-import type { FileChange, Tab } from "./types";
+import { Sidebar } from "./components/Sidebar";
+import type { FileChange, Project } from "./types";
 
 import "./App.css";
 
 function App() {
-  const [activeTab, setActiveTab] = useState<Tab>("projects");
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+
+  const selectedProject = projects.find((p) => p.id === selectedProjectId) || null;
+
+  const loadProjects = async () => {
+    try {
+      const data = await api.getProjects();
+      setProjects(data);
+
+      // Auto-select first project if none selected
+      if (!selectedProjectId && data.length > 0) {
+        setSelectedProjectId(data[0].id);
+      }
+      // Clear selection if selected project no longer exists
+      if (selectedProjectId && !data.find((p) => p.id === selectedProjectId)) {
+        setSelectedProjectId(data.length > 0 ? data[0].id : null);
+      }
+    } catch (err) {
+      console.error("Failed to load projects:", err);
+    }
+  };
 
   useEffect(() => {
     const initialize = async () => {
@@ -23,14 +47,16 @@ function App() {
       // Check if we have an access token, if not show settings
       const hasToken = await api.hasAccessToken();
       if (!hasToken) {
-        setActiveTab("settings");
+        setShowSettings(true);
       }
+
+      await loadProjects();
       setIsLoading(false);
     };
 
     initialize();
 
-    // Listen for file changes to potentially auto-switch to logs
+    // Listen for file changes
     const unlistenFileChange = listen<FileChange>("file_change", (event) => {
       console.log("File changed:", event.payload);
     });
@@ -52,7 +78,6 @@ function App() {
       if (confirmed) {
         try {
           await api.pushProject(event.payload.project_id, true);
-          // Optional: Notify user of success via a toast or log
           console.log("Forced push successful");
         } catch (err) {
           console.error("Failed to push project (forced):", err);
@@ -70,74 +95,108 @@ function App() {
     };
   }, []);
 
-  const renderContent = () => {
-    switch (activeTab) {
-      case "projects":
-        return <ProjectList />;
-      case "logs":
-        return <LogsViewer />;
-      case "settings":
-        return <Settings />;
-    }
+  const handleProjectCreated = () => {
+    setShowCreateForm(false);
+    loadProjects();
+  };
+
+  const handleProjectDeleted = () => {
+    loadProjects();
   };
 
   if (isLoading) {
     return (
-      <div className="app">
-        <div className="loading-screen">Loading...</div>
+      <div className="dark h-full border rounded-xl overflow-hidden">
+        <div className="bg-background h-full flex items-center justify-center text-muted-foreground">
+          Loading...
+        </div>
       </div>
     );
   }
 
   return (
     <div className="dark h-full border rounded-xl overflow-hidden">
-      <div className="bg h-full flex flex-col">
-        <header className="shrink-0 flex items-center gap-4 px-5 py-3 border-b justify-between">
-          <svg
-            width="11"
-            height="11"
-            viewBox="0 0 11 11"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <rect width="1" height="11" fill="white" />
-            <rect x="2" width="1" height="11" fill="white" />
-            <rect x="10" width="1" height="11" fill="white" />
-            <rect x="4" y="6" width="1" height="5" fill="white" />
-            <rect x="4" width="1" height="5" fill="white" />
-            <rect
-              x="9"
-              width="1"
-              height="5"
-              transform="rotate(90 9 0)"
-              fill="white"
-            />
-            <rect
-              x="9"
-              y="2"
-              width="1"
-              height="5"
-              transform="rotate(90 9 2)"
-              fill="white"
-            />
-            <rect
-              x="9"
-              y="4"
-              width="1"
-              height="5"
-              transform="rotate(90 9 4)"
-              fill="white"
-            />
-            <rect x="6" y="6" width="1" height="5" fill="white" />
-            <rect x="8" y="6" width="1" height="5" fill="white" />
-          </svg>
+      <div className="bg-background h-full flex">
+        {/* Sidebar */}
+        <Sidebar
+          projects={projects}
+          selectedProjectId={selectedProjectId}
+          onSelectProject={setSelectedProjectId}
+          onAddProject={() => setShowCreateForm(true)}
+          onOpenSettings={() => setShowSettings(true)}
+        />
 
-          <Tabs activeTab={activeTab} onTabChange={setActiveTab} />
-        </header>
+        {/* Main Content Area */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {selectedProject ? (
+            <>
+              <ProjectHeader
+                key={selectedProject.id}
+                project={selectedProject}
+                onUpdate={loadProjects}
+                onDelete={handleProjectDeleted}
+              />
+              {selectedProject.supabase_project_id ? (
+                <ProjectLogs projectId={selectedProject.id} />
+              ) : (
+                <div className="flex-1 flex items-center justify-center text-muted-foreground">
+                  <div className="text-center">
+                    <p>Project not linked to Supabase</p>
+                    <p className="text-sm mt-1">
+                      Logs will appear once the project is linked
+                    </p>
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-muted-foreground">
+              <div className="text-center">
+                <p>No project selected</p>
+                <p className="text-sm mt-1">
+                  Select a project from the sidebar or add a new one
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
 
-        <main className="flex-1 flex flex-col overflow-hidden">
-          {renderContent()}
-        </main>
+        {/* Create Project Modal */}
+        {showCreateForm && (
+          <div className="absolute inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
+            <div className="bg-background border rounded-2xl p-6 w-full max-w-lg mx-4 shadow-xl">
+              <CreateProjectForm
+                onCreated={handleProjectCreated}
+                onCancel={() => setShowCreateForm(false)}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Settings Modal */}
+        {showSettings && (
+          <div className="absolute inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
+            <div className="bg-background border rounded-2xl p-6 w-full max-w-lg mx-4 shadow-xl max-h-[80vh] overflow-auto">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold">Settings</h2>
+                <button
+                  onClick={() => setShowSettings(false)}
+                  className="text-muted-foreground hover:text-foreground p-1"
+                >
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path
+                      d="M12 4L4 12M4 4L12 12"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </button>
+              </div>
+              <Settings />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
