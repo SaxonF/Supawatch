@@ -12,6 +12,17 @@ pub struct Project {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub is_watching: bool,
+    /// Custom output path for generated TypeScript types (relative to project root)
+    /// Defaults to "src/types/database.ts" if not set
+    #[serde(default)]
+    pub typescript_output_path: Option<String>,
+    /// Whether to generate TypeScript types on schema changes
+    #[serde(default = "default_generate_typescript")]
+    pub generate_typescript: bool,
+}
+
+fn default_generate_typescript() -> bool {
+    true
 }
 
 impl Project {
@@ -26,6 +37,8 @@ impl Project {
             created_at: now,
             updated_at: now,
             is_watching: false,
+            typescript_output_path: None,
+            generate_typescript: true,
         }
     }
 

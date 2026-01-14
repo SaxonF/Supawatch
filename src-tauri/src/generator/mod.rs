@@ -2,6 +2,7 @@ mod constraints;
 mod objects;
 mod roles;
 mod tables;
+pub mod typescript;
 mod types;
 
 use crate::defaults;

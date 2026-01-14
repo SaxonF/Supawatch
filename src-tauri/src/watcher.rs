@@ -158,7 +158,14 @@ fn handle_file_event(
     if change_type == FileChangeType::Schema {
         let state_for_schema = state_arc.clone();
         let app_for_schema = app_handle_clone.clone();
+        let base_path_for_ts = base_path.to_string();
         tauri::async_runtime::spawn(async move {
+            // Generate TypeScript types first (doesn't need Supabase connection)
+            if let Err(e) = handle_typescript_generation(&state_for_schema, &app_for_schema, project_id, &base_path_for_ts).await {
+                eprintln!("TypeScript generation failed: {}", e);
+            }
+
+            // Then push to Supabase
             if let Err(e) = handle_schema_push(state_for_schema, app_for_schema, project_id).await {
                 eprintln!("Auto-push failed: {}", e);
             }
@@ -463,6 +470,77 @@ async fn handle_edge_function_push(
 
     update_icon(&app_handle, false);
     Ok(())
+}
+
+async fn handle_typescript_generation(
+    state: &Arc<AppState>,
+    app_handle: &AppHandle,
+    project_id: Uuid,
+    base_path: &str,
+) -> Result<(), String> {
+    // Get project settings
+    let project = match state.get_project(project_id).await {
+        Ok(p) => p,
+        Err(_) => return Ok(()), // Project not found, skip
+    };
+
+    // Check if TypeScript generation is enabled for this project
+    if !project.generate_typescript {
+        return Ok(());
+    }
+
+    let project_path = Path::new(base_path);
+
+    // Find schema path
+    let schema_path = match sync::find_schema_path(project_path) {
+        Some(p) => p,
+        None => {
+            // No schema file found, skip TypeScript generation
+            return Ok(());
+        }
+    };
+
+    // Get TypeScript output path (use custom path if configured)
+    let ts_output_path = sync::get_typescript_output_path(
+        project_path,
+        project.typescript_output_path.as_deref(),
+    );
+
+    let log = LogEntry::info(
+        Some(project_id),
+        LogSource::Schema,
+        "Generating TypeScript types...".to_string(),
+    );
+    state.add_log(log.clone()).await;
+    app_handle.emit("log", &log).ok();
+
+    // Generate TypeScript types
+    match sync::generate_typescript_types(&schema_path, &ts_output_path).await {
+        Ok(()) => {
+            let relative_output = ts_output_path
+                .strip_prefix(project_path)
+                .unwrap_or(&ts_output_path)
+                .to_string_lossy();
+            let log = LogEntry::success(
+                Some(project_id),
+                LogSource::Schema,
+                format!("TypeScript types generated: {}", relative_output),
+            );
+            state.add_log(log.clone()).await;
+            app_handle.emit("log", &log).ok();
+            Ok(())
+        }
+        Err(e) => {
+            let log = LogEntry::error(
+                Some(project_id),
+                LogSource::Schema,
+                format!("TypeScript generation failed: {}", e),
+            );
+            state.add_log(log.clone()).await;
+            app_handle.emit("log", &log).ok();
+            Err(e)
+        }
+    }
 }
 
 /// Extract function slug from a relative path like "supabase/functions/my-function/index.ts"

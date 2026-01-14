@@ -332,3 +332,52 @@ pub async fn compute_schema_diff(
         migration_sql,
     })
 }
+
+// ============================================================================
+// TypeScript Generation
+// ============================================================================
+
+/// Generate TypeScript types from a schema file and save to the output path.
+pub async fn generate_typescript_types(
+    schema_path: &Path,
+    output_path: &Path,
+) -> Result<(), String> {
+    // 1. Read and parse the schema
+    let local_sql = tokio::fs::read_to_string(schema_path)
+        .await
+        .map_err(|e| format!("Failed to read schema file: {}", e))?;
+    let schema = crate::parsing::parse_schema_sql(&local_sql)?;
+
+    // 2. Generate TypeScript
+    let config = crate::generator::typescript::TypeScriptConfig::default();
+    let typescript_content = crate::generator::typescript::generate_typescript(&schema, &config);
+
+    // 3. Ensure output directory exists
+    if let Some(parent) = output_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| format!("Failed to create output directory: {}", e))?;
+    }
+
+    // 4. Write the TypeScript file
+    tokio::fs::write(output_path, typescript_content)
+        .await
+        .map_err(|e| format!("Failed to write TypeScript file: {}", e))?;
+
+    Ok(())
+}
+
+/// Find the TypeScript output path based on project settings.
+/// Uses custom path if provided, otherwise defaults to `<project_path>/src/types/database.ts`
+pub fn get_typescript_output_path(
+    project_local_path: &Path,
+    custom_path: Option<&str>,
+) -> std::path::PathBuf {
+    match custom_path {
+        Some(path) => project_local_path.join(path),
+        None => project_local_path
+            .join("src")
+            .join("types")
+            .join("database.ts"),
+    }
+}
