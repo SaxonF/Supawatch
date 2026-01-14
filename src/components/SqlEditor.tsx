@@ -1,5 +1,5 @@
-import { Play, Save } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { Play, Plus, Save, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Spreadsheet, { type CellBase, type Matrix } from "react-spreadsheet";
 import * as api from "../api";
 import { Button } from "./ui/button";
@@ -46,6 +46,41 @@ interface TableChange {
 interface RowChanges {
   rowIndex: number;
   tableChanges: TableChange[];
+}
+
+interface Tab {
+  id: string;
+  name: string;
+  sql: string;
+  results: SpreadsheetData;
+  originalResults: SpreadsheetData;
+  displayColumns: string[];
+  queryMetadata: QueryMetadata | null;
+  error: string | null;
+}
+
+function generateTabId(): string {
+  return `tab-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+}
+
+function createNewTab(): Tab {
+  return {
+    id: generateTabId(),
+    name: "Untitled",
+    sql: "SELECT * FROM ",
+    results: [],
+    originalResults: [],
+    displayColumns: [],
+    queryMetadata: null,
+    error: null,
+  };
+}
+
+// Extract the primary table name from a SQL query
+function extractPrimaryTableName(sql: string): string | null {
+  const normalized = sql.replace(/\s+/g, " ").trim();
+  const fromMatch = normalized.match(/\bfrom\s+([a-z_][a-z0-9_]*)/i);
+  return fromMatch ? fromMatch[1] : null;
 }
 
 // Parse tables from FROM and JOIN clauses
@@ -280,14 +315,102 @@ function generateUpdateSql(
 }
 
 export function SqlEditor({ projectId }: SqlEditorProps) {
-  const [sql, setSql] = useState("SELECT * FROM ");
-  const [results, setResults] = useState<SpreadsheetData>([]);
-  const [originalResults, setOriginalResults] = useState<SpreadsheetData>([]);
-  const [displayColumns, setDisplayColumns] = useState<string[]>([]);
-  const [queryMetadata, setQueryMetadata] = useState<QueryMetadata | null>(null);
+  const [tabs, setTabs] = useState<Tab[]>(() => [createNewTab()]);
+  const [activeTabId, setActiveTabId] = useState<string>(() => tabs[0]?.id || "");
+  const [editingTabId, setEditingTabId] = useState<string | null>(null);
+  const [editingTabName, setEditingTabName] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const editInputRef = useRef<HTMLInputElement>(null);
+
+  // Get current tab
+  const currentTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
+
+  // Derived state from current tab
+  const sql = currentTab?.sql || "";
+  const results = currentTab?.results || [];
+  const originalResults = currentTab?.originalResults || [];
+  const displayColumns = currentTab?.displayColumns || [];
+  const queryMetadata = currentTab?.queryMetadata || null;
+  const error = currentTab?.error || null;
+
+  // Update current tab helper
+  const updateCurrentTab = useCallback((updates: Partial<Tab>) => {
+    setTabs((prevTabs) =>
+      prevTabs.map((tab) =>
+        tab.id === activeTabId ? { ...tab, ...updates } : tab
+      )
+    );
+  }, [activeTabId]);
+
+  // Set SQL for current tab
+  const setSql = useCallback((newSql: string) => {
+    updateCurrentTab({ sql: newSql });
+  }, [updateCurrentTab]);
+
+  // Focus edit input when editing starts
+  useEffect(() => {
+    if (editingTabId && editInputRef.current) {
+      editInputRef.current.focus();
+      editInputRef.current.select();
+    }
+  }, [editingTabId]);
+
+  // Tab management functions
+  const addNewTab = useCallback(() => {
+    const newTab = createNewTab();
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(newTab.id);
+  }, []);
+
+  const closeTab = useCallback((tabId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setTabs((prevTabs) => {
+      if (prevTabs.length === 1) {
+        // Don't close the last tab, just reset it
+        return [createNewTab()];
+      }
+      const newTabs = prevTabs.filter((t) => t.id !== tabId);
+      // If we're closing the active tab, switch to another
+      if (tabId === activeTabId) {
+        const closedIndex = prevTabs.findIndex((t) => t.id === tabId);
+        const newActiveIndex = Math.min(closedIndex, newTabs.length - 1);
+        setActiveTabId(newTabs[newActiveIndex].id);
+      }
+      return newTabs;
+    });
+  }, [activeTabId]);
+
+  const startEditingTab = useCallback((tabId: string) => {
+    const tab = tabs.find((t) => t.id === tabId);
+    if (tab) {
+      setEditingTabId(tabId);
+      setEditingTabName(tab.name);
+    }
+  }, [tabs]);
+
+  const finishEditingTab = useCallback(() => {
+    if (editingTabId && editingTabName.trim()) {
+      setTabs((prevTabs) =>
+        prevTabs.map((tab) =>
+          tab.id === editingTabId
+            ? { ...tab, name: editingTabName.trim() }
+            : tab
+        )
+      );
+    }
+    setEditingTabId(null);
+    setEditingTabName("");
+  }, [editingTabId, editingTabName]);
+
+  const handleTabKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      finishEditingTab();
+    } else if (e.key === "Escape") {
+      setEditingTabId(null);
+      setEditingTabName("");
+    }
+  }, [finishEditingTab]);
 
   // Calculate changes between original and current results, grouped by table
   const changes = useMemo((): RowChanges[] => {
@@ -375,14 +498,13 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
     if (!sql.trim()) return;
 
     setIsLoading(true);
-    setError(null);
+    updateCurrentTab({ error: null });
 
     try {
       const result = await api.runQuery(projectId, sql, true);
 
       if (Array.isArray(result) && result.length > 0) {
         const resultCols = Object.keys(result[0]);
-        setDisplayColumns(resultCols);
 
         // Parse query structure
         const tables = parseTables(sql);
@@ -404,8 +526,6 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
           isEditable,
         };
 
-        setQueryMetadata(metadata);
-
         // Convert to spreadsheet format with readonly flags
         const data: CellData[][] = result.map((row: Record<string, unknown>) =>
           columns.map((colInfo) => {
@@ -425,21 +545,40 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
           })
         );
 
-        setResults(data);
-        setOriginalResults(JSON.parse(JSON.stringify(data)));
+        // Auto-rename untitled tabs to the primary table name
+        const tabUpdates: Partial<Tab> = {
+          displayColumns: resultCols,
+          queryMetadata: metadata,
+          results: data,
+          originalResults: JSON.parse(JSON.stringify(data)),
+          error: null,
+        };
+
+        if (currentTab?.name === "Untitled") {
+          const primaryTable = extractPrimaryTableName(sql);
+          if (primaryTable) {
+            tabUpdates.name = primaryTable;
+          }
+        }
+
+        updateCurrentTab(tabUpdates);
       } else {
-        setDisplayColumns([]);
-        setResults([]);
-        setOriginalResults([]);
-        setQueryMetadata(null);
+        updateCurrentTab({
+          displayColumns: [],
+          results: [],
+          originalResults: [],
+          queryMetadata: null,
+        });
       }
     } catch (err) {
       console.error("Query failed:", err);
-      setError(typeof err === "string" ? err : String(err));
-      setResults([]);
-      setOriginalResults([]);
-      setDisplayColumns([]);
-      setQueryMetadata(null);
+      updateCurrentTab({
+        error: typeof err === "string" ? err : String(err),
+        results: [],
+        originalResults: [],
+        displayColumns: [],
+        queryMetadata: null,
+      });
     } finally {
       setIsLoading(false);
     }
@@ -449,7 +588,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
     if (!queryMetadata?.isEditable || changes.length === 0) return;
 
     setIsSaving(true);
-    setError(null);
+    updateCurrentTab({ error: null });
 
     try {
       // Generate and execute UPDATE statements for each table change
@@ -467,18 +606,18 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
       }
 
       // Update original results to reflect saved state
-      setOriginalResults(JSON.parse(JSON.stringify(results)));
+      updateCurrentTab({ originalResults: JSON.parse(JSON.stringify(results)) });
     } catch (err) {
       console.error("Save failed:", err);
-      setError(typeof err === "string" ? err : String(err));
+      updateCurrentTab({ error: typeof err === "string" ? err : String(err) });
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleDataChange = useCallback((newData: SpreadsheetData) => {
-    setResults(newData);
-  }, []);
+    updateCurrentTab({ results: newData });
+  }, [updateCurrentTab]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -496,6 +635,55 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
+      {/* Tab Bar */}
+      <div className="shrink-0 flex items-center border-b bg-muted/30">
+        <button
+          onClick={addNewTab}
+          className="shrink-0 p-2 hover:bg-muted/50 transition-colors border-r"
+          title="New tab"
+        >
+          <Plus size={16} className="text-muted-foreground" />
+        </button>
+        <div className="flex-1 flex overflow-x-auto">
+          {tabs.map((tab) => (
+            <div
+              key={tab.id}
+              onClick={() => setActiveTabId(tab.id)}
+              onDoubleClick={() => startEditingTab(tab.id)}
+              className={`group flex items-center gap-2 px-3 py-2 border-r cursor-pointer transition-colors min-w-[100px] max-w-[200px] ${
+                tab.id === activeTabId
+                  ? "bg-background border-b-2 border-b-primary"
+                  : "hover:bg-muted/50"
+              }`}
+            >
+              {editingTabId === tab.id ? (
+                <input
+                  ref={editInputRef}
+                  type="text"
+                  value={editingTabName}
+                  onChange={(e) => setEditingTabName(e.target.value)}
+                  onBlur={finishEditingTab}
+                  onKeyDown={handleTabKeyDown}
+                  className="flex-1 bg-transparent border-none outline-none text-sm min-w-0"
+                  onClick={(e) => e.stopPropagation()}
+                />
+              ) : (
+                <span className="flex-1 text-sm truncate" title={tab.name}>
+                  {tab.name}
+                </span>
+              )}
+              <button
+                onClick={(e) => closeTab(tab.id, e)}
+                className="shrink-0 opacity-0 group-hover:opacity-100 hover:bg-muted rounded p-0.5 transition-opacity"
+                title="Close tab"
+              >
+                <X size={14} className="text-muted-foreground" />
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
       {/* SQL Input Area */}
       <div className="shrink-0 p-4 border-b">
         <div className="flex gap-2">
