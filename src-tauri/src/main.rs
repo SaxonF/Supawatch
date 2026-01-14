@@ -29,7 +29,6 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             // Init commands
             commands::init,
-            commands::show_menubar_panel,
             commands::pick_project_folder,
             // Access token commands
             commands::set_access_token,
@@ -70,15 +69,13 @@ fn main() {
             commands::get_postgres_logs,
             commands::get_auth_logs,
         ])
-        .plugin(tauri_nspanel::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
-            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-
             let app_handle = app.app_handle();
 
+            // Create tray icon for sync status indicator
             tray::create(app_handle)?;
 
             // Restart watchers for projects that were being watched
@@ -100,15 +97,5 @@ fn main() {
         })
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
-        .run(|_app_handle, event| match event {
-            tauri::RunEvent::ExitRequested { api, .. } => {
-                api.prevent_exit();
-            }
-            tauri::RunEvent::WindowEvent { event, .. } => {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                }
-            }
-            _ => {}
-        });
+        .run(|_app_handle, _event| {});
 }

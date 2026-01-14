@@ -106,7 +106,7 @@ function App() {
 
   if (isLoading) {
     return (
-      <div className="dark h-full border rounded-xl overflow-hidden">
+      <div className="dark h-full">
         <div className="bg-background h-full flex items-center justify-center text-muted-foreground">
           Loading...
         </div>
@@ -115,7 +115,7 @@ function App() {
   }
 
   return (
-    <div className="dark h-full border rounded-xl overflow-hidden">
+    <div className="dark h-full">
       <div className="bg-background h-full flex">
         {/* Sidebar */}
         <Sidebar

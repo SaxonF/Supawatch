@@ -3,13 +3,10 @@ use std::time::Duration;
 use tauri::{
     async_runtime::JoinHandle,
     image::Image,
-    tray::{MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
+    tray::{TrayIcon, TrayIconBuilder},
     AppHandle, Runtime,
 };
-use tauri_nspanel::ManagerExt;
 use once_cell::sync::Lazy;
-
-use crate::fns::position_menubar_panel;
 
 static ROTATION_TASK: Lazy<Mutex<Option<JoinHandle<()>>>> = Lazy::new(|| Mutex::new(None));
 
@@ -19,24 +16,7 @@ pub fn create(app_handle: &AppHandle) -> tauri::Result<TrayIcon> {
     TrayIconBuilder::with_id("tray")
         .icon(icon)
         .icon_as_template(true)
-        .on_tray_icon_event(|tray, event| {
-            let app_handle = tray.app_handle();
-
-            if let TrayIconEvent::Click { button_state, .. } = event {
-                if button_state == MouseButtonState::Up {
-                    let panel = app_handle.get_webview_panel("main").unwrap();
-
-                    if panel.is_visible() {
-                        panel.order_out(None);
-                        return;
-                    }
-
-                    position_menubar_panel(app_handle, 0.0);
-
-                    panel.show();
-                }
-            }
-        })
+        .tooltip("Supawatch")
         .build(app_handle)
 }
 
@@ -55,26 +35,20 @@ fn start_rotation<R: Runtime>(app_handle: &AppHandle<R>) {
     }
 
     let app_handle = app_handle.clone();
-    
+
     let handle = tauri::async_runtime::spawn(async move {
-        // Load the base image
         let tray_syncing_bytes = include_bytes!("../icons/tray-syncing.png");
         let mut angle = 0;
-        
+
         loop {
-            // Load fresh every time to avoid accumulation of artifacts/complexity, 
-            // though rotating the same buffer would be efficient, loading from memory is fast enough.
-            // Actually, let's keep one DynamicImage and rotate it.
             if let Ok(mut dyn_image) = image::load_from_memory(tray_syncing_bytes) {
-                // Apply rotation
-                 match angle {
+                match angle {
                     90 => dyn_image = dyn_image.rotate90(),
                     180 => dyn_image = dyn_image.rotate180(),
                     270 => dyn_image = dyn_image.rotate270(),
-                    _ => {} // 0, do nothing
+                    _ => {}
                 }
 
-                // Convert to RGBA for Tauri
                 let rgba = dyn_image.to_rgba8();
                 let width = rgba.width();
                 let height = rgba.height();
@@ -86,7 +60,6 @@ fn start_rotation<R: Runtime>(app_handle: &AppHandle<R>) {
                 }
             }
 
-            // Update angle for next frame
             angle = (angle + 90) % 360;
 
             tokio::time::sleep(Duration::from_millis(150)).await;

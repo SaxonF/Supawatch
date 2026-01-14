@@ -91,11 +91,6 @@
   box-sizing: border-box;
 }
 
-html {
-  border-radius: 8px;
-  overflow: hidden;
-}
-
 html,
 body {
   padding: 0;
@@ -103,12 +98,7 @@ body {
   outline: 0;
   overflow: hidden;
   height: 100vh;
-}
-
-body {
-  height: 100vh;
   width: 100vw;
-  border-radius: 14px;
 }
 
 #root {

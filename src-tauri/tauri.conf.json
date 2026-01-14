@@ -25,18 +25,19 @@
     "windows": [
       {
         "fullscreen": false,
-        "resizable": false,
+        "resizable": true,
         "title": "Supawatch",
-        "width": 380,
-        "height": 500,
-        "decorations": false,
-        "transparent": true,
-        "visible": false
+        "width": 900,
+        "height": 600,
+        "minWidth": 700,
+        "minHeight": 400,
+        "decorations": true,
+        "transparent": false,
+        "visible": true
       }
     ],
     "security": {
       "csp": null
-    },
-    "macOSPrivateApi": true
+    }
   }
 }
