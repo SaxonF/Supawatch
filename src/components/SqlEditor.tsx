@@ -125,6 +125,26 @@ function findPrimaryKeyColumn(columns: string[]): string | null {
   return columns[0];
 }
 
+// Format a value for display in the spreadsheet
+function formatCellValue(value: unknown): string {
+  if (value === null) return "NULL";
+  if (typeof value === "object") {
+    // JSON/JSONB columns - stringify for display and editing
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+// Check if a string looks like JSON
+function isJsonString(str: string): boolean {
+  if (str === "NULL") return false;
+  const trimmed = str.trim();
+  return (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  );
+}
+
 // Generate UPDATE SQL for a set of changes
 function generateUpdateSql(
   tableName: string,
@@ -134,8 +154,17 @@ function generateUpdateSql(
 ): string {
   const setClauses = Object.entries(changes)
     .map(([column, { newValue }]) => {
-      const escapedValue =
-        newValue === "NULL" ? "NULL" : `'${newValue.replace(/'/g, "''")}'`;
+      if (newValue === "NULL") {
+        return `"${column}" = NULL`;
+      }
+
+      const escapedValue = `'${newValue.replace(/'/g, "''")}'`;
+
+      // If the value looks like JSON, cast it to jsonb
+      if (isJsonString(newValue)) {
+        return `"${column}" = ${escapedValue}::jsonb`;
+      }
+
       return `"${column}" = ${escapedValue}`;
     })
     .join(", ");
@@ -249,7 +278,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
             const isPrimaryKey = col === metadata.primaryKeyColumn;
 
             return {
-              value: value === null ? "NULL" : String(value),
+              value: formatCellValue(value),
               readOnly: !metadata.isEditable || isComputed || isPrimaryKey,
             };
           })
