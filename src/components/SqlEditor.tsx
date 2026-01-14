@@ -15,34 +15,75 @@ interface CellData extends CellBase {
 
 type SpreadsheetData = Matrix<CellData>;
 
-interface QueryMetadata {
-  tableName: string | null;
-  isEditable: boolean;
-  primaryKeyColumn: string | null;
-  columns: string[];
+interface TableInfo {
+  name: string;
+  alias: string | null;
+  primaryKeyColumn: string | null; // The column name as it appears in results
+  primaryKeyField: string; // The actual field name in the table
 }
 
-interface RowChange {
-  rowIndex: number;
+interface ColumnInfo {
+  resultName: string; // Column name as it appears in query results
+  tableName: string | null; // Which table this column belongs to
+  fieldName: string; // Actual field name in the table
+  isComputed: boolean;
+  isPrimaryKey: boolean;
+}
+
+interface QueryMetadata {
+  tables: TableInfo[];
+  columns: ColumnInfo[];
+  isEditable: boolean;
+}
+
+interface TableChange {
+  tableName: string;
+  primaryKeyColumn: string;
   primaryKeyValue: string;
   changes: Record<string, { oldValue: string; newValue: string }>;
 }
 
-// Parse a SELECT query to extract metadata for editing
-function parseSelectQuery(sql: string): QueryMetadata {
+interface RowChanges {
+  rowIndex: number;
+  tableChanges: TableChange[];
+}
+
+// Parse tables from FROM and JOIN clauses
+function parseTables(sql: string): TableInfo[] {
+  const normalized = sql.replace(/\s+/g, " ").trim();
+  const tables: TableInfo[] = [];
+
+  // Match FROM table [alias]
+  const fromMatch = normalized.match(/\bfrom\s+([a-z_][a-z0-9_]*)(?:\s+(?:as\s+)?([a-z_][a-z0-9_]*))?/i);
+  if (fromMatch) {
+    tables.push({
+      name: fromMatch[1].toLowerCase(),
+      alias: fromMatch[2]?.toLowerCase() || null,
+      primaryKeyColumn: null,
+      primaryKeyField: "id",
+    });
+  }
+
+  // Match JOIN table [alias]
+  const joinRegex = /\bjoin\s+([a-z_][a-z0-9_]*)(?:\s+(?:as\s+)?([a-z_][a-z0-9_]*))?/gi;
+  let joinMatch;
+  while ((joinMatch = joinRegex.exec(normalized)) !== null) {
+    tables.push({
+      name: joinMatch[1].toLowerCase(),
+      alias: joinMatch[2]?.toLowerCase() || null,
+      primaryKeyColumn: null,
+      primaryKeyField: "id",
+    });
+  }
+
+  return tables;
+}
+
+// Check if query has non-editable constructs (aggregations, etc.)
+function hasNonEditableConstructs(sql: string): boolean {
   const normalized = sql.replace(/\s+/g, " ").trim().toLowerCase();
 
-  // Default: not editable
-  const result: QueryMetadata = {
-    tableName: null,
-    isEditable: false,
-    primaryKeyColumn: null,
-    columns: [],
-  };
-
-  // Check for things that make a query non-editable
   const nonEditablePatterns = [
-    /\bjoin\b/,
     /\bgroup\s+by\b/,
     /\bhaving\b/,
     /\bunion\b/,
@@ -54,82 +95,147 @@ function parseSelectQuery(sql: string): QueryMetadata {
     /\bavg\s*\(/,
     /\bmin\s*\(/,
     /\bmax\s*\(/,
-    /\bcoalesce\s*\(/,
-    /\bcase\s+when\b/,
   ];
 
-  for (const pattern of nonEditablePatterns) {
-    if (pattern.test(normalized)) {
-      return result;
-    }
-  }
-
-  // Try to extract table name from simple SELECT ... FROM table
-  const fromMatch = normalized.match(/\bfrom\s+([a-z_][a-z0-9_]*)/);
-  if (!fromMatch) {
-    return result;
-  }
-
-  result.tableName = fromMatch[1];
-  result.isEditable = true;
-
-  return result;
+  return nonEditablePatterns.some((pattern) => pattern.test(normalized));
 }
 
-// Detect which columns are likely computed/expressions vs simple columns
-function isComputedColumn(columnName: string, sql: string): boolean {
+// Parse column info from SELECT clause and result columns
+function parseColumns(
+  sql: string,
+  resultColumns: string[],
+  tables: TableInfo[]
+): ColumnInfo[] {
   const normalized = sql.replace(/\s+/g, " ").trim();
 
-  // Extract the SELECT clause
+  // Extract SELECT clause
   const selectMatch = normalized.match(/select\s+(.+?)\s+from\s/i);
-  if (!selectMatch) return false;
+  if (!selectMatch) return resultColumns.map((col) => ({
+    resultName: col,
+    tableName: null,
+    fieldName: col,
+    isComputed: false,
+    isPrimaryKey: false,
+  }));
 
   const selectClause = selectMatch[1];
+  const isSelectStar = selectClause.trim() === "*";
 
-  // If SELECT *, all columns are from the table
-  if (selectClause.trim() === "*") {
-    return false;
-  }
-
-  // Check if this column appears as an alias for an expression
-  const expressionPatterns = [
-    new RegExp(`\\([^)]+\\)\\s+(?:as\\s+)?${columnName}`, "i"), // (expr) as col
-    new RegExp(`\\w+\\s*[+\\-*/]\\s*\\w+.*?(?:as\\s+)?${columnName}`, "i"), // a + b as col
-    new RegExp(`\\w+\\s*\\|\\|\\s*\\w+.*?(?:as\\s+)?${columnName}`, "i"), // a || b as col
-  ];
-
-  for (const pattern of expressionPatterns) {
-    if (pattern.test(selectClause)) {
-      return true;
+  // Build alias to table name map
+  const aliasMap: Record<string, string> = {};
+  for (const table of tables) {
+    if (table.alias) {
+      aliasMap[table.alias] = table.name;
     }
+    aliasMap[table.name] = table.name;
   }
 
-  return false;
+  return resultColumns.map((resultCol) => {
+    const info: ColumnInfo = {
+      resultName: resultCol,
+      tableName: null,
+      fieldName: resultCol,
+      isComputed: false,
+      isPrimaryKey: false,
+    };
+
+    // Check if column name contains table prefix (e.g., "users.name" or result is "users_name")
+    // First, try to find explicit prefix in SELECT clause
+    if (!isSelectStar) {
+      // Look for patterns like: table.column as alias, table.column alias, table.column
+      const prefixPattern = new RegExp(
+        `\\b([a-z_][a-z0-9_]*)\\.([a-z_][a-z0-9_]*)(?:\\s+(?:as\\s+)?${resultCol})?\\b`,
+        "gi"
+      );
+
+      let match;
+      while ((match = prefixPattern.exec(selectClause)) !== null) {
+        const [fullMatch, prefix, field] = match;
+        // Check if this matches our result column
+        if (
+          fullMatch.toLowerCase().includes(resultCol.toLowerCase()) ||
+          field.toLowerCase() === resultCol.toLowerCase()
+        ) {
+          const tableName = aliasMap[prefix.toLowerCase()];
+          if (tableName) {
+            info.tableName = tableName;
+            info.fieldName = field;
+            break;
+          }
+        }
+      }
+    }
+
+    // For SELECT *, try to infer table from column naming conventions
+    if (!info.tableName && tables.length === 1) {
+      // Single table query - all columns belong to that table
+      info.tableName = tables[0].name;
+    }
+
+    // Check if this is a computed column
+    if (!isSelectStar) {
+      const computedPatterns = [
+        new RegExp(`\\([^)]+\\)\\s+(?:as\\s+)?${resultCol}\\b`, "i"),
+        new RegExp(`\\w+\\s*[+\\-*/]\\s*\\w+.*?(?:as\\s+)?${resultCol}\\b`, "i"),
+        new RegExp(`\\w+\\s*\\|\\|\\s*\\w+.*?(?:as\\s+)?${resultCol}\\b`, "i"),
+        new RegExp(`\\b(?:coalesce|case|nullif|concat)\\s*\\(.*?(?:as\\s+)?${resultCol}\\b`, "i"),
+      ];
+
+      info.isComputed = computedPatterns.some((p) => p.test(selectClause));
+    }
+
+    return info;
+  });
 }
 
-// Find the primary key column (prefer 'id', then first column)
-function findPrimaryKeyColumn(columns: string[]): string | null {
-  if (columns.length === 0) return null;
-
-  // Common primary key names
+// Find primary key columns for each table in the result set
+function findPrimaryKeys(
+  columns: ColumnInfo[],
+  tables: TableInfo[]
+): void {
   const pkNames = ["id", "uuid", "pk", "_id"];
-  for (const pk of pkNames) {
-    if (columns.includes(pk)) return pk;
+
+  for (const table of tables) {
+    // Look for table-prefixed primary key first (e.g., users.id -> users_id or just id if single table)
+    for (const pkName of pkNames) {
+      const matchingCol = columns.find(
+        (col) =>
+          col.tableName === table.name &&
+          col.fieldName.toLowerCase() === pkName
+      );
+      if (matchingCol) {
+        table.primaryKeyColumn = matchingCol.resultName;
+        table.primaryKeyField = pkName;
+        matchingCol.isPrimaryKey = true;
+        break;
+      }
+    }
+
+    // If no prefixed PK found, look for standalone pk columns
+    if (!table.primaryKeyColumn) {
+      for (const pkName of pkNames) {
+        const matchingCol = columns.find(
+          (col) => col.resultName.toLowerCase() === pkName && !col.isPrimaryKey
+        );
+        if (matchingCol) {
+          table.primaryKeyColumn = matchingCol.resultName;
+          table.primaryKeyField = pkName;
+          matchingCol.isPrimaryKey = true;
+          // Assign this column to the table if not assigned
+          if (!matchingCol.tableName) {
+            matchingCol.tableName = table.name;
+          }
+          break;
+        }
+      }
+    }
   }
-
-  // Columns ending with _id might be primary keys
-  const idColumn = columns.find((c) => c.endsWith("_id") && c !== "created_by_id");
-  if (idColumn) return idColumn;
-
-  // Fall back to first column (often the primary key)
-  return columns[0];
 }
 
 // Format a value for display in the spreadsheet
 function formatCellValue(value: unknown): string {
   if (value === null) return "NULL";
   if (typeof value === "object") {
-    // JSON/JSONB columns - stringify for display and editing
     return JSON.stringify(value);
   }
   return String(value);
@@ -145,104 +251,124 @@ function isJsonString(str: string): boolean {
   );
 }
 
-// Generate UPDATE SQL for a set of changes
+// Generate UPDATE SQL for a table
 function generateUpdateSql(
   tableName: string,
-  primaryKeyColumn: string,
+  primaryKeyField: string,
   primaryKeyValue: string,
   changes: Record<string, { oldValue: string; newValue: string }>
 ): string {
   const setClauses = Object.entries(changes)
-    .map(([column, { newValue }]) => {
+    .map(([fieldName, { newValue }]) => {
       if (newValue === "NULL") {
-        return `"${column}" = NULL`;
+        return `"${fieldName}" = NULL`;
       }
 
       const escapedValue = `'${newValue.replace(/'/g, "''")}'`;
 
-      // If the value looks like JSON, cast it to jsonb
       if (isJsonString(newValue)) {
-        return `"${column}" = ${escapedValue}::jsonb`;
+        return `"${fieldName}" = ${escapedValue}::jsonb`;
       }
 
-      return `"${column}" = ${escapedValue}`;
+      return `"${fieldName}" = ${escapedValue}`;
     })
     .join(", ");
 
   const escapedPkValue = `'${primaryKeyValue.replace(/'/g, "''")}'`;
 
-  return `UPDATE "${tableName}" SET ${setClauses} WHERE "${primaryKeyColumn}" = ${escapedPkValue}`;
+  return `UPDATE "${tableName}" SET ${setClauses} WHERE "${primaryKeyField}" = ${escapedPkValue}`;
 }
 
 export function SqlEditor({ projectId }: SqlEditorProps) {
   const [sql, setSql] = useState("SELECT * FROM ");
   const [results, setResults] = useState<SpreadsheetData>([]);
   const [originalResults, setOriginalResults] = useState<SpreadsheetData>([]);
-  const [columns, setColumns] = useState<string[]>([]);
+  const [displayColumns, setDisplayColumns] = useState<string[]>([]);
   const [queryMetadata, setQueryMetadata] = useState<QueryMetadata | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Calculate changes between original and current results
-  const changes = useMemo((): RowChange[] => {
-    if (!queryMetadata?.isEditable || !queryMetadata.primaryKeyColumn) {
-      return [];
-    }
+  // Calculate changes between original and current results, grouped by table
+  const changes = useMemo((): RowChanges[] => {
+    if (!queryMetadata?.isEditable) return [];
 
-    const pkIndex = columns.indexOf(queryMetadata.primaryKeyColumn);
-    if (pkIndex === -1) return [];
-
-    const rowChanges: RowChange[] = [];
+    const rowChanges: RowChanges[] = [];
 
     for (let rowIdx = 0; rowIdx < results.length; rowIdx++) {
       const currentRow = results[rowIdx];
       const originalRow = originalResults[rowIdx];
-
       if (!currentRow || !originalRow) continue;
 
-      const pkValue = currentRow[pkIndex]?.value;
-      if (!pkValue) continue;
+      // Group changes by table
+      const tableChangesMap: Record<string, TableChange> = {};
 
-      const changesInRow: Record<string, { oldValue: string; newValue: string }> = {};
-
-      for (let colIdx = 0; colIdx < columns.length; colIdx++) {
-        const col = columns[colIdx];
+      for (let colIdx = 0; colIdx < queryMetadata.columns.length; colIdx++) {
+        const colInfo = queryMetadata.columns[colIdx];
         const currentCell = currentRow[colIdx];
         const originalCell = originalRow[colIdx];
 
-        // Skip readonly columns and primary key
+        // Skip readonly, computed, primary key, or unassigned columns
         if (currentCell?.readOnly) continue;
-        if (col === queryMetadata.primaryKeyColumn) continue;
+        if (colInfo.isComputed || colInfo.isPrimaryKey || !colInfo.tableName) continue;
 
         const currentValue = currentCell?.value ?? "";
         const originalValue = originalCell?.value ?? "";
 
         if (currentValue !== originalValue) {
-          changesInRow[col] = { oldValue: originalValue, newValue: currentValue };
+          // Find the table info
+          const tableInfo = queryMetadata.tables.find((t) => t.name === colInfo.tableName);
+          if (!tableInfo || !tableInfo.primaryKeyColumn) continue;
+
+          // Get primary key value for this table
+          const pkColIdx = queryMetadata.columns.findIndex(
+            (c) => c.resultName === tableInfo.primaryKeyColumn
+          );
+          if (pkColIdx === -1) continue;
+
+          const pkValue = currentRow[pkColIdx]?.value;
+          if (!pkValue) continue;
+
+          // Initialize table change entry if needed
+          const tableKey = `${tableInfo.name}:${pkValue}`;
+          if (!tableChangesMap[tableKey]) {
+            tableChangesMap[tableKey] = {
+              tableName: tableInfo.name,
+              primaryKeyColumn: tableInfo.primaryKeyField,
+              primaryKeyValue: pkValue,
+              changes: {},
+            };
+          }
+
+          tableChangesMap[tableKey].changes[colInfo.fieldName] = {
+            oldValue: originalValue,
+            newValue: currentValue,
+          };
         }
       }
 
-      if (Object.keys(changesInRow).length > 0) {
-        rowChanges.push({
-          rowIndex: rowIdx,
-          primaryKeyValue: pkValue,
-          changes: changesInRow,
-        });
+      const tableChanges = Object.values(tableChangesMap);
+      if (tableChanges.length > 0) {
+        rowChanges.push({ rowIndex: rowIdx, tableChanges });
       }
     }
 
     return rowChanges;
-  }, [results, originalResults, columns, queryMetadata]);
+  }, [results, originalResults, queryMetadata]);
 
   // Count total changes
   const changesSummary = useMemo(() => {
-    const totalChanges = changes.reduce(
-      (sum, row) => sum + Object.keys(row.changes).length,
-      0
-    );
-    const rowCount = changes.length;
-    return { totalChanges, rowCount };
+    let totalChanges = 0;
+    const tablesAffected = new Set<string>();
+
+    for (const row of changes) {
+      for (const tc of row.tableChanges) {
+        totalChanges += Object.keys(tc.changes).length;
+        tablesAffected.add(tc.tableName);
+      }
+    }
+
+    return { totalChanges, rowCount: changes.length, tableCount: tablesAffected.size };
   }, [changes]);
 
   const runQuery = async () => {
@@ -253,33 +379,48 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
 
     try {
       const result = await api.runQuery(projectId, sql, true);
-      const metadata = parseSelectQuery(sql);
 
       if (Array.isArray(result) && result.length > 0) {
-        const cols = Object.keys(result[0]);
-        setColumns(cols);
+        const resultCols = Object.keys(result[0]);
+        setDisplayColumns(resultCols);
 
-        // Find primary key column
-        metadata.primaryKeyColumn = findPrimaryKeyColumn(cols);
-        metadata.columns = cols;
+        // Parse query structure
+        const tables = parseTables(sql);
+        const hasNonEditable = hasNonEditableConstructs(sql);
+        const columns = parseColumns(sql, resultCols, tables);
 
-        // If no primary key found in results, mark as non-editable
-        if (!metadata.primaryKeyColumn || !cols.includes(metadata.primaryKeyColumn)) {
-          metadata.isEditable = false;
-        }
+        // Find primary keys for each table
+        findPrimaryKeys(columns, tables);
+
+        // Determine if query is editable
+        const isEditable =
+          !hasNonEditable &&
+          tables.length > 0 &&
+          tables.some((t) => t.primaryKeyColumn !== null);
+
+        const metadata: QueryMetadata = {
+          tables,
+          columns,
+          isEditable,
+        };
 
         setQueryMetadata(metadata);
 
         // Convert to spreadsheet format with readonly flags
         const data: CellData[][] = result.map((row: Record<string, unknown>) =>
-          cols.map((col) => {
-            const value = row[col];
-            const isComputed = isComputedColumn(col, sql);
-            const isPrimaryKey = col === metadata.primaryKeyColumn;
+          columns.map((colInfo) => {
+            const value = row[colInfo.resultName];
+            const table = tables.find((t) => t.name === colInfo.tableName);
+            const hasTablePk = table?.primaryKeyColumn !== null;
 
             return {
               value: formatCellValue(value),
-              readOnly: !metadata.isEditable || isComputed || isPrimaryKey,
+              readOnly:
+                !isEditable ||
+                colInfo.isComputed ||
+                colInfo.isPrimaryKey ||
+                !colInfo.tableName ||
+                !hasTablePk,
             };
           })
         );
@@ -287,7 +428,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
         setResults(data);
         setOriginalResults(JSON.parse(JSON.stringify(data)));
       } else {
-        setColumns([]);
+        setDisplayColumns([]);
         setResults([]);
         setOriginalResults([]);
         setQueryMetadata(null);
@@ -297,7 +438,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
       setError(typeof err === "string" ? err : String(err));
       setResults([]);
       setOriginalResults([]);
-      setColumns([]);
+      setDisplayColumns([]);
       setQueryMetadata(null);
     } finally {
       setIsLoading(false);
@@ -305,24 +446,24 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
   };
 
   const saveChanges = async () => {
-    if (!queryMetadata?.tableName || !queryMetadata.primaryKeyColumn || changes.length === 0) {
-      return;
-    }
+    if (!queryMetadata?.isEditable || changes.length === 0) return;
 
     setIsSaving(true);
     setError(null);
 
     try {
-      // Generate and execute UPDATE statements
-      for (const change of changes) {
-        const updateSql = generateUpdateSql(
-          queryMetadata.tableName,
-          queryMetadata.primaryKeyColumn,
-          change.primaryKeyValue,
-          change.changes
-        );
+      // Generate and execute UPDATE statements for each table change
+      for (const rowChange of changes) {
+        for (const tableChange of rowChange.tableChanges) {
+          const updateSql = generateUpdateSql(
+            tableChange.tableName,
+            tableChange.primaryKeyColumn,
+            tableChange.primaryKeyValue,
+            tableChange.changes
+          );
 
-        await api.runQuery(projectId, updateSql, false);
+          await api.runQuery(projectId, updateSql, false);
+        }
       }
 
       // Update original results to reflect saved state
@@ -347,6 +488,11 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
   };
 
   const hasChanges = changesSummary.totalChanges > 0;
+
+  // Build editable tables summary
+  const editableTables = queryMetadata?.tables
+    .filter((t) => t.primaryKeyColumn !== null)
+    .map((t) => t.name) || [];
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -373,8 +519,10 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
         </div>
         <p className="text-xs text-muted-foreground mt-2">
           Press Cmd+Enter to run query
-          {queryMetadata?.isEditable && (
-            <span className="ml-2 text-green-500">• Editable</span>
+          {queryMetadata?.isEditable && editableTables.length > 0 && (
+            <span className="ml-2 text-green-500">
+              • Editable: {editableTables.join(", ")}
+            </span>
           )}
           {queryMetadata && !queryMetadata.isEditable && (
             <span className="ml-2 text-yellow-500">• Read-only</span>
@@ -394,7 +542,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
           <div className="sql-results-spreadsheet">
             <Spreadsheet
               data={results}
-              columnLabels={columns}
+              columnLabels={displayColumns}
               onChange={handleDataChange}
             />
           </div>
@@ -412,6 +560,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
           <span className="text-sm text-muted-foreground">
             {changesSummary.totalChanges} change{changesSummary.totalChanges !== 1 ? "s" : ""} to{" "}
             {changesSummary.rowCount} row{changesSummary.rowCount !== 1 ? "s" : ""}
+            {changesSummary.tableCount > 1 && ` across ${changesSummary.tableCount} tables`}
           </span>
           <Button
             onClick={saveChanges}
