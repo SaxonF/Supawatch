@@ -1,4 +1,4 @@
-import { Play, Plus, Save, X } from "lucide-react";
+import { Play, Plus, RefreshCw, Save, Table, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Spreadsheet, { type CellBase, type Matrix } from "react-spreadsheet";
 import * as api from "../api";
@@ -321,7 +321,65 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
   const [editingTabName, setEditingTabName] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isLoadingTables, setIsLoadingTables] = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
+
+  // Fetch database tables using introspection query
+  const fetchTables = useCallback(async () => {
+    setIsLoadingTables(true);
+    try {
+      const result = await api.runQuery(
+        projectId,
+        `SELECT table_name FROM information_schema.tables
+         WHERE table_schema = 'public'
+         AND table_type = 'BASE TABLE'
+         ORDER BY table_name`,
+        true
+      );
+      if (Array.isArray(result)) {
+        const tableNames = result.map((row: { table_name: string }) => row.table_name);
+
+        // Create tabs for each table (preserving any existing custom tabs)
+        const existingTabNames = new Set(tabs.map(t => t.name));
+        const newTabs: Tab[] = tableNames
+          .filter(name => !existingTabNames.has(name))
+          .map(tableName => ({
+            id: generateTabId(),
+            name: tableName,
+            sql: `SELECT * FROM "${tableName}" LIMIT 100`,
+            results: [],
+            originalResults: [],
+            displayColumns: [],
+            queryMetadata: null,
+            error: null,
+          }));
+
+        if (newTabs.length > 0) {
+          setTabs(prev => {
+            // Remove the default "Untitled" tab if it exists and is empty
+            const filtered = prev.filter(t => !(t.name === "Untitled" && t.sql === "SELECT * FROM "));
+            const combined = [...filtered, ...newTabs];
+            // If we removed all tabs, use the new ones
+            if (combined.length === 0) return newTabs;
+            return combined;
+          });
+          // Set active tab to first table if currently on untitled
+          if (tabs.length === 1 && tabs[0].name === "Untitled") {
+            setActiveTabId(newTabs[0]?.id || tabs[0]?.id || "");
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch tables:", err);
+    } finally {
+      setIsLoadingTables(false);
+    }
+  }, [projectId, tabs]);
+
+  // Fetch tables on mount
+  useEffect(() => {
+    fetchTables();
+  }, [projectId]); // Only run when projectId changes, not on every fetchTables change
 
   // Get current tab
   const currentTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
@@ -634,28 +692,45 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
     .map((t) => t.name) || [];
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      {/* Tab Bar */}
-      <div className="shrink-0 flex items-center border-b bg-muted/30">
-        <button
-          onClick={addNewTab}
-          className="shrink-0 p-2 hover:bg-muted/50 transition-colors border-r"
-          title="New tab"
-        >
-          <Plus size={16} className="text-muted-foreground" />
-        </button>
-        <div className="flex-1 flex overflow-x-auto">
+    <div className="flex h-full overflow-hidden">
+      {/* Vertical Tabs Sidebar */}
+      <div className="w-48 shrink-0 flex flex-col border-r bg-muted/20">
+        {/* Sidebar Header */}
+        <div className="shrink-0 flex items-center justify-between px-3 py-2 border-b">
+          <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Tables</span>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={fetchTables}
+              disabled={isLoadingTables}
+              className="p-1 hover:bg-muted rounded transition-colors"
+              title="Refresh tables"
+            >
+              <RefreshCw size={14} className={`text-muted-foreground ${isLoadingTables ? "animate-spin" : ""}`} />
+            </button>
+            <button
+              onClick={addNewTab}
+              className="p-1 hover:bg-muted rounded transition-colors"
+              title="New query tab"
+            >
+              <Plus size={14} className="text-muted-foreground" />
+            </button>
+          </div>
+        </div>
+
+        {/* Tabs List */}
+        <div className="flex-1 overflow-y-auto py-1">
           {tabs.map((tab) => (
             <div
               key={tab.id}
               onClick={() => setActiveTabId(tab.id)}
               onDoubleClick={() => startEditingTab(tab.id)}
-              className={`group flex items-center gap-2 px-3 py-2 border-r cursor-pointer transition-colors min-w-[100px] max-w-[200px] ${
+              className={`group flex items-center gap-2 px-3 py-1.5 cursor-pointer transition-colors ${
                 tab.id === activeTabId
-                  ? "bg-background border-b-2 border-b-primary"
-                  : "hover:bg-muted/50"
+                  ? "bg-primary/10 text-primary border-l-2 border-l-primary"
+                  : "hover:bg-muted/50 border-l-2 border-l-transparent"
               }`}
             >
+              <Table size={14} className="shrink-0 text-muted-foreground" />
               {editingTabId === tab.id ? (
                 <input
                   ref={editInputRef}
@@ -677,89 +752,97 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
                 className="shrink-0 opacity-0 group-hover:opacity-100 hover:bg-muted rounded p-0.5 transition-opacity"
                 title="Close tab"
               >
-                <X size={14} className="text-muted-foreground" />
+                <X size={12} className="text-muted-foreground" />
               </button>
             </div>
           ))}
+          {tabs.length === 0 && (
+            <div className="px-3 py-4 text-center text-muted-foreground text-xs">
+              No tables found
+            </div>
+          )}
         </div>
       </div>
 
-      {/* SQL Input Area */}
-      <div className="shrink-0 p-4 border-b">
-        <div className="flex gap-2">
-          <textarea
-            value={sql}
-            onChange={(e) => setSql(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="SELECT * FROM your_table"
-            className="flex-1 min-h-[100px] p-3 bg-muted rounded-lg border border-input font-mono text-sm resize-y focus:outline-none focus:ring-2 focus:ring-ring"
-            spellCheck={false}
-          />
-          <Button
-            onClick={runQuery}
-            disabled={isLoading || !sql.trim()}
-            className="shrink-0 self-start"
-            title="Run query (Cmd+Enter)"
-          >
-            <Play size={16} className="mr-2" />
-            {isLoading ? "Running..." : "Run"}
-          </Button>
-        </div>
-        <p className="text-xs text-muted-foreground mt-2">
-          Press Cmd+Enter to run query
-          {queryMetadata?.isEditable && editableTables.length > 0 && (
-            <span className="ml-2 text-green-500">
-              • Editable: {editableTables.join(", ")}
-            </span>
-          )}
-          {queryMetadata && !queryMetadata.isEditable && (
-            <span className="ml-2 text-yellow-500">• Read-only</span>
-          )}
-        </p>
-      </div>
-
-      {/* Results Area */}
-      <div className="flex-1 overflow-auto p-4">
-        {error ? (
-          <div className="p-4 bg-destructive/10 rounded-lg border border-destructive/20">
-            <p className="text-destructive text-sm font-mono whitespace-pre-wrap">
-              {error}
-            </p>
-          </div>
-        ) : results.length > 0 ? (
-          <div className="sql-results-spreadsheet">
-            <Spreadsheet
-              data={results}
-              columnLabels={displayColumns}
-              onChange={handleDataChange}
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* SQL Input Area */}
+        <div className="shrink-0 p-4 border-b">
+          <div className="flex gap-2">
+            <textarea
+              value={sql}
+              onChange={(e) => setSql(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="SELECT * FROM your_table"
+              className="flex-1 min-h-[100px] p-3 bg-muted rounded-lg border border-input font-mono text-sm resize-y focus:outline-none focus:ring-2 focus:ring-ring"
+              spellCheck={false}
             />
+            <Button
+              onClick={runQuery}
+              disabled={isLoading || !sql.trim()}
+              className="shrink-0 self-start"
+              title="Run query (Cmd+Enter)"
+            >
+              <Play size={16} className="mr-2" />
+              {isLoading ? "Running..." : "Run"}
+            </Button>
           </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-            <p>No results</p>
-            <p className="text-sm mt-1">Run a query to see results here</p>
+          <p className="text-xs text-muted-foreground mt-2">
+            Press Cmd+Enter to run query
+            {queryMetadata?.isEditable && editableTables.length > 0 && (
+              <span className="ml-2 text-green-500">
+                • Editable: {editableTables.join(", ")}
+              </span>
+            )}
+            {queryMetadata && !queryMetadata.isEditable && (
+              <span className="ml-2 text-yellow-500">• Read-only</span>
+            )}
+          </p>
+        </div>
+
+        {/* Results Area */}
+        <div className="flex-1 overflow-auto p-4">
+          {error ? (
+            <div className="p-4 bg-destructive/10 rounded-lg border border-destructive/20">
+              <p className="text-destructive text-sm font-mono whitespace-pre-wrap">
+                {error}
+              </p>
+            </div>
+          ) : results.length > 0 ? (
+            <div className="sql-results-spreadsheet">
+              <Spreadsheet
+                data={results}
+                columnLabels={displayColumns}
+                onChange={handleDataChange}
+              />
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+              <p>No results</p>
+              <p className="text-sm mt-1">Run a query to see results here</p>
+            </div>
+          )}
+        </div>
+
+        {/* Changes Bar */}
+        {hasChanges && (
+          <div className="shrink-0 px-4 py-3 border-t bg-muted/50 flex items-center justify-between">
+            <span className="text-sm text-muted-foreground">
+              {changesSummary.totalChanges} change{changesSummary.totalChanges !== 1 ? "s" : ""} to{" "}
+              {changesSummary.rowCount} row{changesSummary.rowCount !== 1 ? "s" : ""}
+              {changesSummary.tableCount > 1 && ` across ${changesSummary.tableCount} tables`}
+            </span>
+            <Button
+              onClick={saveChanges}
+              disabled={isSaving}
+              size="sm"
+            >
+              <Save size={14} className="mr-2" />
+              {isSaving ? "Saving..." : "Save"}
+            </Button>
           </div>
         )}
       </div>
-
-      {/* Changes Bar */}
-      {hasChanges && (
-        <div className="shrink-0 px-4 py-3 border-t bg-muted/50 flex items-center justify-between">
-          <span className="text-sm text-muted-foreground">
-            {changesSummary.totalChanges} change{changesSummary.totalChanges !== 1 ? "s" : ""} to{" "}
-            {changesSummary.rowCount} row{changesSummary.rowCount !== 1 ? "s" : ""}
-            {changesSummary.tableCount > 1 && ` across ${changesSummary.tableCount} tables`}
-          </span>
-          <Button
-            onClick={saveChanges}
-            disabled={isSaving}
-            size="sm"
-          >
-            <Save size={14} className="mr-2" />
-            {isSaving ? "Saving..." : "Save"}
-          </Button>
-        </div>
-      )}
     </div>
   );
 }

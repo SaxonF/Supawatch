@@ -7,6 +7,7 @@ import {
   Eye,
   EyeOff,
   Folder,
+  PanelLeft,
   PanelRight,
   RefreshCw,
   Trash2,
@@ -22,9 +23,11 @@ interface ProjectHeaderProps {
   onDelete: () => void;
   showLogsSidebar: boolean;
   onToggleLogsSidebar: () => void;
+  sidebarCollapsed: boolean;
+  onToggleSidebar: () => void;
 }
 
-export function ProjectHeader({ project, onUpdate, onDelete, showLogsSidebar, onToggleLogsSidebar }: ProjectHeaderProps) {
+export function ProjectHeader({ project, onUpdate, onDelete, showLogsSidebar, onToggleLogsSidebar, sidebarCollapsed, onToggleSidebar }: ProjectHeaderProps) {
   const [isWatching, setIsWatching] = useState(project.is_watching);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -170,6 +173,16 @@ export function ProjectHeader({ project, onUpdate, onDelete, showLogsSidebar, on
   return (
     <header className="shrink-0 flex items-center justify-between px-5 py-3 border-b bg-background">
       <div className="flex items-center gap-3">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onToggleSidebar}
+          className="text-muted-foreground hover:text-primary"
+          title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+        >
+          <PanelLeft size={18} />
+        </Button>
+        <div className="w-px h-5 bg-border" />
         <span
           className={`w-2.5 h-2.5 rounded-full ${
             isWatching

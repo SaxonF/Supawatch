@@ -8,6 +8,7 @@ interface SidebarProps {
   onSelectProject: (projectId: string) => void;
   onAddProject: () => void;
   onOpenSettings: () => void;
+  collapsed?: boolean;
 }
 
 export function Sidebar({
@@ -16,9 +17,14 @@ export function Sidebar({
   onSelectProject,
   onAddProject,
   onOpenSettings,
+  collapsed = false,
 }: SidebarProps) {
+  if (collapsed) {
+    return null;
+  }
+
   return (
-    <div className="w-64 h-full flex flex-col bg-sidebar border-r border-sidebar-border">
+    <div className="w-64 h-full flex flex-col bg-sidebar border-r border-sidebar-border shrink-0">
       {/* Header */}
       <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-sidebar-border">
         <div className="flex items-center gap-2">

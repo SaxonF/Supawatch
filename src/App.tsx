@@ -21,6 +21,7 @@ function App() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showLogsSidebar, setShowLogsSidebar] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId) || null;
 
@@ -126,6 +127,7 @@ function App() {
           onSelectProject={setSelectedProjectId}
           onAddProject={() => setShowCreateForm(true)}
           onOpenSettings={() => setShowSettings(true)}
+          collapsed={sidebarCollapsed}
         />
 
         {/* Main Content Area */}
@@ -139,6 +141,8 @@ function App() {
                 onDelete={handleProjectDeleted}
                 showLogsSidebar={showLogsSidebar}
                 onToggleLogsSidebar={() => setShowLogsSidebar(!showLogsSidebar)}
+                sidebarCollapsed={sidebarCollapsed}
+                onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
               />
               <div className="flex-1 flex overflow-hidden">
                 {/* SQL Editor - Main Content */}
