@@ -48,6 +48,30 @@ interface RowChanges {
   tableChanges: TableChange[];
 }
 
+// Schema exclusion list matching backend introspection
+const EXCLUDED_SCHEMAS = [
+  'pg_catalog', 'information_schema', 'auth', 'storage', 'extensions',
+  'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium',
+  'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger',
+  'topology', 'supabase_migrations', 'supabase_functions', 'cron', 'pgbouncer'
+];
+
+// Query to fetch tables matching backend introspection logic
+const TABLES_QUERY = `
+  SELECT table_schema as schema, table_name as name
+  FROM information_schema.tables
+  WHERE table_schema NOT IN (${EXCLUDED_SCHEMAS.map(s => `'${s}'`).join(', ')})
+    AND table_schema NOT LIKE 'pg_toast%'
+    AND table_schema NOT LIKE 'pg_temp%'
+    AND table_type = 'BASE TABLE'
+  ORDER BY table_schema, table_name
+`;
+
+interface TableRef {
+  schema: string;
+  name: string;
+}
+
 interface Tab {
   id: string;
   name: string;
@@ -76,11 +100,37 @@ function createNewTab(): Tab {
   };
 }
 
+// Extract table name, handling quoted identifiers and schema.table format
+function extractTableIdentifier(match: string): string {
+  // Remove surrounding quotes if present
+  if (match.startsWith('"') && match.endsWith('"')) {
+    return match.slice(1, -1);
+  }
+  return match;
+}
+
+// Parse a potentially schema-qualified table reference (schema.table or just table)
+function parseTableReference(ref: string): string {
+  // Handle schema.table format - extract just the table name
+  const parts = ref.split('.');
+  if (parts.length === 2) {
+    // Return just the table name part, handling quoted identifiers
+    return extractTableIdentifier(parts[1]);
+  }
+  return extractTableIdentifier(ref);
+}
+
+// Regex pattern for table identifiers (quoted or unquoted, with optional schema)
+// Matches: table, schema.table, "table", "schema"."table", schema."table"
+const TABLE_IDENTIFIER = `(?:"[^"]+"(?:\\."[^"]+")?|[a-z_][a-z0-9_]*(?:\\.[a-z_][a-z0-9_]*)?(?:\\."[^"]+")?|"[^"]+"\\.[a-z_][a-z0-9_]*)`;
+const SIMPLE_IDENTIFIER = `(?:"[^"]+"|[a-z_][a-z0-9_]*)`;
+
 // Extract the primary table name from a SQL query
 function extractPrimaryTableName(sql: string): string | null {
   const normalized = sql.replace(/\s+/g, " ").trim();
-  const fromMatch = normalized.match(/\bfrom\s+([a-z_][a-z0-9_]*)/i);
-  return fromMatch ? fromMatch[1] : null;
+  const fromRegex = new RegExp(`\\bfrom\\s+(${TABLE_IDENTIFIER})`, 'i');
+  const fromMatch = normalized.match(fromRegex);
+  return fromMatch ? parseTableReference(fromMatch[1]) : null;
 }
 
 // Parse tables from FROM and JOIN clauses
@@ -88,24 +138,25 @@ function parseTables(sql: string): TableInfo[] {
   const normalized = sql.replace(/\s+/g, " ").trim();
   const tables: TableInfo[] = [];
 
-  // Match FROM table [alias]
-  const fromMatch = normalized.match(/\bfrom\s+([a-z_][a-z0-9_]*)(?:\s+(?:as\s+)?([a-z_][a-z0-9_]*))?/i);
+  // Match FROM table [alias] - supports quoted identifiers and schema.table
+  const fromRegex = new RegExp(`\\bfrom\\s+(${TABLE_IDENTIFIER})(?:\\s+(?:as\\s+)?(${SIMPLE_IDENTIFIER}))?`, 'i');
+  const fromMatch = normalized.match(fromRegex);
   if (fromMatch) {
     tables.push({
-      name: fromMatch[1].toLowerCase(),
-      alias: fromMatch[2]?.toLowerCase() || null,
+      name: parseTableReference(fromMatch[1]).toLowerCase(),
+      alias: fromMatch[2] ? extractTableIdentifier(fromMatch[2]).toLowerCase() : null,
       primaryKeyColumn: null,
       primaryKeyField: "id",
     });
   }
 
-  // Match JOIN table [alias]
-  const joinRegex = /\bjoin\s+([a-z_][a-z0-9_]*)(?:\s+(?:as\s+)?([a-z_][a-z0-9_]*))?/gi;
+  // Match JOIN table [alias] - supports quoted identifiers and schema.table
+  const joinRegex = new RegExp(`\\bjoin\\s+(${TABLE_IDENTIFIER})(?:\\s+(?:as\\s+)?(${SIMPLE_IDENTIFIER}))?`, 'gi');
   let joinMatch;
   while ((joinMatch = joinRegex.exec(normalized)) !== null) {
     tables.push({
-      name: joinMatch[1].toLowerCase(),
-      alias: joinMatch[2]?.toLowerCase() || null,
+      name: parseTableReference(joinMatch[1]).toLowerCase(),
+      alias: joinMatch[2] ? extractTableIdentifier(joinMatch[2]).toLowerCase() : null,
       primaryKeyColumn: null,
       primaryKeyField: "id",
     });
@@ -324,29 +375,35 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
   const [isLoadingTables, setIsLoadingTables] = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
 
-  // Fetch database tables using introspection query
+  // Fetch database tables using introspection query (matches backend logic)
   const fetchTables = useCallback(async () => {
     setIsLoadingTables(true);
     try {
-      const result = await api.runQuery(
-        projectId,
-        `SELECT table_name FROM information_schema.tables
-         WHERE table_schema = 'public'
-         AND table_type = 'BASE TABLE'
-         ORDER BY table_name`,
-        true
-      );
+      const result = await api.runQuery(projectId, TABLES_QUERY, true);
       if (Array.isArray(result)) {
-        const tableNames = result.map((row: { table_name: string }) => row.table_name);
+        const tableRefs: TableRef[] = result.map((row: { schema: string; name: string }) => ({
+          schema: row.schema,
+          name: row.name,
+        }));
 
-        // Create tabs for each table (preserving any existing custom tabs)
+        // Create display name for tab - use schema prefix for non-public schemas
+        const getDisplayName = (t: TableRef) =>
+          t.schema === 'public' ? t.name : `${t.schema}.${t.name}`;
+
+        // Create SQL query - always use schema-qualified name for clarity
+        const getSqlQuery = (t: TableRef) =>
+          t.schema === 'public'
+            ? `SELECT * FROM ${t.name} LIMIT 100`
+            : `SELECT * FROM ${t.schema}.${t.name} LIMIT 100`;
+
+        // Only add tabs for tables that don't already exist
         const existingTabNames = new Set(tabs.map(t => t.name));
-        const newTabs: Tab[] = tableNames
-          .filter(name => !existingTabNames.has(name))
-          .map(tableName => ({
+        const newTabs: Tab[] = tableRefs
+          .filter(t => !existingTabNames.has(getDisplayName(t)))
+          .map(tableRef => ({
             id: generateTabId(),
-            name: tableName,
-            sql: `SELECT * FROM "${tableName}" LIMIT 100`,
+            name: getDisplayName(tableRef),
+            sql: getSqlQuery(tableRef),
             results: [],
             originalResults: [],
             displayColumns: [],
@@ -355,18 +412,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
           }));
 
         if (newTabs.length > 0) {
-          setTabs(prev => {
-            // Remove the default "Untitled" tab if it exists and is empty
-            const filtered = prev.filter(t => !(t.name === "Untitled" && t.sql === "SELECT * FROM "));
-            const combined = [...filtered, ...newTabs];
-            // If we removed all tabs, use the new ones
-            if (combined.length === 0) return newTabs;
-            return combined;
-          });
-          // Set active tab to first table if currently on untitled
-          if (tabs.length === 1 && tabs[0].name === "Untitled") {
-            setActiveTabId(newTabs[0]?.id || tabs[0]?.id || "");
-          }
+          setTabs(prev => [...prev, ...newTabs]);
         }
       }
     } catch (err) {
