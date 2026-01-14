@@ -7,6 +7,7 @@ import {
   Eye,
   EyeOff,
   Folder,
+  PanelRight,
   RefreshCw,
   Trash2,
 } from "lucide-react";
@@ -19,9 +20,11 @@ interface ProjectHeaderProps {
   project: Project;
   onUpdate: () => void;
   onDelete: () => void;
+  showLogsSidebar: boolean;
+  onToggleLogsSidebar: () => void;
 }
 
-export function ProjectHeader({ project, onUpdate, onDelete }: ProjectHeaderProps) {
+export function ProjectHeader({ project, onUpdate, onDelete, showLogsSidebar, onToggleLogsSidebar }: ProjectHeaderProps) {
   const [isWatching, setIsWatching] = useState(project.is_watching);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -260,6 +263,22 @@ export function ProjectHeader({ project, onUpdate, onDelete }: ProjectHeaderProp
           title="Delete project"
         >
           <Trash2 size={18} />
+        </Button>
+
+        <div className="w-px h-5 bg-border mx-1" />
+
+        <Button
+          variant="ghost"
+          size="icon"
+          className={
+            showLogsSidebar
+              ? "text-primary hover:text-primary/80"
+              : "text-muted-foreground hover:text-primary"
+          }
+          onClick={onToggleLogsSidebar}
+          title={showLogsSidebar ? "Hide logs" : "Show logs"}
+        >
+          <PanelRight size={18} />
         </Button>
       </div>
     </header>

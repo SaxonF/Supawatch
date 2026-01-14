@@ -9,6 +9,7 @@ import { ProjectHeader } from "./components/ProjectHeader";
 import { ProjectLogs } from "./components/ProjectLogs";
 import { Settings } from "./components/Settings";
 import { Sidebar } from "./components/Sidebar";
+import { SqlEditor } from "./components/SqlEditor";
 import type { FileChange, Project } from "./types";
 
 import "./App.css";
@@ -19,6 +20,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showLogsSidebar, setShowLogsSidebar] = useState(false);
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId) || null;
 
@@ -135,19 +137,33 @@ function App() {
                 project={selectedProject}
                 onUpdate={loadProjects}
                 onDelete={handleProjectDeleted}
+                showLogsSidebar={showLogsSidebar}
+                onToggleLogsSidebar={() => setShowLogsSidebar(!showLogsSidebar)}
               />
-              {selectedProject.supabase_project_id ? (
-                <ProjectLogs projectId={selectedProject.id} />
-              ) : (
-                <div className="flex-1 flex items-center justify-center text-muted-foreground">
-                  <div className="text-center">
-                    <p>Project not linked to Supabase</p>
-                    <p className="text-sm mt-1">
-                      Logs will appear once the project is linked
-                    </p>
-                  </div>
+              <div className="flex-1 flex overflow-hidden">
+                {/* SQL Editor - Main Content */}
+                <div className="flex-1 overflow-hidden">
+                  {selectedProject.supabase_project_id ? (
+                    <SqlEditor projectId={selectedProject.id} />
+                  ) : (
+                    <div className="flex-1 flex items-center justify-center text-muted-foreground h-full">
+                      <div className="text-center">
+                        <p>Project not linked to Supabase</p>
+                        <p className="text-sm mt-1">
+                          SQL editor will be available once the project is linked
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
+
+                {/* Logs Sidebar - Right */}
+                {showLogsSidebar && selectedProject.supabase_project_id && (
+                  <div className="w-[400px] border-l bg-background flex flex-col overflow-hidden shrink-0">
+                    <ProjectLogs projectId={selectedProject.id} />
+                  </div>
+                )}
+              </div>
             </>
           ) : (
             <div className="flex-1 flex items-center justify-center text-muted-foreground">
