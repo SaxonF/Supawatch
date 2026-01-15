@@ -1,4 +1,4 @@
-import { Play, Plus, RefreshCw, Save, Table, X } from "lucide-react";
+import { ChevronDown, ChevronRight, FileText, Play, Plus, RefreshCw, Save, Table, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Spreadsheet, { type CellBase, type Matrix } from "react-spreadsheet";
 import * as api from "../api";
@@ -81,6 +81,7 @@ interface Tab {
   displayColumns: string[];
   queryMetadata: QueryMetadata | null;
   error: string | null;
+  isTableTab: boolean;
 }
 
 function generateTabId(): string {
@@ -97,6 +98,7 @@ function createNewTab(): Tab {
     displayColumns: [],
     queryMetadata: null,
     error: null,
+    isTableTab: false,
   };
 }
 
@@ -373,6 +375,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingTables, setIsLoadingTables] = useState(false);
+  const [tablesCollapsed, setTablesCollapsed] = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
 
   // Fetch database tables using introspection query (matches backend logic)
@@ -409,6 +412,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
             displayColumns: [],
             queryMetadata: null,
             error: null,
+            isTableTab: true,
           }));
 
         if (newTabs.length > 0) {
@@ -429,6 +433,10 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
 
   // Get current tab
   const currentTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
+
+  // Split tabs into table tabs and other tabs
+  const tableTabs = useMemo(() => tabs.filter(t => t.isTableTab), [tabs]);
+  const otherTabs = useMemo(() => tabs.filter(t => !t.isTableTab), [tabs]);
 
   // Derived state from current tab
   const sql = currentTab?.sql || "";
@@ -737,76 +745,116 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
     .filter((t) => t.primaryKeyColumn !== null)
     .map((t) => t.name) || [];
 
+  // Helper to render a tab item
+  const renderTabItem = (tab: Tab, icon: React.ReactNode) => (
+    <div
+      key={tab.id}
+      onClick={() => setActiveTabId(tab.id)}
+      onDoubleClick={() => startEditingTab(tab.id)}
+      className={`group flex items-center gap-2 px-3 py-1.5 cursor-pointer transition-colors ${
+        tab.id === activeTabId
+          ? "bg-primary/10 text-primary border-l-2 border-l-primary"
+          : "hover:bg-muted/50 border-l-2 border-l-transparent"
+      }`}
+    >
+      {icon}
+      {editingTabId === tab.id ? (
+        <input
+          ref={editInputRef}
+          type="text"
+          value={editingTabName}
+          onChange={(e) => setEditingTabName(e.target.value)}
+          onBlur={finishEditingTab}
+          onKeyDown={handleTabKeyDown}
+          className="flex-1 bg-transparent border-none outline-none text-sm min-w-0"
+          onClick={(e) => e.stopPropagation()}
+        />
+      ) : (
+        <span className="flex-1 text-sm truncate" title={tab.name}>
+          {tab.name}
+        </span>
+      )}
+      <button
+        onClick={(e) => closeTab(tab.id, e)}
+        className="shrink-0 opacity-0 group-hover:opacity-100 hover:bg-muted rounded p-0.5 transition-opacity"
+        title="Close tab"
+      >
+        <X size={12} className="text-muted-foreground" />
+      </button>
+    </div>
+  );
+
   return (
     <div className="flex h-full overflow-hidden">
       {/* Vertical Tabs Sidebar */}
       <div className="w-48 shrink-0 flex flex-col border-r bg-muted/20">
-        {/* Sidebar Header */}
-        <div className="shrink-0 flex items-center justify-between px-3 py-2 border-b">
-          <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Tables</span>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={fetchTables}
-              disabled={isLoadingTables}
-              className="p-1 hover:bg-muted rounded transition-colors"
-              title="Refresh tables"
-            >
-              <RefreshCw size={14} className={`text-muted-foreground ${isLoadingTables ? "animate-spin" : ""}`} />
-            </button>
-            <button
-              onClick={addNewTab}
-              className="p-1 hover:bg-muted rounded transition-colors"
-              title="New query tab"
-            >
-              <Plus size={14} className="text-muted-foreground" />
-            </button>
-          </div>
-        </div>
-
-        {/* Tabs List */}
-        <div className="flex-1 overflow-y-auto py-1">
-          {tabs.map((tab) => (
+        {/* Scrollable content */}
+        <div className="flex-1 overflow-y-auto">
+          {/* Tables Group */}
+          <div className="border-b">
+            {/* Tables Header - Clickable to collapse */}
             <div
-              key={tab.id}
-              onClick={() => setActiveTabId(tab.id)}
-              onDoubleClick={() => startEditingTab(tab.id)}
-              className={`group flex items-center gap-2 px-3 py-1.5 cursor-pointer transition-colors ${
-                tab.id === activeTabId
-                  ? "bg-primary/10 text-primary border-l-2 border-l-primary"
-                  : "hover:bg-muted/50 border-l-2 border-l-transparent"
-              }`}
+              onClick={() => setTablesCollapsed(!tablesCollapsed)}
+              className="shrink-0 flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-muted/30 transition-colors"
             >
-              <Table size={14} className="shrink-0 text-muted-foreground" />
-              {editingTabId === tab.id ? (
-                <input
-                  ref={editInputRef}
-                  type="text"
-                  value={editingTabName}
-                  onChange={(e) => setEditingTabName(e.target.value)}
-                  onBlur={finishEditingTab}
-                  onKeyDown={handleTabKeyDown}
-                  className="flex-1 bg-transparent border-none outline-none text-sm min-w-0"
-                  onClick={(e) => e.stopPropagation()}
-                />
-              ) : (
-                <span className="flex-1 text-sm truncate" title={tab.name}>
-                  {tab.name}
-                </span>
-              )}
+              <div className="flex items-center gap-1">
+                {tablesCollapsed ? (
+                  <ChevronRight size={14} className="text-muted-foreground" />
+                ) : (
+                  <ChevronDown size={14} className="text-muted-foreground" />
+                )}
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Tables</span>
+              </div>
               <button
-                onClick={(e) => closeTab(tab.id, e)}
-                className="shrink-0 opacity-0 group-hover:opacity-100 hover:bg-muted rounded p-0.5 transition-opacity"
-                title="Close tab"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  fetchTables();
+                }}
+                disabled={isLoadingTables}
+                className="p-1 hover:bg-muted rounded transition-colors"
+                title="Refresh tables"
               >
-                <X size={12} className="text-muted-foreground" />
+                <RefreshCw size={14} className={`text-muted-foreground ${isLoadingTables ? "animate-spin" : ""}`} />
               </button>
             </div>
-          ))}
-          {tabs.length === 0 && (
-            <div className="px-3 py-4 text-center text-muted-foreground text-xs">
-              No tables found
+
+            {/* Tables List */}
+            {!tablesCollapsed && (
+              <div className="py-1">
+                {tableTabs.map((tab) => renderTabItem(tab, <Table size={14} className="shrink-0 text-muted-foreground" />))}
+                {tableTabs.length === 0 && (
+                  <div className="px-3 py-2 text-center text-muted-foreground text-xs">
+                    No tables found
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Other Group */}
+          <div>
+            {/* Other Header */}
+            <div className="shrink-0 flex items-center justify-between px-3 py-2">
+              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-[18px]">Other</span>
+              <button
+                onClick={addNewTab}
+                className="p-1 hover:bg-muted rounded transition-colors"
+                title="New query tab"
+              >
+                <Plus size={14} className="text-muted-foreground" />
+              </button>
             </div>
-          )}
+
+            {/* Other Tabs List */}
+            <div className="py-1">
+              {otherTabs.map((tab) => renderTabItem(tab, <FileText size={14} className="shrink-0 text-muted-foreground" />))}
+              {otherTabs.length === 0 && (
+                <div className="px-3 py-2 text-center text-muted-foreground text-xs">
+                  No queries yet
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 

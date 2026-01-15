@@ -196,3 +196,8 @@ export async function copyTemplate(
 ): Promise<void> {
   return invoke("copy_template", { templateName, targetPath });
 }
+
+// Seed API
+export async function runSeeds(projectId: string): Promise<string> {
+  return invoke("run_seeds", { projectId });
+}

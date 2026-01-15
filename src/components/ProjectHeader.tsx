@@ -10,6 +10,7 @@ import {
   PanelLeft,
   PanelRight,
   RefreshCw,
+  Sprout,
   Trash2,
 } from "lucide-react";
 import { useState } from "react";
@@ -170,6 +171,25 @@ export function ProjectHeader({ project, onUpdate, onDelete, showLogsSidebar, on
     }
   };
 
+  const handleRunSeeds = async () => {
+    setIsLoading(true);
+    try {
+      const result = await api.runSeeds(project.id);
+      await ask(result, {
+        title: "Seeds Executed",
+        kind: "info",
+      });
+    } catch (err) {
+      console.error("Failed to run seeds:", err);
+      await ask("Failed to run seeds: " + String(err), {
+        title: "Error",
+        kind: "error",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <header className="shrink-0 flex items-center justify-between px-5 py-3 border-b bg-background">
       <div className="flex items-center gap-3">
@@ -243,6 +263,17 @@ export function ProjectHeader({ project, onUpdate, onDelete, showLogsSidebar, on
           title="Push to remote"
         >
           <CloudUpload size={18} />
+        </Button>
+
+        <Button
+          variant="ghost"
+          size="icon"
+          className="text-muted-foreground hover:text-primary"
+          onClick={handleRunSeeds}
+          disabled={isLoading}
+          title="Run seed files"
+        >
+          <Sprout size={18} />
         </Button>
 
         <Button

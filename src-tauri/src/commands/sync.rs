@@ -515,6 +515,159 @@ pub async fn get_remote_schema(
     Ok(schema)
 }
 
+#[tauri::command]
+pub async fn run_seeds(
+    app_handle: AppHandle,
+    project_id: String,
+) -> Result<String, String> {
+    update_icon(&app_handle, true);
+    let result = run_seeds_internal(&app_handle, project_id).await;
+    update_icon(&app_handle, false);
+    result
+}
+
+async fn run_seeds_internal(
+    app_handle: &AppHandle,
+    project_id: String,
+) -> Result<String, String> {
+    let state = app_handle.state::<Arc<AppState>>();
+    let uuid = Uuid::parse_str(&project_id).map_err(|e| e.to_string())?;
+
+    let project = state.get_project(uuid).await.map_err(|e| e.to_string())?;
+    let project_ref = project
+        .supabase_project_ref
+        .clone()
+        .ok_or("Project not linked to Supabase")?;
+
+    let api = state.get_api_client().await.map_err(|e| e.to_string())?;
+
+    let log = LogEntry::info(Some(uuid), LogSource::System, "Running seed files...".to_string());
+    state.add_log(log.clone()).await;
+    app_handle.emit("log", &log).ok();
+
+    // Find seed directory
+    let seed_dir = Path::new(&project.local_path).join("supabase").join("seed");
+
+    if !seed_dir.exists() {
+        let log = LogEntry::warning(
+            Some(uuid),
+            LogSource::System,
+            "No seed directory found at supabase/seed".to_string(),
+        );
+        state.add_log(log.clone()).await;
+        app_handle.emit("log", &log).ok();
+        return Ok("No seed directory found".to_string());
+    }
+
+    // Collect all .sql files in the seed directory
+    let mut seed_files: Vec<std::path::PathBuf> = Vec::new();
+    let mut entries = tokio::fs::read_dir(&seed_dir).await.map_err(|e| e.to_string())?;
+
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if path.is_file() && path.extension().map_or(false, |ext| ext == "sql") {
+            seed_files.push(path);
+        }
+    }
+
+    if seed_files.is_empty() {
+        let log = LogEntry::warning(
+            Some(uuid),
+            LogSource::System,
+            "No .sql files found in seed directory".to_string(),
+        );
+        state.add_log(log.clone()).await;
+        app_handle.emit("log", &log).ok();
+        return Ok("No seed files found".to_string());
+    }
+
+    // Sort files alphabetically by filename
+    seed_files.sort_by(|a, b| {
+        a.file_name()
+            .unwrap_or_default()
+            .cmp(b.file_name().unwrap_or_default())
+    });
+
+    let total_files = seed_files.len();
+    let mut executed_count = 0;
+
+    // Execute each seed file in order
+    for (index, seed_path) in seed_files.iter().enumerate() {
+        let filename = seed_path.file_name().unwrap_or_default().to_string_lossy();
+
+        let log = LogEntry::info(
+            Some(uuid),
+            LogSource::System,
+            format!("Running seed ({}/{}) {}...", index + 1, total_files, filename),
+        );
+        state.add_log(log.clone()).await;
+        app_handle.emit("log", &log).ok();
+
+        // Read the SQL file
+        let sql = match tokio::fs::read_to_string(&seed_path).await {
+            Ok(content) => content,
+            Err(e) => {
+                let log = LogEntry::error(
+                    Some(uuid),
+                    LogSource::System,
+                    format!("Failed to read {}: {}", filename, e),
+                );
+                state.add_log(log.clone()).await;
+                app_handle.emit("log", &log).ok();
+                continue;
+            }
+        };
+
+        if sql.trim().is_empty() {
+            let log = LogEntry::warning(
+                Some(uuid),
+                LogSource::System,
+                format!("Skipping empty seed file: {}", filename),
+            );
+            state.add_log(log.clone()).await;
+            app_handle.emit("log", &log).ok();
+            continue;
+        }
+
+        // Execute the SQL
+        match api.run_query(&project_ref, &sql, false).await {
+            Ok(result) => {
+                if let Some(err) = result.error {
+                    let log = LogEntry::error(
+                        Some(uuid),
+                        LogSource::System,
+                        format!("Seed {} failed: {}", filename, err),
+                    );
+                    state.add_log(log.clone()).await;
+                    app_handle.emit("log", &log).ok();
+                    return Err(format!("Seed {} failed: {}", filename, err));
+                }
+                executed_count += 1;
+            }
+            Err(e) => {
+                let log = LogEntry::error(
+                    Some(uuid),
+                    LogSource::System,
+                    format!("Seed {} failed: {}", filename, e),
+                );
+                state.add_log(log.clone()).await;
+                app_handle.emit("log", &log).ok();
+                return Err(format!("Seed {} failed: {}", filename, e));
+            }
+        }
+    }
+
+    let log = LogEntry::success(
+        Some(uuid),
+        LogSource::System,
+        format!("Successfully executed {} seed file(s)", executed_count),
+    );
+    state.add_log(log.clone()).await;
+    app_handle.emit("log", &log).ok();
+
+    Ok(format!("Executed {} seed file(s)", executed_count))
+}
+
 /// Helper to generate TypeScript types for a project.
 /// This is called after pull and push operations.
 async fn generate_typescript_for_project(
