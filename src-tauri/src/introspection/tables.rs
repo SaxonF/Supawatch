@@ -7,7 +7,7 @@ use crate::supabase_api::SupabaseApi;
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use super::helpers::{extract_index_expressions, extract_trigger_when_clause, parse_pg_array, parse_pg_oid_array, parse_policy_cmd};
+use super::helpers::{extract_index_expressions, extract_trigger_when_clause, extract_update_of_columns, parse_pg_array, parse_pg_oid_array, parse_policy_cmd};
 
 /// The bulk SQL query to fetch all table information in a single call.
 pub const TABLES_BULK_QUERY: &str = r#"
@@ -500,7 +500,17 @@ pub fn parse_bulk_response(data: &serde_json::Value) -> Result<HashMap<String, T
             events.push("INSERT".to_string());
         }
         if is_update {
-            events.push("UPDATE".to_string());
+            // Check for UPDATE OF columns in trigger_def
+            if let Some(cols) = tr.trigger_def.as_ref().and_then(|d| extract_update_of_columns(d)) {
+                // Format: "UPDATE OF \"col1\", \"col2\""
+                let cols_formatted = cols.iter()
+                    .map(|c| format!("\"{}\"" , c))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                events.push(format!("UPDATE OF {}", cols_formatted));
+            } else {
+                events.push("UPDATE".to_string());
+            }
         }
         if is_delete {
             events.push("DELETE".to_string());

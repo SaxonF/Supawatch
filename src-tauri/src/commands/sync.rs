@@ -723,3 +723,44 @@ async fn generate_typescript_for_project(
         }
     }
 }
+
+#[derive(serde::Serialize)]
+pub struct DiffResponse {
+    pub summary: String,
+    pub migration_sql: String,
+    pub is_destructive: bool,
+}
+
+#[tauri::command]
+pub async fn get_project_diff(
+    app_handle: AppHandle,
+    project_id: String,
+) -> Result<DiffResponse, String> {
+    let state = app_handle.state::<Arc<AppState>>();
+    let uuid = Uuid::parse_str(&project_id).map_err(|e| e.to_string())?;
+
+    let project = state.get_project(uuid).await.map_err(|e| e.to_string())?;
+    let project_ref = project
+        .supabase_project_ref
+        .clone()
+        .ok_or("Project not linked to Supabase")?;
+
+    let api = state.get_api_client().await.map_err(|e| e.to_string())?;
+
+    // Find schema path
+    let schema_path = sync::find_schema_path(Path::new(&project.local_path))
+        .ok_or("Schema file not found (checked supabase/schemas/schema.sql and supabase/schema.sql)")?;
+
+    // Compute diff
+    let diff_result = sync::compute_schema_diff(&api, &project_ref, &schema_path).await?;
+    let diff = diff_result.diff;
+    let summary = diff.summarize();
+    let is_destructive = diff.is_destructive();
+    let migration_sql = diff_result.migration_sql;
+
+    Ok(DiffResponse {
+        summary,
+        migration_sql,
+        is_destructive,
+    })
+}

@@ -1011,4 +1011,31 @@ CREATE TABLE posts (
         assert_eq!(fk.on_delete, "CASCADE");
         assert_eq!(fk.on_update, "NO ACTION");
     }
+
+    #[test]
+    fn test_parse_update_of_column_trigger() {
+        let sql = r#"
+CREATE TABLE character_skills (id uuid, experience integer);
+CREATE FUNCTION check_skill_level_up() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+CREATE TRIGGER "on_skill_experience_change" BEFORE UPDATE OF "experience" ON "public"."character_skills" FOR EACH ROW WHEN ((NEW.experience > OLD.experience)) EXECUTE FUNCTION check_skill_level_up();
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let table = schema.tables.get("\"public\".\"character_skills\"").expect("Table not found");
+        
+        assert_eq!(table.triggers.len(), 1);
+        let trigger = &table.triggers[0];
+        
+        assert_eq!(trigger.name, "on_skill_experience_change");
+        assert_eq!(trigger.timing, "BEFORE");
+        assert_eq!(trigger.orientation, "ROW");
+        
+        // Print the exact event format for debugging
+        println!("Events from parsing: {:?}", trigger.events);
+        println!("When clause from parsing: {:?}", trigger.when_clause);
+        
+        // Verify the event includes column specification
+        assert_eq!(trigger.events.len(), 1);
+        // This shows us the exact format sqlparser produces
+        assert!(trigger.events[0].to_uppercase().contains("UPDATE"));
+    }
 }

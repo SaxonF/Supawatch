@@ -130,6 +130,40 @@ pub fn extract_trigger_when_clause(trigger_def: &str) -> Option<String> {
     None
 }
 
+/// Extract UPDATE OF columns from trigger definition if present.
+/// Returns Some(vec![col1, col2]) for "UPDATE OF col1, col2" or None for plain "UPDATE".
+pub fn extract_update_of_columns(trigger_def: &str) -> Option<Vec<String>> {
+    let upper = trigger_def.to_uppercase();
+    
+    // Look for "UPDATE OF " pattern
+    if let Some(update_of_idx) = upper.find("UPDATE OF ") {
+        let after_update_of = &trigger_def[update_of_idx + 10..]; // Skip "UPDATE OF "
+        
+        // Find where the columns end - before " ON " which follows the column list
+        let end_idx = upper[update_of_idx + 10..].find(" ON ")
+            .unwrap_or(after_update_of.len());
+        
+        let columns_str = &after_update_of[..end_idx];
+        
+        // Parse comma-separated column names, handling quoted identifiers
+        let columns: Vec<String> = columns_str
+            .split(',')
+            .map(|s| {
+                let trimmed = s.trim();
+                // Strip quotes if present
+                trimmed.trim_matches('"').to_string()
+            })
+            .filter(|s| !s.is_empty())
+            .collect();
+        
+        if !columns.is_empty() {
+            return Some(columns);
+        }
+    }
+    
+    None
+}
+
 /// Extract expressions from index definition.
 pub fn extract_index_expressions(index_def: &str) -> Vec<String> {
     let mut expressions = vec![];

@@ -1,4 +1,14 @@
-import { ChevronDown, ChevronRight, FileText, Play, Plus, RefreshCw, Save, Table, X } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  FileText,
+  Play,
+  Plus,
+  RefreshCw,
+  Save,
+  Table,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Spreadsheet, { type CellBase, type Matrix } from "react-spreadsheet";
 import * as api from "../api";
@@ -50,17 +60,36 @@ interface RowChanges {
 
 // Schema exclusion list matching backend introspection
 const EXCLUDED_SCHEMAS = [
-  'pg_catalog', 'information_schema', 'auth', 'storage', 'extensions',
-  'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium',
-  'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger',
-  'topology', 'supabase_migrations', 'supabase_functions', 'cron', 'pgbouncer'
+  "pg_catalog",
+  "information_schema",
+  "auth",
+  "storage",
+  "extensions",
+  "realtime",
+  "graphql",
+  "graphql_public",
+  "vault",
+  "pgsodium",
+  "pgsodium_masks",
+  "supa_audit",
+  "net",
+  "pgtle",
+  "repack",
+  "tiger",
+  "topology",
+  "supabase_migrations",
+  "supabase_functions",
+  "cron",
+  "pgbouncer",
 ];
 
 // Query to fetch tables matching backend introspection logic
 const TABLES_QUERY = `
   SELECT table_schema as schema, table_name as name
   FROM information_schema.tables
-  WHERE table_schema NOT IN (${EXCLUDED_SCHEMAS.map(s => `'${s}'`).join(', ')})
+  WHERE table_schema NOT IN (${EXCLUDED_SCHEMAS.map((s) => `'${s}'`).join(
+    ", "
+  )})
     AND table_schema NOT LIKE 'pg_toast%'
     AND table_schema NOT LIKE 'pg_temp%'
     AND table_type = 'BASE TABLE'
@@ -114,7 +143,7 @@ function extractTableIdentifier(match: string): string {
 // Parse a potentially schema-qualified table reference (schema.table or just table)
 function parseTableReference(ref: string): string {
   // Handle schema.table format - extract just the table name
-  const parts = ref.split('.');
+  const parts = ref.split(".");
   if (parts.length === 2) {
     // Return just the table name part, handling quoted identifiers
     return extractTableIdentifier(parts[1]);
@@ -130,7 +159,7 @@ const SIMPLE_IDENTIFIER = `(?:"[^"]+"|[a-z_][a-z0-9_]*)`;
 // Extract the primary table name from a SQL query
 function extractPrimaryTableName(sql: string): string | null {
   const normalized = sql.replace(/\s+/g, " ").trim();
-  const fromRegex = new RegExp(`\\bfrom\\s+(${TABLE_IDENTIFIER})`, 'i');
+  const fromRegex = new RegExp(`\\bfrom\\s+(${TABLE_IDENTIFIER})`, "i");
   const fromMatch = normalized.match(fromRegex);
   return fromMatch ? parseTableReference(fromMatch[1]) : null;
 }
@@ -141,24 +170,34 @@ function parseTables(sql: string): TableInfo[] {
   const tables: TableInfo[] = [];
 
   // Match FROM table [alias] - supports quoted identifiers and schema.table
-  const fromRegex = new RegExp(`\\bfrom\\s+(${TABLE_IDENTIFIER})(?:\\s+(?:as\\s+)?(${SIMPLE_IDENTIFIER}))?`, 'i');
+  const fromRegex = new RegExp(
+    `\\bfrom\\s+(${TABLE_IDENTIFIER})(?:\\s+(?:as\\s+)?(${SIMPLE_IDENTIFIER}))?`,
+    "i"
+  );
   const fromMatch = normalized.match(fromRegex);
   if (fromMatch) {
     tables.push({
       name: parseTableReference(fromMatch[1]).toLowerCase(),
-      alias: fromMatch[2] ? extractTableIdentifier(fromMatch[2]).toLowerCase() : null,
+      alias: fromMatch[2]
+        ? extractTableIdentifier(fromMatch[2]).toLowerCase()
+        : null,
       primaryKeyColumn: null,
       primaryKeyField: "id",
     });
   }
 
   // Match JOIN table [alias] - supports quoted identifiers and schema.table
-  const joinRegex = new RegExp(`\\bjoin\\s+(${TABLE_IDENTIFIER})(?:\\s+(?:as\\s+)?(${SIMPLE_IDENTIFIER}))?`, 'gi');
+  const joinRegex = new RegExp(
+    `\\bjoin\\s+(${TABLE_IDENTIFIER})(?:\\s+(?:as\\s+)?(${SIMPLE_IDENTIFIER}))?`,
+    "gi"
+  );
   let joinMatch;
   while ((joinMatch = joinRegex.exec(normalized)) !== null) {
     tables.push({
       name: parseTableReference(joinMatch[1]).toLowerCase(),
-      alias: joinMatch[2] ? extractTableIdentifier(joinMatch[2]).toLowerCase() : null,
+      alias: joinMatch[2]
+        ? extractTableIdentifier(joinMatch[2]).toLowerCase()
+        : null,
       primaryKeyColumn: null,
       primaryKeyField: "id",
     });
@@ -198,13 +237,14 @@ function parseColumns(
 
   // Extract SELECT clause
   const selectMatch = normalized.match(/select\s+(.+?)\s+from\s/i);
-  if (!selectMatch) return resultColumns.map((col) => ({
-    resultName: col,
-    tableName: null,
-    fieldName: col,
-    isComputed: false,
-    isPrimaryKey: false,
-  }));
+  if (!selectMatch)
+    return resultColumns.map((col) => ({
+      resultName: col,
+      tableName: null,
+      fieldName: col,
+      isComputed: false,
+      isPrimaryKey: false,
+    }));
 
   const selectClause = selectMatch[1];
   const isSelectStar = selectClause.trim() === "*";
@@ -264,9 +304,15 @@ function parseColumns(
     if (!isSelectStar) {
       const computedPatterns = [
         new RegExp(`\\([^)]+\\)\\s+(?:as\\s+)?${resultCol}\\b`, "i"),
-        new RegExp(`\\w+\\s*[+\\-*/]\\s*\\w+.*?(?:as\\s+)?${resultCol}\\b`, "i"),
+        new RegExp(
+          `\\w+\\s*[+\\-*/]\\s*\\w+.*?(?:as\\s+)?${resultCol}\\b`,
+          "i"
+        ),
         new RegExp(`\\w+\\s*\\|\\|\\s*\\w+.*?(?:as\\s+)?${resultCol}\\b`, "i"),
-        new RegExp(`\\b(?:coalesce|case|nullif|concat)\\s*\\(.*?(?:as\\s+)?${resultCol}\\b`, "i"),
+        new RegExp(
+          `\\b(?:coalesce|case|nullif|concat)\\s*\\(.*?(?:as\\s+)?${resultCol}\\b`,
+          "i"
+        ),
       ];
 
       info.isComputed = computedPatterns.some((p) => p.test(selectClause));
@@ -277,10 +323,7 @@ function parseColumns(
 }
 
 // Find primary key columns for each table in the result set
-function findPrimaryKeys(
-  columns: ColumnInfo[],
-  tables: TableInfo[]
-): void {
+function findPrimaryKeys(columns: ColumnInfo[], tables: TableInfo[]): void {
   const pkNames = ["id", "uuid", "pk", "_id"];
 
   for (const table of tables) {
@@ -288,8 +331,7 @@ function findPrimaryKeys(
     for (const pkName of pkNames) {
       const matchingCol = columns.find(
         (col) =>
-          col.tableName === table.name &&
-          col.fieldName.toLowerCase() === pkName
+          col.tableName === table.name && col.fieldName.toLowerCase() === pkName
       );
       if (matchingCol) {
         table.primaryKeyColumn = matchingCol.resultName;
@@ -369,7 +411,9 @@ function generateUpdateSql(
 
 export function SqlEditor({ projectId }: SqlEditorProps) {
   const [tabs, setTabs] = useState<Tab[]>(() => [createNewTab()]);
-  const [activeTabId, setActiveTabId] = useState<string>(() => tabs[0]?.id || "");
+  const [activeTabId, setActiveTabId] = useState<string>(
+    () => tabs[0]?.id || ""
+  );
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
   const [editingTabName, setEditingTabName] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -384,47 +428,51 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
     try {
       const result = await api.runQuery(projectId, TABLES_QUERY, true);
       if (Array.isArray(result)) {
-        const tableRefs: TableRef[] = result.map((row: { schema: string; name: string }) => ({
-          schema: row.schema,
-          name: row.name,
-        }));
+        const tableRefs: TableRef[] = result.map(
+          (row: { schema: string; name: string }) => ({
+            schema: row.schema,
+            name: row.name,
+          })
+        );
 
         // Create display name for tab - use schema prefix for non-public schemas
         const getDisplayName = (t: TableRef) =>
-          t.schema === 'public' ? t.name : `${t.schema}.${t.name}`;
+          t.schema === "public" ? t.name : `${t.schema}.${t.name}`;
 
         // Create SQL query - always use schema-qualified name for clarity
         const getSqlQuery = (t: TableRef) =>
-          t.schema === 'public'
+          t.schema === "public"
             ? `SELECT * FROM ${t.name} LIMIT 100`
             : `SELECT * FROM ${t.schema}.${t.name} LIMIT 100`;
 
         // Only add tabs for tables that don't already exist
-        const existingTabNames = new Set(tabs.map(t => t.name));
-        const newTabs: Tab[] = tableRefs
-          .filter(t => !existingTabNames.has(getDisplayName(t)))
-          .map(tableRef => ({
-            id: generateTabId(),
-            name: getDisplayName(tableRef),
-            sql: getSqlQuery(tableRef),
-            results: [],
-            originalResults: [],
-            displayColumns: [],
-            queryMetadata: null,
-            error: null,
-            isTableTab: true,
-          }));
+        // Perform duplicate check inside setTabs to use the current state
+        setTabs((prev) => {
+          const existingTabNames = new Set(prev.map((t) => t.name));
+          const newTabs: Tab[] = tableRefs
+            .filter((t) => !existingTabNames.has(getDisplayName(t)))
+            .map((tableRef) => ({
+              id: generateTabId(),
+              name: getDisplayName(tableRef),
+              sql: getSqlQuery(tableRef),
+              results: [],
+              originalResults: [],
+              displayColumns: [],
+              queryMetadata: null,
+              error: null,
+              isTableTab: true,
+            }));
 
-        if (newTabs.length > 0) {
-          setTabs(prev => [...prev, ...newTabs]);
-        }
+          if (newTabs.length === 0) return prev;
+          return [...prev, ...newTabs];
+        });
       }
     } catch (err) {
       console.error("Failed to fetch tables:", err);
     } finally {
       setIsLoadingTables(false);
     }
-  }, [projectId, tabs]);
+  }, [projectId]);
 
   // Fetch tables on mount
   useEffect(() => {
@@ -435,8 +483,8 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
   const currentTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
 
   // Split tabs into table tabs and other tabs
-  const tableTabs = useMemo(() => tabs.filter(t => t.isTableTab), [tabs]);
-  const otherTabs = useMemo(() => tabs.filter(t => !t.isTableTab), [tabs]);
+  const tableTabs = useMemo(() => tabs.filter((t) => t.isTableTab), [tabs]);
+  const otherTabs = useMemo(() => tabs.filter((t) => !t.isTableTab), [tabs]);
 
   // Derived state from current tab
   const sql = currentTab?.sql || "";
@@ -447,18 +495,24 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
   const error = currentTab?.error || null;
 
   // Update current tab helper
-  const updateCurrentTab = useCallback((updates: Partial<Tab>) => {
-    setTabs((prevTabs) =>
-      prevTabs.map((tab) =>
-        tab.id === activeTabId ? { ...tab, ...updates } : tab
-      )
-    );
-  }, [activeTabId]);
+  const updateCurrentTab = useCallback(
+    (updates: Partial<Tab>) => {
+      setTabs((prevTabs) =>
+        prevTabs.map((tab) =>
+          tab.id === activeTabId ? { ...tab, ...updates } : tab
+        )
+      );
+    },
+    [activeTabId]
+  );
 
   // Set SQL for current tab
-  const setSql = useCallback((newSql: string) => {
-    updateCurrentTab({ sql: newSql });
-  }, [updateCurrentTab]);
+  const setSql = useCallback(
+    (newSql: string) => {
+      updateCurrentTab({ sql: newSql });
+    },
+    [updateCurrentTab]
+  );
 
   // Focus edit input when editing starts
   useEffect(() => {
@@ -475,31 +529,37 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
     setActiveTabId(newTab.id);
   }, []);
 
-  const closeTab = useCallback((tabId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setTabs((prevTabs) => {
-      if (prevTabs.length === 1) {
-        // Don't close the last tab, just reset it
-        return [createNewTab()];
-      }
-      const newTabs = prevTabs.filter((t) => t.id !== tabId);
-      // If we're closing the active tab, switch to another
-      if (tabId === activeTabId) {
-        const closedIndex = prevTabs.findIndex((t) => t.id === tabId);
-        const newActiveIndex = Math.min(closedIndex, newTabs.length - 1);
-        setActiveTabId(newTabs[newActiveIndex].id);
-      }
-      return newTabs;
-    });
-  }, [activeTabId]);
+  const closeTab = useCallback(
+    (tabId: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      setTabs((prevTabs) => {
+        if (prevTabs.length === 1) {
+          // Don't close the last tab, just reset it
+          return [createNewTab()];
+        }
+        const newTabs = prevTabs.filter((t) => t.id !== tabId);
+        // If we're closing the active tab, switch to another
+        if (tabId === activeTabId) {
+          const closedIndex = prevTabs.findIndex((t) => t.id === tabId);
+          const newActiveIndex = Math.min(closedIndex, newTabs.length - 1);
+          setActiveTabId(newTabs[newActiveIndex].id);
+        }
+        return newTabs;
+      });
+    },
+    [activeTabId]
+  );
 
-  const startEditingTab = useCallback((tabId: string) => {
-    const tab = tabs.find((t) => t.id === tabId);
-    if (tab) {
-      setEditingTabId(tabId);
-      setEditingTabName(tab.name);
-    }
-  }, [tabs]);
+  const startEditingTab = useCallback(
+    (tabId: string) => {
+      const tab = tabs.find((t) => t.id === tabId);
+      if (tab) {
+        setEditingTabId(tabId);
+        setEditingTabName(tab.name);
+      }
+    },
+    [tabs]
+  );
 
   const finishEditingTab = useCallback(() => {
     if (editingTabId && editingTabName.trim()) {
@@ -515,14 +575,17 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
     setEditingTabName("");
   }, [editingTabId, editingTabName]);
 
-  const handleTabKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      finishEditingTab();
-    } else if (e.key === "Escape") {
-      setEditingTabId(null);
-      setEditingTabName("");
-    }
-  }, [finishEditingTab]);
+  const handleTabKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter") {
+        finishEditingTab();
+      } else if (e.key === "Escape") {
+        setEditingTabId(null);
+        setEditingTabName("");
+      }
+    },
+    [finishEditingTab]
+  );
 
   // Calculate changes between original and current results, grouped by table
   const changes = useMemo((): RowChanges[] => {
@@ -545,14 +608,17 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
 
         // Skip readonly, computed, primary key, or unassigned columns
         if (currentCell?.readOnly) continue;
-        if (colInfo.isComputed || colInfo.isPrimaryKey || !colInfo.tableName) continue;
+        if (colInfo.isComputed || colInfo.isPrimaryKey || !colInfo.tableName)
+          continue;
 
         const currentValue = currentCell?.value ?? "";
         const originalValue = originalCell?.value ?? "";
 
         if (currentValue !== originalValue) {
           // Find the table info
-          const tableInfo = queryMetadata.tables.find((t) => t.name === colInfo.tableName);
+          const tableInfo = queryMetadata.tables.find(
+            (t) => t.name === colInfo.tableName
+          );
           if (!tableInfo || !tableInfo.primaryKeyColumn) continue;
 
           // Get primary key value for this table
@@ -603,7 +669,11 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
       }
     }
 
-    return { totalChanges, rowCount: changes.length, tableCount: tablesAffected.size };
+    return {
+      totalChanges,
+      rowCount: changes.length,
+      tableCount: tablesAffected.size,
+    };
   }, [changes]);
 
   const runQuery = async () => {
@@ -718,7 +788,9 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
       }
 
       // Update original results to reflect saved state
-      updateCurrentTab({ originalResults: JSON.parse(JSON.stringify(results)) });
+      updateCurrentTab({
+        originalResults: JSON.parse(JSON.stringify(results)),
+      });
     } catch (err) {
       console.error("Save failed:", err);
       updateCurrentTab({ error: typeof err === "string" ? err : String(err) });
@@ -727,9 +799,12 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
     }
   };
 
-  const handleDataChange = useCallback((newData: SpreadsheetData) => {
-    updateCurrentTab({ results: newData });
-  }, [updateCurrentTab]);
+  const handleDataChange = useCallback(
+    (newData: SpreadsheetData) => {
+      updateCurrentTab({ results: newData });
+    },
+    [updateCurrentTab]
+  );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -741,9 +816,10 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
   const hasChanges = changesSummary.totalChanges > 0;
 
   // Build editable tables summary
-  const editableTables = queryMetadata?.tables
-    .filter((t) => t.primaryKeyColumn !== null)
-    .map((t) => t.name) || [];
+  const editableTables =
+    queryMetadata?.tables
+      .filter((t) => t.primaryKeyColumn !== null)
+      .map((t) => t.name) || [];
 
   // Helper to render a tab item
   const renderTabItem = (tab: Tab, icon: React.ReactNode) => (
@@ -803,7 +879,9 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
                 ) : (
                   <ChevronDown size={14} className="text-muted-foreground" />
                 )}
-                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Tables</span>
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                  Tables
+                </span>
               </div>
               <button
                 onClick={(e) => {
@@ -814,14 +892,27 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
                 className="p-1 hover:bg-muted rounded transition-colors"
                 title="Refresh tables"
               >
-                <RefreshCw size={14} className={`text-muted-foreground ${isLoadingTables ? "animate-spin" : ""}`} />
+                <RefreshCw
+                  size={14}
+                  className={`text-muted-foreground ${
+                    isLoadingTables ? "animate-spin" : ""
+                  }`}
+                />
               </button>
             </div>
 
             {/* Tables List */}
             {!tablesCollapsed && (
               <div className="py-1">
-                {tableTabs.map((tab) => renderTabItem(tab, <Table size={14} className="shrink-0 text-muted-foreground" />))}
+                {tableTabs.map((tab) =>
+                  renderTabItem(
+                    tab,
+                    <Table
+                      size={14}
+                      className="shrink-0 text-muted-foreground"
+                    />
+                  )
+                )}
                 {tableTabs.length === 0 && (
                   <div className="px-3 py-2 text-center text-muted-foreground text-xs">
                     No tables found
@@ -835,7 +926,9 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
           <div>
             {/* Other Header */}
             <div className="shrink-0 flex items-center justify-between px-3 py-2">
-              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-[18px]">Other</span>
+              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-[18px]">
+                Other
+              </span>
               <button
                 onClick={addNewTab}
                 className="p-1 hover:bg-muted rounded transition-colors"
@@ -847,7 +940,15 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
 
             {/* Other Tabs List */}
             <div className="py-1">
-              {otherTabs.map((tab) => renderTabItem(tab, <FileText size={14} className="shrink-0 text-muted-foreground" />))}
+              {otherTabs.map((tab) =>
+                renderTabItem(
+                  tab,
+                  <FileText
+                    size={14}
+                    className="shrink-0 text-muted-foreground"
+                  />
+                )
+              )}
               {otherTabs.length === 0 && (
                 <div className="px-3 py-2 text-center text-muted-foreground text-xs">
                   No queries yet
@@ -922,15 +1023,14 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
         {hasChanges && (
           <div className="shrink-0 px-4 py-3 border-t bg-muted/50 flex items-center justify-between">
             <span className="text-sm text-muted-foreground">
-              {changesSummary.totalChanges} change{changesSummary.totalChanges !== 1 ? "s" : ""} to{" "}
-              {changesSummary.rowCount} row{changesSummary.rowCount !== 1 ? "s" : ""}
-              {changesSummary.tableCount > 1 && ` across ${changesSummary.tableCount} tables`}
+              {changesSummary.totalChanges} change
+              {changesSummary.totalChanges !== 1 ? "s" : ""} to{" "}
+              {changesSummary.rowCount} row
+              {changesSummary.rowCount !== 1 ? "s" : ""}
+              {changesSummary.tableCount > 1 &&
+                ` across ${changesSummary.tableCount} tables`}
             </span>
-            <Button
-              onClick={saveChanges}
-              disabled={isSaving}
-              size="sm"
-            >
+            <Button onClick={saveChanges} disabled={isSaving} size="sm">
               <Save size={14} className="mr-2" />
               {isSaving ? "Saving..." : "Save"}
             </Button>

@@ -40,6 +40,7 @@ fn main() {
             commands::list_organizations,
             commands::pull_project,
             commands::push_project,
+            commands::get_project_diff,
             // Project commands
             commands::create_project,
             commands::get_projects,

@@ -57,3 +57,9 @@ export interface SupabaseLogEntry {
   error_severity?: string;
   status?: number;
 }
+
+export interface DiffResponse {
+  summary: string;
+  migration_sql: string;
+  is_destructive: boolean;
+}

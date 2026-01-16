@@ -351,6 +351,70 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_update_of_columns_single() {
+        use super::helpers::extract_update_of_columns;
+        let def = "CREATE TRIGGER on_skill_experience_change BEFORE UPDATE OF experience ON public.character_skills FOR EACH ROW EXECUTE FUNCTION check_skill_level_up()";
+        let cols = extract_update_of_columns(def);
+        assert!(cols.is_some());
+        let cols = cols.unwrap();
+        assert_eq!(cols.len(), 1);
+        assert_eq!(cols[0], "experience");
+    }
+
+    #[test]
+    fn test_extract_update_of_columns_multiple() {
+        use super::helpers::extract_update_of_columns;
+        let def = "CREATE TRIGGER audit_trigger BEFORE UPDATE OF \"col1\", \"col2\", col3 ON public.some_table FOR EACH ROW EXECUTE FUNCTION audit()";
+        let cols = extract_update_of_columns(def);
+        assert!(cols.is_some());
+        let cols = cols.unwrap();
+        assert_eq!(cols.len(), 3);
+        assert_eq!(cols[0], "col1");
+        assert_eq!(cols[1], "col2");
+        assert_eq!(cols[2], "col3");
+    }
+
+    #[test]
+    fn test_extract_update_of_columns_none() {
+        use super::helpers::extract_update_of_columns;
+        let def = "CREATE TRIGGER simple_trigger AFTER UPDATE ON users FOR EACH ROW EXECUTE FUNCTION notify()";
+        let cols = extract_update_of_columns(def);
+        assert!(cols.is_none());
+    }
+
+    #[test]
+    fn test_parse_bulk_response_update_of_column_trigger() {
+        let data = json!({
+            "tables": [{"schema": "public", "name": "character_skills"}],
+            "columns": [],
+            "foreign_keys": [],
+            "indexes": [],
+            "triggers": [{
+                "schema": "public",
+                "table_name": "character_skills",
+                "trigger_name": "on_skill_experience_change",
+                "tgtype": 19,
+                "function_name": "check_skill_level_up",
+                "trigger_def": "CREATE TRIGGER on_skill_experience_change BEFORE UPDATE OF experience ON public.character_skills FOR EACH ROW WHEN ((NEW.experience > OLD.experience)) EXECUTE FUNCTION check_skill_level_up()"
+            }],
+            "policies": [],
+            "rls": [],
+            "check_constraints": [],
+            "table_comments": []
+        });
+        let result = tables::parse_bulk_response(&data).unwrap();
+        let table = result.get("\"public\".\"character_skills\"").unwrap();
+        let trigger = &table.triggers[0];
+        
+        assert_eq!(trigger.name, "on_skill_experience_change");
+        assert_eq!(trigger.timing, "BEFORE");
+        assert_eq!(trigger.orientation, "ROW");
+        // The key assertion: event should include the column specification
+        assert!(trigger.events.contains(&"UPDATE OF \"experience\"".to_string()));
+        assert_eq!(trigger.when_clause, Some("(NEW.experience > OLD.experience)".to_string()));
+    }
+
+    #[test]
     fn test_extract_index_expressions_lower() {
         let def = "CREATE INDEX idx_email ON users (lower(email))";
         let exprs = extract_index_expressions(def);

@@ -6,9 +6,9 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  FileDiff,
   Folder,
   PanelLeft,
-  PanelRight,
   RefreshCw,
   Sprout,
   Trash2,
@@ -22,13 +22,21 @@ interface ProjectHeaderProps {
   project: Project;
   onUpdate: () => void;
   onDelete: () => void;
-  showLogsSidebar: boolean;
-  onToggleLogsSidebar: () => void;
+  showDiffSidebar: boolean;
+  onToggleDiffSidebar: () => void;
   sidebarCollapsed: boolean;
   onToggleSidebar: () => void;
 }
 
-export function ProjectHeader({ project, onUpdate, onDelete, showLogsSidebar, onToggleLogsSidebar, sidebarCollapsed, onToggleSidebar }: ProjectHeaderProps) {
+export function ProjectHeader({
+  project,
+  onUpdate,
+  onDelete,
+  showDiffSidebar,
+  onToggleDiffSidebar,
+  sidebarCollapsed,
+  onToggleSidebar,
+}: ProjectHeaderProps) {
   const [isWatching, setIsWatching] = useState(project.is_watching);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -216,72 +224,89 @@ export function ProjectHeader({ project, onUpdate, onDelete, showLogsSidebar, on
             {project.supabase_project_ref}
           </span>
         )}
-      </div>
 
-      <div className="flex items-center gap-1">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={handleOpenFolder}
-          className="text-muted-foreground hover:text-primary"
-          title="Open folder in Finder"
-        >
-          <Folder size={18} />
-        </Button>
-
-        {project.supabase_project_ref && (
+        <div className="flex items-center gap-1 ml-2">
           <Button
             variant="ghost"
             size="icon"
-            onClick={handleOpenSupabase}
-            className="text-muted-foreground hover:text-primary"
-            title="Open Supabase Dashboard"
+            onClick={handleOpenFolder}
+            className="text-muted-foreground hover:text-primary h-7 w-7"
+            title="Open folder in Finder"
           >
-            <ExternalLink size={18} />
+            <Folder size={16} />
           </Button>
-        )}
 
-        <div className="w-px h-5 bg-border mx-1" />
+          {project.supabase_project_ref && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleOpenSupabase}
+              className="text-muted-foreground hover:text-primary h-7 w-7"
+              title="Open Supabase Dashboard"
+            >
+              <ExternalLink size={16} />
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 mr-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="text-muted-foreground hover:text-primary"
+            onClick={handlePull}
+            disabled={isLoading}
+            title="Pull from remote"
+          >
+            <CloudDownload size={18} />
+          </Button>
+
+          <Button
+            variant="ghost"
+            size="icon"
+            className="text-muted-foreground hover:text-primary"
+            onClick={handleRunSeeds}
+            disabled={isLoading}
+            title="Run seed files"
+          >
+            <Sprout size={18} />
+          </Button>
+        </div>
+
+        <div className="flex items-center">
+          <Button
+            variant="outline"
+            className="rounded-r-none border-r-0 px-3 hover:bg-muted"
+            onClick={handlePush}
+            disabled={isLoading}
+            title="Push to remote"
+          >
+            <CloudUpload size={16} className="mr-2" />
+            Push
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            className={`rounded-l-none w-9 ${
+              showDiffSidebar
+                ? "bg-muted text-primary hover:text-primary/80"
+                : "text-muted-foreground hover:text-primary hover:bg-muted"
+            }`}
+            onClick={onToggleDiffSidebar}
+            disabled={isLoading}
+            title={showDiffSidebar ? "Hide schema diff" : "Show schema diff"}
+          >
+            <FileDiff size={16} />
+          </Button>
+        </div>
 
         <Button
-          variant="ghost"
-          size="icon"
-          className="text-muted-foreground hover:text-primary"
-          onClick={handlePull}
-          disabled={isLoading}
-          title="Pull from remote"
-        >
-          <CloudDownload size={18} />
-        </Button>
-
-        <Button
-          variant="ghost"
-          size="icon"
-          className="text-muted-foreground hover:text-primary"
-          onClick={handlePush}
-          disabled={isLoading}
-          title="Push to remote"
-        >
-          <CloudUpload size={18} />
-        </Button>
-
-        <Button
-          variant="ghost"
-          size="icon"
-          className="text-muted-foreground hover:text-primary"
-          onClick={handleRunSeeds}
-          disabled={isLoading}
-          title="Run seed files"
-        >
-          <Sprout size={18} />
-        </Button>
-
-        <Button
-          variant="ghost"
-          size="icon"
+          variant="outline"
           className={
             isWatching
-              ? "text-green-500 hover:text-green-400 hover:bg-green-500/10"
+              ? "text-green-500 border-green-500/50 hover:bg-green-500/10"
               : "text-muted-foreground hover:text-primary"
           }
           onClick={toggleWatch}
@@ -289,12 +314,13 @@ export function ProjectHeader({ project, onUpdate, onDelete, showLogsSidebar, on
           title={isWatching ? "Stop watching" : "Start watching"}
         >
           {isLoading ? (
-            <RefreshCw size={18} className="animate-spin" />
+            <RefreshCw size={16} className="animate-spin mr-2" />
           ) : isWatching ? (
-            <Eye size={18} />
+            <Eye size={16} className="mr-2" />
           ) : (
-            <EyeOff size={18} />
+            <EyeOff size={16} className="mr-2" />
           )}
+          Watch
         </Button>
 
         <div className="w-px h-5 bg-border mx-1" />
@@ -307,22 +333,6 @@ export function ProjectHeader({ project, onUpdate, onDelete, showLogsSidebar, on
           title="Delete project"
         >
           <Trash2 size={18} />
-        </Button>
-
-        <div className="w-px h-5 bg-border mx-1" />
-
-        <Button
-          variant="ghost"
-          size="icon"
-          className={
-            showLogsSidebar
-              ? "text-primary hover:text-primary/80"
-              : "text-muted-foreground hover:text-primary"
-          }
-          onClick={onToggleLogsSidebar}
-          title={showLogsSidebar ? "Hide logs" : "Show logs"}
-        >
-          <PanelRight size={18} />
         </Button>
       </div>
     </header>

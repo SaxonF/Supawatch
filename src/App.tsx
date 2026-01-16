@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import * as api from "./api";
 import { CreateProjectForm } from "./components/CreateProjectForm";
+import { DiffSidebar } from "./components/DiffSidebar";
 import { ProjectHeader } from "./components/ProjectHeader";
 import { ProjectLogs } from "./components/ProjectLogs";
 import { Settings } from "./components/Settings";
@@ -16,16 +17,21 @@ import "./App.css";
 
 function App() {
   const [projects, setProjects] = useState<Project[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
+    null
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [showLogsSidebar, setShowLogsSidebar] = useState(false);
+  const [logsExpanded, setLogsExpanded] = useState(false);
+  const [showDiffSidebar, setShowDiffSidebar] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-  const selectedProject = projects.find((p) => p.id === selectedProjectId) || null;
+  const selectedProject =
+    projects.find((p) => p.id === selectedProjectId) || null;
 
   const loadProjects = async () => {
+    // ... same ...
     try {
       const data = await api.getProjects();
       setProjects(data);
@@ -43,7 +49,13 @@ function App() {
     }
   };
 
+  const toggleDiffSidebar = () => {
+    if (!showDiffSidebar) setLogsExpanded(false);
+    setShowDiffSidebar(!showDiffSidebar);
+  };
+
   useEffect(() => {
+    // ... same ...
     const initialize = async () => {
       invoke("init");
 
@@ -68,6 +80,7 @@ function App() {
       project_id: string;
       summary: string;
     }>("schema-push-confirmation-needed", async (event) => {
+      // ... same ...
       const confirmed = await ask(
         `Destructive changes detected during auto-push!\n\n${event.payload.summary}\n\nDo you want to force push these changes?`,
         {
@@ -139,8 +152,8 @@ function App() {
                 project={selectedProject}
                 onUpdate={loadProjects}
                 onDelete={handleProjectDeleted}
-                showLogsSidebar={showLogsSidebar}
-                onToggleLogsSidebar={() => setShowLogsSidebar(!showLogsSidebar)}
+                showDiffSidebar={showDiffSidebar}
+                onToggleDiffSidebar={toggleDiffSidebar}
                 sidebarCollapsed={sidebarCollapsed}
                 onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
               />
@@ -154,19 +167,38 @@ function App() {
                       <div className="text-center">
                         <p>Project not linked to Supabase</p>
                         <p className="text-sm mt-1">
-                          SQL editor will be available once the project is linked
+                          SQL editor will be available once the project is
+                          linked
                         </p>
                       </div>
                     </div>
                   )}
                 </div>
 
-                {/* Logs Sidebar - Right */}
-                {showLogsSidebar && selectedProject.supabase_project_id && (
-                  <div className="w-[400px] border-l bg-background flex flex-col overflow-hidden shrink-0">
-                    <ProjectLogs projectId={selectedProject.id} />
-                  </div>
+                {/* Loans Sidebar - Right (Always rendered if project linked, handles its own width) */}
+                {selectedProject.supabase_project_id && (
+                  <ProjectLogs
+                    projectId={selectedProject.id}
+                    expanded={logsExpanded}
+                    onToggle={() => setLogsExpanded(!logsExpanded)}
+                  />
                 )}
+
+                {/* Diff Sidebar - Right */}
+                {showDiffSidebar &&
+                  (selectedProject.supabase_project_ref ||
+                    selectedProject.supabase_project_id) && (
+                    <div className="w-[450px] border-l bg-background flex flex-col overflow-hidden shrink-0">
+                      <DiffSidebar
+                        projectId={selectedProject.id}
+                        onClose={() => setShowDiffSidebar(false)}
+                        onSuccess={() => {
+                          // Optionally refresh project or something
+                          // Probably nothing needs to be done since diff sidebar reloads on push success
+                        }}
+                      />
+                    </div>
+                  )}
               </div>
             </>
           ) : (
@@ -182,6 +214,7 @@ function App() {
         </div>
 
         {/* Create Project Modal */}
+
         {showCreateForm && (
           <div className="absolute inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
             <div className="bg-background border rounded-2xl p-6 w-full max-w-lg mx-4 shadow-xl">

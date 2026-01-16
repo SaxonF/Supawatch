@@ -279,7 +279,7 @@ pub fn triggers_differ(local: &TriggerInfo, remote: &TriggerInfo) -> bool {
         || local.timing != remote.timing
         || local.orientation != remote.orientation
         || local.function_name != remote.function_name
-        || local.when_clause != remote.when_clause
+        || utils::normalize_option(&local.when_clause) != utils::normalize_option(&remote.when_clause)
 }
 
 pub fn indexes_differ(local: &IndexInfo, remote: &IndexInfo) -> bool {

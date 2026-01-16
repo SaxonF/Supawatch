@@ -140,6 +140,12 @@ export async function pushProject(
   return invoke("push_project", { projectId, force });
 }
 
+export async function getProjectDiff(
+  projectId: string
+): Promise<import("./types").DiffResponse> {
+  return invoke("get_project_diff", { projectId });
+}
+
 // Supabase Logs API
 export async function querySupabaseLogs(
   projectId: string,
