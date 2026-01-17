@@ -157,38 +157,45 @@ function App() {
                 sidebarCollapsed={sidebarCollapsed}
                 onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
               />
-              <div className="flex-1 flex overflow-hidden">
-                {/* SQL Editor - Main Content */}
-                <div className="flex-1 overflow-hidden">
-                  {selectedProject.supabase_project_id ? (
-                    <SqlEditor projectId={selectedProject.id} />
-                  ) : (
-                    <div className="flex-1 flex items-center justify-center text-muted-foreground h-full">
-                      <div className="text-center">
-                        <p>Project not linked to Supabase</p>
-                        <p className="text-sm mt-1">
-                          SQL editor will be available once the project is
-                          linked
-                        </p>
+              <div className="flex-1 flex overflow-hidden relative">
+                {/* Main Content (SqlEditor + Logs) */}
+                <div
+                  className={`flex-1 flex overflow-hidden transition-opacity duration-300 ${
+                    showDiffSidebar ? "opacity-25 pointer-events-none" : ""
+                  }`}
+                >
+                  {/* SQL Editor - Main Content */}
+                  <div className="flex-1 overflow-hidden">
+                    {selectedProject.supabase_project_id ? (
+                      <SqlEditor projectId={selectedProject.id} />
+                    ) : (
+                      <div className="flex-1 flex items-center justify-center text-muted-foreground h-full">
+                        <div className="text-center">
+                          <p>Project not linked to Supabase</p>
+                          <p className="text-sm mt-1">
+                            SQL editor will be available once the project is
+                            linked
+                          </p>
+                        </div>
                       </div>
-                    </div>
+                    )}
+                  </div>
+
+                  {/* Loans Sidebar - Right (Always rendered if project linked, handles its own width) */}
+                  {selectedProject.supabase_project_id && (
+                    <ProjectLogs
+                      projectId={selectedProject.id}
+                      expanded={logsExpanded}
+                      onToggle={() => setLogsExpanded(!logsExpanded)}
+                    />
                   )}
                 </div>
 
-                {/* Loans Sidebar - Right (Always rendered if project linked, handles its own width) */}
-                {selectedProject.supabase_project_id && (
-                  <ProjectLogs
-                    projectId={selectedProject.id}
-                    expanded={logsExpanded}
-                    onToggle={() => setLogsExpanded(!logsExpanded)}
-                  />
-                )}
-
-                {/* Diff Sidebar - Right */}
+                {/* Diff Sidebar - Overlay Sheet */}
                 {showDiffSidebar &&
                   (selectedProject.supabase_project_ref ||
                     selectedProject.supabase_project_id) && (
-                    <div className="w-[450px] border-l bg-background flex flex-col overflow-hidden shrink-0">
+                    <div className="absolute top-0 right-0 bottom-0 w-[450px] border-l bg-background flex flex-col overflow-hidden shrink-0 z-20 shadow-xl">
                       <DiffSidebar
                         projectId={selectedProject.id}
                         onClose={() => setShowDiffSidebar(false)}

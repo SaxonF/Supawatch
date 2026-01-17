@@ -66,11 +66,13 @@ export function Sidebar({
             <rect x="6" y="6" width="1" height="5" fill="white" />
             <rect x="8" y="6" width="1" height="5" fill="white" />
           </svg>
-          <span className="font-semibold text-sidebar-foreground">Supawatch</span>
+          <span className="font-semibold text-sidebar-foreground">
+            Supawatch
+          </span>
         </div>
         <Button
           variant="ghost"
-          size="icon-sm"
+          size="icon"
           onClick={onOpenSettings}
           className="text-sidebar-foreground/60 hover:text-sidebar-foreground"
           title="Settings"

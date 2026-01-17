@@ -100,12 +100,6 @@ async fn push_edge_functions(
     state: &Arc<AppState>,
     app_handle: &AppHandle,
 ) -> Result<(), String> {
-    let functions_dir = project_local_path.join("supabase").join("functions");
-
-    if !functions_dir.exists() {
-        return Ok(()); // No functions directory, nothing to deploy
-    }
-
     let log = LogEntry::info(
         Some(project_id),
         LogSource::EdgeFunction,
@@ -114,29 +108,31 @@ async fn push_edge_functions(
     state.add_log(log.clone()).await;
     app_handle.emit("log", &log).ok();
 
-    // Read the functions directory
-    let mut entries = match tokio::fs::read_dir(&functions_dir).await {
-        Ok(e) => e,
-        Err(_) => return Ok(()), // Can't read dir, skip
-    };
+    // Use shared logic to find changed functions
+    let changed_functions = sync::compute_edge_functions_diff(project_local_path)
+        .await
+        .map_err(|e| format!("Failed to compute edge function diff: {}", e))?;
+
+    if changed_functions.is_empty() {
+        let log = LogEntry::info(
+            Some(project_id),
+            LogSource::EdgeFunction,
+            "No edge function changes detected.".to_string(),
+        );
+        state.add_log(log).await;
+        // app_handle.emit("log", &log).ok(); // Optional: don't spam if nothing happened
+        return Ok(());
+    }
 
     let mut deployed_count = 0;
 
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        let path = entry.path();
+    for func in changed_functions {
+        let function_slug = func.slug;
+        let function_path = project_local_path.join(&func.path);
 
-        // Skip if not a directory (each function should be in its own folder)
-        if !path.is_dir() {
-            continue;
-        }
-
-        let function_slug = match path.file_name().and_then(|n| n.to_str()) {
-            Some(name) => name.to_string(),
-            None => continue,
-        };
-
-        // Collect all files in the function directory using shared sync module
-        let files = match sync::collect_function_files(&path).await {
+        // We need to re-read files to deploy them
+        // This is slightly inefficient but safe and reuses logic
+        let files = match sync::collect_function_files(&function_path).await {
             Ok(f) => f,
             Err(e) => {
                 let log = LogEntry::warning(
@@ -150,31 +146,15 @@ async fn push_edge_functions(
         };
 
         if files.is_empty() {
-            continue;
-        }
-
-        // Compute hash of all local files for comparison using shared sync module
-        let local_hash = sync::compute_files_hash(&files);
-
-        // Check if we have a stored hash from last deploy
-        let hash_file = path.join(".supawatch_hash");
-        let should_deploy = match tokio::fs::read_to_string(&hash_file).await {
-            Ok(stored_hash) => stored_hash.trim() != local_hash,
-            Err(_) => true, // No hash file = never deployed or new function
-        };
-
-        if !should_deploy {
-            let log = LogEntry::info(
-                Some(project_id),
-                LogSource::EdgeFunction,
-                format!("Function '{}' unchanged, skipping", function_slug),
-            );
-            state.add_log(log).await;
-            continue;
+             continue;
         }
 
         // Determine entrypoint using shared sync module
         let entrypoint = sync::determine_entrypoint(&files);
+        
+        // Re-compute hash to update the lockfile after deploy
+        let local_hash = sync::compute_files_hash(&files);
+        let hash_file = function_path.join(".supawatch_hash");
 
         // Deploy with all files
         match api
@@ -729,6 +709,7 @@ pub struct DiffResponse {
     pub summary: String,
     pub migration_sql: String,
     pub is_destructive: bool,
+    pub edge_functions: Vec<sync::EdgeFunctionDiff>,
 }
 
 #[tauri::command]
@@ -758,9 +739,15 @@ pub async fn get_project_diff(
     let is_destructive = diff.is_destructive();
     let migration_sql = diff_result.migration_sql;
 
+    // Compute edge function diffs
+    let edge_functions = sync::compute_edge_functions_diff(Path::new(&project.local_path))
+        .await
+        .map_err(|e| e.to_string())?;
+
     Ok(DiffResponse {
         summary,
         migration_sql,
         is_destructive,
+        edge_functions,
     })
 }

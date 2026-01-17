@@ -58,8 +58,15 @@ export interface SupabaseLogEntry {
   status?: number;
 }
 
+export interface EdgeFunctionDiff {
+  slug: string;
+  name: string;
+  path: string;
+}
+
 export interface DiffResponse {
   summary: string;
   migration_sql: string;
   is_destructive: boolean;
+  edge_functions: EdgeFunctionDiff[];
 }

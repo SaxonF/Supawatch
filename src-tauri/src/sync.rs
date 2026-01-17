@@ -16,12 +16,82 @@ use crate::supabase_api::SupabaseApi;
 // Edge Function File Operations
 // ============================================================================
 
+/// Struct representing a changed edge function
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct EdgeFunctionDiff {
+    pub slug: String,
+    pub name: String,
+    pub path: String, // Relative path from project root
+}
+
 /// Collect all source files in a function directory recursively.
 /// Returns a list of (relative_path, content) pairs.
 pub async fn collect_function_files(dir: &Path) -> Result<Vec<(String, Vec<u8>)>, String> {
     let mut files = Vec::new();
     collect_files_recursive(dir, dir, &mut files).await?;
     Ok(files)
+}
+
+/// Compute the diff of edge functions (local vs deployed state).
+/// Returns a list of functions that have changed or are new.
+/// Note: This relies on local state (.supawatch_hash files), not remote API state.
+pub async fn compute_edge_functions_diff(
+    project_local_path: &Path,
+) -> Result<Vec<EdgeFunctionDiff>, String> {
+    let functions_dir = project_local_path.join("supabase").join("functions");
+    if !functions_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut changed_functions = Vec::new();
+    let mut entries = tokio::fs::read_dir(&functions_dir)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        let function_slug = match path.file_name().and_then(|n| n.to_str()) {
+            Some(name) => name.to_string(),
+            None => continue,
+        };
+
+        // Collect all files
+        let files = match collect_function_files(&path).await {
+            Ok(f) => f,
+            Err(_) => continue, // Skip unreadable
+        };
+
+        if files.is_empty() {
+            continue;
+        }
+
+        // Compute local hash
+        let local_hash = compute_files_hash(&files);
+
+        // Check stored hash
+        let hash_file = path.join(".supawatch_hash");
+        let is_changed = match tokio::fs::read_to_string(&hash_file).await {
+            Ok(stored_hash) => stored_hash.trim() != local_hash,
+            Err(_) => true, // No hash = new or not deployed
+        };
+
+        if is_changed {
+            changed_functions.push(EdgeFunctionDiff {
+                slug: function_slug.clone(),
+                name: function_slug.clone(), // Name is usually slug
+                path: format!("supabase/functions/{}", function_slug),
+            });
+        }
+    }
+
+    // Sort by name for deterministic output
+    changed_functions.sort_by(|a, b| a.slug.cmp(&b.slug));
+
+    Ok(changed_functions)
 }
 
 #[async_recursion::async_recursion]

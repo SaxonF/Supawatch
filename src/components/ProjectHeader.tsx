@@ -253,18 +253,7 @@ export function ProjectHeader({
       <div className="flex items-center gap-2">
         <div className="flex items-center gap-1 mr-2">
           <Button
-            variant="ghost"
-            size="icon"
-            className="text-muted-foreground hover:text-primary"
-            onClick={handlePull}
-            disabled={isLoading}
-            title="Pull from remote"
-          >
-            <CloudDownload size={18} />
-          </Button>
-
-          <Button
-            variant="ghost"
+            variant="outline"
             size="icon"
             className="text-muted-foreground hover:text-primary"
             onClick={handleRunSeeds}
@@ -272,6 +261,17 @@ export function ProjectHeader({
             title="Run seed files"
           >
             <Sprout size={18} />
+          </Button>
+
+          <Button
+            variant="outline"
+            size="icon"
+            className="text-muted-foreground hover:text-primary"
+            onClick={handlePull}
+            disabled={isLoading}
+            title="Pull from remote"
+          >
+            <CloudDownload size={18} />
           </Button>
         </div>
 

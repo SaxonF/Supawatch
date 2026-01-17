@@ -166,29 +166,57 @@ export function DiffSidebar({
             </Button>
           </div>
         ) : !diff ||
-          (diff.migration_sql.trim() === "" && !diff.is_destructive) ? (
+          (diff.migration_sql.trim() === "" &&
+            !diff.is_destructive &&
+            diff.edge_functions.length === 0) ? (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4 text-center bg-background">
             <p>No changes detected</p>
             <p className="text-sm mt-1">Local schema matches remote</p>
           </div>
         ) : (
           <div className="flex flex-col h-full">
+            {diff.edge_functions.length > 0 && (
+              <div className="p-4 border-b border-white/10 shrink-0">
+                <h3 className="font-medium text-xs text-muted-foreground uppercase tracking-wider mb-2">
+                  Edge Functions ({diff.edge_functions.length})
+                </h3>
+                <div className="space-y-2">
+                  {diff.edge_functions.map((func) => (
+                    <div
+                      key={func.slug}
+                      className="flex items-center gap-2 text-sm bg-white/5 p-2 rounded"
+                    >
+                      <div className="w-1.5 h-1.5 rounded-full bg-yellow-500 shrink-0" />
+                      <span className="font-mono text-xs">{func.name}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="flex-1 overflow-auto">
-              <SyntaxHighlighter
-                language="sql"
-                style={vscDarkPlus}
-                customStyle={{
-                  margin: 0,
-                  padding: "1rem",
-                  background: "transparent",
-                  fontSize: "12px",
-                  height: "100%",
-                }}
-                showLineNumbers={true}
-                wrapLines={true}
-              >
-                {diff.migration_sql}
-              </SyntaxHighlighter>
+              {diff.migration_sql.trim() !== "" ? (
+                <SyntaxHighlighter
+                  language="sql"
+                  style={vscDarkPlus}
+                  customStyle={{
+                    margin: 0,
+                    padding: "1rem",
+                    background: "transparent",
+                    fontSize: "12px",
+                    height: "100%",
+                  }}
+                  showLineNumbers={true}
+                  wrapLines={true}
+                >
+                  {diff.migration_sql}
+                </SyntaxHighlighter>
+              ) : (
+                !(diff.edge_functions.length > 0) && (
+                  <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+                    No schema changes
+                  </div>
+                )
+              )}
             </div>
 
             {diff.is_destructive && (
@@ -218,7 +246,9 @@ export function DiffSidebar({
             isLoading ||
             isPushing ||
             !diff ||
-            (diff.migration_sql.trim() === "" && !diff.is_destructive)
+            (diff.migration_sql.trim() === "" &&
+              !diff.is_destructive &&
+              diff.edge_functions.length === 0)
           }
           variant={diff?.is_destructive ? "destructive" : "default"}
         >

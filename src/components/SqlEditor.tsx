@@ -676,7 +676,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
     };
   }, [changes]);
 
-  const runQuery = async () => {
+  const runQuery = useCallback(async () => {
     if (!sql.trim()) return;
 
     setIsLoading(true);
@@ -764,7 +764,26 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [sql, projectId, updateCurrentTab, currentTab?.name]);
+
+  // Auto-run query when a table tab is activated and hasn't been run yet
+  useEffect(() => {
+    if (
+      currentTab?.isTableTab &&
+      !currentTab.queryMetadata &&
+      !isLoading &&
+      !error
+    ) {
+      runQuery();
+    }
+  }, [
+    activeTabId,
+    currentTab?.isTableTab,
+    currentTab?.queryMetadata,
+    isLoading,
+    error,
+    runQuery,
+  ]);
 
   const saveChanges = async () => {
     if (!queryMetadata?.isEditable || changes.length === 0) return;
@@ -962,37 +981,29 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* SQL Input Area */}
-        <div className="shrink-0 p-4 border-b">
-          <div className="flex gap-2">
+        <div className="shrink-0 p-4 border-b relative group">
+          <div className="relative">
             <textarea
               value={sql}
               onChange={(e) => setSql(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="SELECT * FROM your_table"
-              className="flex-1 min-h-[100px] p-3 bg-muted rounded-lg border border-input font-mono text-sm resize-y focus:outline-none focus:ring-2 focus:ring-ring"
+              className="w-full min-h-[100px] p-3 pb-12 bg-muted rounded-lg border border-input font-mono text-sm resize-y focus:outline-none focus:ring-2 focus:ring-ring"
               spellCheck={false}
             />
             <Button
               onClick={runQuery}
               disabled={isLoading || !sql.trim()}
-              className="shrink-0 self-start"
+              size="icon"
+              className="absolute bottom-3 right-3 rounded-full shadow-lg hover:scale-105 transition-transform"
               title="Run query (Cmd+Enter)"
             >
-              <Play size={16} className="mr-2" />
-              {isLoading ? "Running..." : "Run"}
+              <Play
+                size={16}
+                className={isLoading ? "animate-spin" : "ml-0.5"}
+              />
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground mt-2">
-            Press Cmd+Enter to run query
-            {queryMetadata?.isEditable && editableTables.length > 0 && (
-              <span className="ml-2 text-green-500">
-                • Editable: {editableTables.join(", ")}
-              </span>
-            )}
-            {queryMetadata && !queryMetadata.isEditable && (
-              <span className="ml-2 text-yellow-500">• Read-only</span>
-            )}
-          </p>
         </div>
 
         {/* Results Area */}
