@@ -1,11 +1,5 @@
-import {
-  ChevronDown,
-  ChevronRight,
-  Code,
-  Database,
-  Filter,
-  RefreshCcw,
-} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { ChevronRight, Code, Database, Filter, RefreshCcw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
@@ -19,22 +13,10 @@ function LogEntryItem({ log }: { log: SupabaseLogEntry }) {
 
   const getLogIcon = (log: SupabaseLogEntry) => {
     if (log.source === "postgres")
-      return (
-        <Database
-          strokeWidth={1.5}
-          size={16}
-          className="text-muted-foreground/50"
-        />
-      );
+      return <Database strokeWidth={1} size={14} />;
     if (log.source === "edge_function")
-      return (
-        <Code
-          strokeWidth={1.5}
-          size={16}
-          className="text-muted-foreground/50"
-        />
-      );
-    return "•";
+      return <Code strokeWidth={1} size={14} />;
+    return <span>•</span>;
   };
 
   const getLogClass = (log: SupabaseLogEntry) => {
@@ -62,52 +44,54 @@ function LogEntryItem({ log }: { log: SupabaseLogEntry }) {
     log.metadata?.identifier;
 
   return (
-    <div className={`bg-muted ${getLogClass(log)}`}>
-      <div className="flex items-center gap-3 p-3 shadow-sm rounded-lg">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={() => hasMetadata && setShowMetadata(!showMetadata)}
-          className={!hasMetadata ? "opacity-0 pointer-events-none" : ""}
-        >
-          {showMetadata ? (
-            <ChevronDown size={14} className="text-muted-foreground" />
-          ) : (
-            <ChevronRight size={14} className="text-muted-foreground" />
-          )}
-        </Button>
+    <div
+      onClick={() => setShowMetadata(!showMetadata)}
+      className={`${getLogClass(log)}`}
+    >
+      <div
+        className={cn(
+          "flex flex-col gap-3 p-4 group hover:bg-muted/25 border-b border-border/75",
+          showMetadata && "bg-muted/25"
+        )}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            {(log.error_severity || log.status) && (
+              <span
+                className={`text-xs px-2 py-1 rounded font-mono uppercase flex items-center gap-2 ${
+                  log.error_severity === "ERROR" ||
+                  log.error_severity === "FATAL" ||
+                  log.error_severity === "PANIC" ||
+                  (log.status && log.status >= 400)
+                    ? "bg-red-500/10 text-red-500"
+                    : "bg-purple-500/10 text-purple-500"
+                }`}
+              >
+                {getLogIcon(log)}
+                {log.error_severity || log.status}
+              </span>
+            )}
+          </div>
+          <span className="font-mono text-sm text-muted-foreground/50 whitespace-nowrap">
+            {formatTime(log.timestamp)}
+          </span>
+        </div>
         <div className="flex-1 whitespace-pre-wrap break-all flex flex-col gap-1">
           <div className="flex items-baseline gap-2">
-            <span className="text-foreground">{log.event_message}</span>
+            <span className="text-muted-foreground group-hover:text-foreground">
+              {log.event_message}
+            </span>
           </div>
         </div>
-        {(log.error_severity || log.status) && (
-          <span
-            className={`text-xs px-2 py-0.5 rounded-full ${
-              log.error_severity === "ERROR" ||
-              log.error_severity === "FATAL" ||
-              log.error_severity === "PANIC" ||
-              (log.status && log.status >= 400)
-                ? "bg-red-500/10 text-red-500"
-                : "bg-blue-500/10 text-blue-500"
-            }`}
-          >
-            {log.error_severity || log.status}
-          </span>
-        )}
-        <span className="text-mono text-xs text-muted-foreground whitespace-nowrap">
-          {formatTime(log.timestamp)}
-        </span>
-        <span className="log-icon">{getLogIcon(log)}</span>
       </div>
       {showMetadata && hasMetadata && (
-        <div className="p-0 text-xs bg-background/50">
+        <div className="p-0 text-xs bg-muted/25">
           <SyntaxHighlighter
             language="json"
             style={vscDarkPlus}
             customStyle={{
               margin: 0,
-              padding: "1rem",
+              padding: "1.5rem",
               background: "transparent",
               fontSize: "11px",
             }}
@@ -280,7 +264,11 @@ cross join unnest(m.parsed) as parsed`;
           }}
           title="Refresh logs"
         >
-          <RefreshCcw size={14} className={isLoading ? "animate-spin" : ""} />
+          <RefreshCcw
+            size={14}
+            strokeWidth={1}
+            className={isLoading ? "animate-spin" : ""}
+          />
         </Button>
 
         <div className="flex-1 w-full flex flex-col items-center gap-1.5 overflow-hidden mask-gradient-b pb-4">
@@ -288,8 +276,10 @@ cross join unnest(m.parsed) as parsed`;
             <HoverCard key={log.id} openDelay={0} closeDelay={0}>
               <HoverCardTrigger asChild>
                 <div
-                  className={`w-2 h-2 rounded-full shrink-0 transition-all hover:scale-150 ${
-                    isError(log) ? "bg-red-500" : "bg-muted-foreground/30"
+                  className={`w-2 h-2 rounded-full shrink-0 transition-all ${
+                    isError(log)
+                      ? "bg-destructive"
+                      : "bg-muted-foreground/30 hover:bg-foreground"
                   }`}
                   onClick={(e) => e.stopPropagation()} // Preventing sidebar expansion on clicking the dot itself if user just wants to see hover, but user said "clicking sidebar opens it", so maybe we allow it?
                   // Review says: "Clicking the sidebar in collapsed state opens it".
@@ -308,8 +298,10 @@ cross join unnest(m.parsed) as parsed`;
                 <div className="flex flex-col gap-2">
                   <div className="flex items-start justify-between gap-2">
                     <span
-                      className={`text-xs font-mono font-medium ${
-                        isError(log) ? "text-red-500" : "text-muted-foreground"
+                      className={`text-sm font-mono font-medium ${
+                        isError(log)
+                          ? "text-destructive"
+                          : "text-muted-foreground"
                       }`}
                     >
                       {log.error_severity || "LOG"}
@@ -318,7 +310,7 @@ cross join unnest(m.parsed) as parsed`;
                       {new Date(log.timestamp).toLocaleTimeString()}
                     </span>
                   </div>
-                  <p className="text-xs text-foreground/90 break-words font-mono line-clamp-4">
+                  <p className="text-sm text-foreground/90 break-words font-mono line-clamp-4">
                     {log.event_message}
                   </p>
                 </div>
@@ -336,7 +328,7 @@ cross join unnest(m.parsed) as parsed`;
   return (
     <div className="flex flex-col h-full overflow-hidden border-l w-[400px] bg-background">
       <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
-        <h3 className="font-medium text-sm">Logs</h3>
+        <h3 className="font-medium">Logs</h3>
         <div className="flex items-center gap-1">
           <Button
             variant="ghost"
@@ -346,7 +338,8 @@ cross join unnest(m.parsed) as parsed`;
             title={showErrorsOnly ? "Showing errors only" : "Showing all logs"}
           >
             <Filter
-              size={14}
+              size={16}
+              strokeWidth={1}
               className={showErrorsOnly ? "text-destructive font-bold" : ""}
             />
           </Button>
@@ -357,7 +350,11 @@ cross join unnest(m.parsed) as parsed`;
             onClick={() => projectId && loadLogs(projectId)}
             title="Refresh logs"
           >
-            <RefreshCcw size={14} className={isLoading ? "animate-spin" : ""} />
+            <RefreshCcw
+              size={16}
+              strokeWidth={1}
+              className={isLoading ? "animate-spin" : ""}
+            />
           </Button>
           <Button
             variant="ghost"
@@ -366,14 +363,18 @@ cross join unnest(m.parsed) as parsed`;
             onClick={onToggle}
             title="Minimize sidebar"
           >
-            <ChevronRight size={16} />
+            <ChevronRight size={16} strokeWidth={1} />
           </Button>
         </div>
       </div>
-      <div className="flex-1 overflow-auto p-4 custom-scrollbar">
+      <div className="flex-1 overflow-auto custom-scrollbar">
         {isLoading && logs.length === 0 ? (
           <div className="flex items-center justify-center h-full text-muted-foreground">
-            <RefreshCcw size={16} className="animate-spin mr-2" />
+            <RefreshCcw
+              size={16}
+              strokeWidth={1}
+              className="animate-spin mr-2"
+            />
             Loading...
           </div>
         ) : error ? (
@@ -385,7 +386,7 @@ cross join unnest(m.parsed) as parsed`;
             <p className="text-sm">No logs found</p>
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="">
             {filteredLogs.map((log) => (
               <LogEntryItem key={log.id} log={log} />
             ))}

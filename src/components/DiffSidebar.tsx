@@ -122,10 +122,14 @@ export function DiffSidebar({
     <div className="flex flex-col h-full overflow-hidden">
       <div className="flex items-center justify-between px-5 py-3 border-b shrink-0 bg-background">
         <h2 className="font-semibold flex items-center gap-2">
-          <FileDiff size={18} />
+          <FileDiff
+            size={16}
+            strokeWidth={1}
+            className="text-muted-foreground"
+          />
           Schema Diff
         </h2>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-0">
           <Button
             variant="ghost"
             size="icon"
@@ -133,7 +137,11 @@ export function DiffSidebar({
             title="Refresh diff"
             disabled={isLoading || isPushing}
           >
-            <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
+            <RefreshCw
+              size={16}
+              strokeWidth={1}
+              className={isLoading ? "animate-spin" : ""}
+            />
           </Button>
           <Button
             variant="ghost"
@@ -142,12 +150,12 @@ export function DiffSidebar({
             title="Close"
             disabled={isPushing}
           >
-            <X size={16} />
+            <X size={16} strokeWidth={1} />
           </Button>
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto p-0 bg-[#1e1e1e]">
+      <div className="flex-1 overflow-auto p-0 bg-muted/25">
         {isLoading && !diff ? (
           <div className="flex items-center justify-center h-full text-muted-foreground bg-background">
             Loading diff...

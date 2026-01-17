@@ -44,8 +44,8 @@
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
+  --primary: oklch(0.705 0.213 47.604);
+  --primary-foreground: oklch(0.1 0 47.604);
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.269 0 0);
@@ -53,7 +53,8 @@
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
+  --border: oklch(1 0 0 / 9%);
+  --muted-border: oklch(1 0 0 / 4%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
   --chart-1: oklch(0.488 0.243 264.376);
@@ -61,7 +62,7 @@
   --chart-3: oklch(0.769 0.188 70.08);
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
+  --sidebar: oklch(0.18 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
   --sidebar-primary-foreground: oklch(0.985 0 0);
@@ -74,7 +75,7 @@
 :root {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
     Arial, sans-serif;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.5;
   font-weight: 400;
 
@@ -180,44 +181,35 @@ body {
 }
 
 .sql-results-spreadsheet .Spreadsheet {
+  border: none;
+  --outline-color: var(--primary);
+  --border-color: var(--muted-border);
   --background-color: var(--background);
-  --text-color: var(--foreground);
-  --readonly-text-color: var(--muted-foreground);
-  background: transparent;
+  --header-background-color: var(--background);
 }
 
 .sql-results-spreadsheet .Spreadsheet__header {
-  background: var(--muted);
-  color: var(--foreground);
-  min-width: 100px;
-}
-
-.sql-results-spreadsheet .Spreadsheet__header__column,
-.sql-results-spreadsheet .Spreadsheet__header__row {
-  background: var(--muted);
-  color: var(--foreground);
-  font-weight: 500;
-  border-color: var(--border);
-}
-
-.sql-results-spreadsheet .Spreadsheet__cell {
-  background: var(--background);
-  color: var(--foreground);
-  border-color: var(--border);
-  min-width: 100px;
-}
-
-.sql-results-spreadsheet .Spreadsheet__cell--selected {
-  background: var(--accent);
-  box-shadow: inset 0 0 0 2px var(--ring);
+  @apply text-left font-mono text-xs uppercase;
 }
 
 .sql-results-spreadsheet .Spreadsheet__active-cell {
-  background: var(--accent);
+  @apply bg-primary/10 border border-primary;
 }
 
-.sql-results-spreadsheet .Spreadsheet__data-viewer {
-  padding: 4px 8px;
-  font-size: 12px;
-  font-family: ui-monospace, monospace;
+.sql-results-spreadsheet .Spreadsheet__header,
+.sql-results-spreadsheet .Spreadsheet__data-viewer,
+.sql-results-spreadsheet .Spreadsheet__data-editor input {
+  @apply p-3;
+}
+
+.sql-results-spreadsheet tr {
+  color: var(--muted-foreground);
+}
+
+.sql-results-spreadsheet tr:hover {
+  color: var(--foreground);
+}
+
+.sql-results-spreadsheet .Spreadsheet__header--selected {
+  @apply bg-muted/25;
 }

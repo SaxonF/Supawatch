@@ -305,6 +305,7 @@ cross join unnest(m.parsed) as parsed`;
           >
             <Filter
               size={16}
+              strokeWidth={1}
               className={showErrorsOnly ? "text-destructive" : ""}
             />
           </Button>
@@ -313,7 +314,7 @@ cross join unnest(m.parsed) as parsed`;
             size="icon"
             onClick={() => selectedProjectId && loadLogs(selectedProjectId)}
           >
-            <RefreshCcw size={16} />
+            <RefreshCcw size={16} strokeWidth={1} />
           </Button>
         </div>
       </div>

@@ -1,413 +1,31 @@
-import {
-  ChevronDown,
-  ChevronRight,
-  FileText,
-  Play,
-  Plus,
-  RefreshCw,
-  Save,
-  Table,
-  X,
-} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Spreadsheet, { type CellBase, type Matrix } from "react-spreadsheet";
 import * as api from "../api";
-import { Button } from "./ui/button";
-
-interface SqlEditorProps {
-  projectId: string;
-}
-
-interface CellData extends CellBase {
-  value: string;
-  readOnly?: boolean;
-}
-
-type SpreadsheetData = Matrix<CellData>;
-
-interface TableInfo {
-  name: string;
-  alias: string | null;
-  primaryKeyColumn: string | null; // The column name as it appears in results
-  primaryKeyField: string; // The actual field name in the table
-}
-
-interface ColumnInfo {
-  resultName: string; // Column name as it appears in query results
-  tableName: string | null; // Which table this column belongs to
-  fieldName: string; // Actual field name in the table
-  isComputed: boolean;
-  isPrimaryKey: boolean;
-}
-
-interface QueryMetadata {
-  tables: TableInfo[];
-  columns: ColumnInfo[];
-  isEditable: boolean;
-}
-
-interface TableChange {
-  tableName: string;
-  primaryKeyColumn: string;
-  primaryKeyValue: string;
-  changes: Record<string, { oldValue: string; newValue: string }>;
-}
-
-interface RowChanges {
-  rowIndex: number;
-  tableChanges: TableChange[];
-}
-
-// Schema exclusion list matching backend introspection
-const EXCLUDED_SCHEMAS = [
-  "pg_catalog",
-  "information_schema",
-  "auth",
-  "storage",
-  "extensions",
-  "realtime",
-  "graphql",
-  "graphql_public",
-  "vault",
-  "pgsodium",
-  "pgsodium_masks",
-  "supa_audit",
-  "net",
-  "pgtle",
-  "repack",
-  "tiger",
-  "topology",
-  "supabase_migrations",
-  "supabase_functions",
-  "cron",
-  "pgbouncer",
-];
-
-// Query to fetch tables matching backend introspection logic
-const TABLES_QUERY = `
-  SELECT table_schema as schema, table_name as name
-  FROM information_schema.tables
-  WHERE table_schema NOT IN (${EXCLUDED_SCHEMAS.map((s) => `'${s}'`).join(
-    ", "
-  )})
-    AND table_schema NOT LIKE 'pg_toast%'
-    AND table_schema NOT LIKE 'pg_temp%'
-    AND table_type = 'BASE TABLE'
-  ORDER BY table_schema, table_name
-`;
-
-interface TableRef {
-  schema: string;
-  name: string;
-}
-
-interface Tab {
-  id: string;
-  name: string;
-  sql: string;
-  results: SpreadsheetData;
-  originalResults: SpreadsheetData;
-  displayColumns: string[];
-  queryMetadata: QueryMetadata | null;
-  error: string | null;
-  isTableTab: boolean;
-}
-
-function generateTabId(): string {
-  return `tab-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-}
-
-function createNewTab(): Tab {
-  return {
-    id: generateTabId(),
-    name: "Untitled",
-    sql: "SELECT * FROM ",
-    results: [],
-    originalResults: [],
-    displayColumns: [],
-    queryMetadata: null,
-    error: null,
-    isTableTab: false,
-  };
-}
-
-// Extract table name, handling quoted identifiers and schema.table format
-function extractTableIdentifier(match: string): string {
-  // Remove surrounding quotes if present
-  if (match.startsWith('"') && match.endsWith('"')) {
-    return match.slice(1, -1);
-  }
-  return match;
-}
-
-// Parse a potentially schema-qualified table reference (schema.table or just table)
-function parseTableReference(ref: string): string {
-  // Handle schema.table format - extract just the table name
-  const parts = ref.split(".");
-  if (parts.length === 2) {
-    // Return just the table name part, handling quoted identifiers
-    return extractTableIdentifier(parts[1]);
-  }
-  return extractTableIdentifier(ref);
-}
-
-// Regex pattern for table identifiers (quoted or unquoted, with optional schema)
-// Matches: table, schema.table, "table", "schema"."table", schema."table"
-const TABLE_IDENTIFIER = `(?:"[^"]+"(?:\\."[^"]+")?|[a-z_][a-z0-9_]*(?:\\.[a-z_][a-z0-9_]*)?(?:\\."[^"]+")?|"[^"]+"\\.[a-z_][a-z0-9_]*)`;
-const SIMPLE_IDENTIFIER = `(?:"[^"]+"|[a-z_][a-z0-9_]*)`;
-
-// Extract the primary table name from a SQL query
-function extractPrimaryTableName(sql: string): string | null {
-  const normalized = sql.replace(/\s+/g, " ").trim();
-  const fromRegex = new RegExp(`\\bfrom\\s+(${TABLE_IDENTIFIER})`, "i");
-  const fromMatch = normalized.match(fromRegex);
-  return fromMatch ? parseTableReference(fromMatch[1]) : null;
-}
-
-// Parse tables from FROM and JOIN clauses
-function parseTables(sql: string): TableInfo[] {
-  const normalized = sql.replace(/\s+/g, " ").trim();
-  const tables: TableInfo[] = [];
-
-  // Match FROM table [alias] - supports quoted identifiers and schema.table
-  const fromRegex = new RegExp(
-    `\\bfrom\\s+(${TABLE_IDENTIFIER})(?:\\s+(?:as\\s+)?(${SIMPLE_IDENTIFIER}))?`,
-    "i"
-  );
-  const fromMatch = normalized.match(fromRegex);
-  if (fromMatch) {
-    tables.push({
-      name: parseTableReference(fromMatch[1]).toLowerCase(),
-      alias: fromMatch[2]
-        ? extractTableIdentifier(fromMatch[2]).toLowerCase()
-        : null,
-      primaryKeyColumn: null,
-      primaryKeyField: "id",
-    });
-  }
-
-  // Match JOIN table [alias] - supports quoted identifiers and schema.table
-  const joinRegex = new RegExp(
-    `\\bjoin\\s+(${TABLE_IDENTIFIER})(?:\\s+(?:as\\s+)?(${SIMPLE_IDENTIFIER}))?`,
-    "gi"
-  );
-  let joinMatch;
-  while ((joinMatch = joinRegex.exec(normalized)) !== null) {
-    tables.push({
-      name: parseTableReference(joinMatch[1]).toLowerCase(),
-      alias: joinMatch[2]
-        ? extractTableIdentifier(joinMatch[2]).toLowerCase()
-        : null,
-      primaryKeyColumn: null,
-      primaryKeyField: "id",
-    });
-  }
-
-  return tables;
-}
-
-// Check if query has non-editable constructs (aggregations, etc.)
-function hasNonEditableConstructs(sql: string): boolean {
-  const normalized = sql.replace(/\s+/g, " ").trim().toLowerCase();
-
-  const nonEditablePatterns = [
-    /\bgroup\s+by\b/,
-    /\bhaving\b/,
-    /\bunion\b/,
-    /\bintersect\b/,
-    /\bexcept\b/,
-    /\bdistinct\b/,
-    /\bcount\s*\(/,
-    /\bsum\s*\(/,
-    /\bavg\s*\(/,
-    /\bmin\s*\(/,
-    /\bmax\s*\(/,
-  ];
-
-  return nonEditablePatterns.some((pattern) => pattern.test(normalized));
-}
-
-// Parse column info from SELECT clause and result columns
-function parseColumns(
-  sql: string,
-  resultColumns: string[],
-  tables: TableInfo[]
-): ColumnInfo[] {
-  const normalized = sql.replace(/\s+/g, " ").trim();
-
-  // Extract SELECT clause
-  const selectMatch = normalized.match(/select\s+(.+?)\s+from\s/i);
-  if (!selectMatch)
-    return resultColumns.map((col) => ({
-      resultName: col,
-      tableName: null,
-      fieldName: col,
-      isComputed: false,
-      isPrimaryKey: false,
-    }));
-
-  const selectClause = selectMatch[1];
-  const isSelectStar = selectClause.trim() === "*";
-
-  // Build alias to table name map
-  const aliasMap: Record<string, string> = {};
-  for (const table of tables) {
-    if (table.alias) {
-      aliasMap[table.alias] = table.name;
-    }
-    aliasMap[table.name] = table.name;
-  }
-
-  return resultColumns.map((resultCol) => {
-    const info: ColumnInfo = {
-      resultName: resultCol,
-      tableName: null,
-      fieldName: resultCol,
-      isComputed: false,
-      isPrimaryKey: false,
-    };
-
-    // Check if column name contains table prefix (e.g., "users.name" or result is "users_name")
-    // First, try to find explicit prefix in SELECT clause
-    if (!isSelectStar) {
-      // Look for patterns like: table.column as alias, table.column alias, table.column
-      const prefixPattern = new RegExp(
-        `\\b([a-z_][a-z0-9_]*)\\.([a-z_][a-z0-9_]*)(?:\\s+(?:as\\s+)?${resultCol})?\\b`,
-        "gi"
-      );
-
-      let match;
-      while ((match = prefixPattern.exec(selectClause)) !== null) {
-        const [fullMatch, prefix, field] = match;
-        // Check if this matches our result column
-        if (
-          fullMatch.toLowerCase().includes(resultCol.toLowerCase()) ||
-          field.toLowerCase() === resultCol.toLowerCase()
-        ) {
-          const tableName = aliasMap[prefix.toLowerCase()];
-          if (tableName) {
-            info.tableName = tableName;
-            info.fieldName = field;
-            break;
-          }
-        }
-      }
-    }
-
-    // For SELECT *, try to infer table from column naming conventions
-    if (!info.tableName && tables.length === 1) {
-      // Single table query - all columns belong to that table
-      info.tableName = tables[0].name;
-    }
-
-    // Check if this is a computed column
-    if (!isSelectStar) {
-      const computedPatterns = [
-        new RegExp(`\\([^)]+\\)\\s+(?:as\\s+)?${resultCol}\\b`, "i"),
-        new RegExp(
-          `\\w+\\s*[+\\-*/]\\s*\\w+.*?(?:as\\s+)?${resultCol}\\b`,
-          "i"
-        ),
-        new RegExp(`\\w+\\s*\\|\\|\\s*\\w+.*?(?:as\\s+)?${resultCol}\\b`, "i"),
-        new RegExp(
-          `\\b(?:coalesce|case|nullif|concat)\\s*\\(.*?(?:as\\s+)?${resultCol}\\b`,
-          "i"
-        ),
-      ];
-
-      info.isComputed = computedPatterns.some((p) => p.test(selectClause));
-    }
-
-    return info;
-  });
-}
-
-// Find primary key columns for each table in the result set
-function findPrimaryKeys(columns: ColumnInfo[], tables: TableInfo[]): void {
-  const pkNames = ["id", "uuid", "pk", "_id"];
-
-  for (const table of tables) {
-    // Look for table-prefixed primary key first (e.g., users.id -> users_id or just id if single table)
-    for (const pkName of pkNames) {
-      const matchingCol = columns.find(
-        (col) =>
-          col.tableName === table.name && col.fieldName.toLowerCase() === pkName
-      );
-      if (matchingCol) {
-        table.primaryKeyColumn = matchingCol.resultName;
-        table.primaryKeyField = pkName;
-        matchingCol.isPrimaryKey = true;
-        break;
-      }
-    }
-
-    // If no prefixed PK found, look for standalone pk columns
-    if (!table.primaryKeyColumn) {
-      for (const pkName of pkNames) {
-        const matchingCol = columns.find(
-          (col) => col.resultName.toLowerCase() === pkName && !col.isPrimaryKey
-        );
-        if (matchingCol) {
-          table.primaryKeyColumn = matchingCol.resultName;
-          table.primaryKeyField = pkName;
-          matchingCol.isPrimaryKey = true;
-          // Assign this column to the table if not assigned
-          if (!matchingCol.tableName) {
-            matchingCol.tableName = table.name;
-          }
-          break;
-        }
-      }
-    }
-  }
-}
-
-// Format a value for display in the spreadsheet
-function formatCellValue(value: unknown): string {
-  if (value === null) return "NULL";
-  if (typeof value === "object") {
-    return JSON.stringify(value);
-  }
-  return String(value);
-}
-
-// Check if a string looks like JSON
-function isJsonString(str: string): boolean {
-  if (str === "NULL") return false;
-  const trimmed = str.trim();
-  return (
-    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
-    (trimmed.startsWith("[") && trimmed.endsWith("]"))
-  );
-}
-
-// Generate UPDATE SQL for a table
-function generateUpdateSql(
-  tableName: string,
-  primaryKeyField: string,
-  primaryKeyValue: string,
-  changes: Record<string, { oldValue: string; newValue: string }>
-): string {
-  const setClauses = Object.entries(changes)
-    .map(([fieldName, { newValue }]) => {
-      if (newValue === "NULL") {
-        return `"${fieldName}" = NULL`;
-      }
-
-      const escapedValue = `'${newValue.replace(/'/g, "''")}'`;
-
-      if (isJsonString(newValue)) {
-        return `"${fieldName}" = ${escapedValue}::jsonb`;
-      }
-
-      return `"${fieldName}" = ${escapedValue}`;
-    })
-    .join(", ");
-
-  const escapedPkValue = `'${primaryKeyValue.replace(/'/g, "''")}'`;
-
-  return `UPDATE "${tableName}" SET ${setClauses} WHERE "${primaryKeyField}" = ${escapedPkValue}`;
-}
+import { SqlChangesBar } from "./sql-editor/SqlChangesBar";
+import { SqlQueryArea } from "./sql-editor/SqlQueryArea";
+import { SqlResultsArea } from "./sql-editor/SqlResultsArea";
+import { SqlSidebar } from "./sql-editor/SqlSidebar";
+import {
+  CellData,
+  QueryMetadata,
+  RowChanges,
+  SpreadsheetData,
+  SqlEditorProps,
+  Tab,
+  TableChange,
+  TableRef,
+} from "./sql-editor/types";
+import {
+  createNewTab,
+  extractPrimaryTableName,
+  findPrimaryKeys,
+  formatCellValue,
+  generateTabId,
+  generateUpdateSql,
+  hasNonEditableConstructs,
+  parseColumns,
+  parseTables,
+  TABLES_QUERY,
+} from "./sql-editor/utils";
 
 export function SqlEditor({ projectId }: SqlEditorProps) {
   const [tabs, setTabs] = useState<Tab[]>(() => [createNewTab()]);
@@ -832,220 +450,62 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
     }
   };
 
+  const discardChanges = useCallback(() => {
+    updateCurrentTab({
+      results: JSON.parse(JSON.stringify(originalResults)),
+    });
+  }, [updateCurrentTab, originalResults]);
+
   const hasChanges = changesSummary.totalChanges > 0;
-
-  // Build editable tables summary
-  const editableTables =
-    queryMetadata?.tables
-      .filter((t) => t.primaryKeyColumn !== null)
-      .map((t) => t.name) || [];
-
-  // Helper to render a tab item
-  const renderTabItem = (tab: Tab, icon: React.ReactNode) => (
-    <div
-      key={tab.id}
-      onClick={() => setActiveTabId(tab.id)}
-      onDoubleClick={() => startEditingTab(tab.id)}
-      className={`group flex items-center gap-2 px-3 py-1.5 cursor-pointer transition-colors ${
-        tab.id === activeTabId
-          ? "bg-primary/10 text-primary border-l-2 border-l-primary"
-          : "hover:bg-muted/50 border-l-2 border-l-transparent"
-      }`}
-    >
-      {icon}
-      {editingTabId === tab.id ? (
-        <input
-          ref={editInputRef}
-          type="text"
-          value={editingTabName}
-          onChange={(e) => setEditingTabName(e.target.value)}
-          onBlur={finishEditingTab}
-          onKeyDown={handleTabKeyDown}
-          className="flex-1 bg-transparent border-none outline-none text-sm min-w-0"
-          onClick={(e) => e.stopPropagation()}
-        />
-      ) : (
-        <span className="flex-1 text-sm truncate" title={tab.name}>
-          {tab.name}
-        </span>
-      )}
-      <button
-        onClick={(e) => closeTab(tab.id, e)}
-        className="shrink-0 opacity-0 group-hover:opacity-100 hover:bg-muted rounded p-0.5 transition-opacity"
-        title="Close tab"
-      >
-        <X size={12} className="text-muted-foreground" />
-      </button>
-    </div>
-  );
 
   return (
     <div className="flex h-full overflow-hidden">
-      {/* Vertical Tabs Sidebar */}
-      <div className="w-48 shrink-0 flex flex-col border-r bg-muted/20">
-        {/* Scrollable content */}
-        <div className="flex-1 overflow-y-auto">
-          {/* Tables Group */}
-          <div className="border-b">
-            {/* Tables Header - Clickable to collapse */}
-            <div
-              onClick={() => setTablesCollapsed(!tablesCollapsed)}
-              className="shrink-0 flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-muted/30 transition-colors"
-            >
-              <div className="flex items-center gap-1">
-                {tablesCollapsed ? (
-                  <ChevronRight size={14} className="text-muted-foreground" />
-                ) : (
-                  <ChevronDown size={14} className="text-muted-foreground" />
-                )}
-                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                  Tables
-                </span>
-              </div>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  fetchTables();
-                }}
-                disabled={isLoadingTables}
-                className="p-1 hover:bg-muted rounded transition-colors"
-                title="Refresh tables"
-              >
-                <RefreshCw
-                  size={14}
-                  className={`text-muted-foreground ${
-                    isLoadingTables ? "animate-spin" : ""
-                  }`}
-                />
-              </button>
-            </div>
-
-            {/* Tables List */}
-            {!tablesCollapsed && (
-              <div className="py-1">
-                {tableTabs.map((tab) =>
-                  renderTabItem(
-                    tab,
-                    <Table
-                      size={14}
-                      className="shrink-0 text-muted-foreground"
-                    />
-                  )
-                )}
-                {tableTabs.length === 0 && (
-                  <div className="px-3 py-2 text-center text-muted-foreground text-xs">
-                    No tables found
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Other Group */}
-          <div>
-            {/* Other Header */}
-            <div className="shrink-0 flex items-center justify-between px-3 py-2">
-              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-[18px]">
-                Other
-              </span>
-              <button
-                onClick={addNewTab}
-                className="p-1 hover:bg-muted rounded transition-colors"
-                title="New query tab"
-              >
-                <Plus size={14} className="text-muted-foreground" />
-              </button>
-            </div>
-
-            {/* Other Tabs List */}
-            <div className="py-1">
-              {otherTabs.map((tab) =>
-                renderTabItem(
-                  tab,
-                  <FileText
-                    size={14}
-                    className="shrink-0 text-muted-foreground"
-                  />
-                )
-              )}
-              {otherTabs.length === 0 && (
-                <div className="px-3 py-2 text-center text-muted-foreground text-xs">
-                  No queries yet
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
+      <SqlSidebar
+        tableTabs={tableTabs}
+        otherTabs={otherTabs}
+        activeTabId={activeTabId}
+        setActiveTabId={setActiveTabId}
+        startEditingTab={startEditingTab}
+        editingTabId={editingTabId}
+        editInputRef={editInputRef}
+        editingTabName={editingTabName}
+        setEditingTabName={setEditingTabName}
+        finishEditingTab={finishEditingTab}
+        handleTabKeyDown={handleTabKeyDown}
+        closeTab={closeTab}
+        tablesCollapsed={tablesCollapsed}
+        setTablesCollapsed={setTablesCollapsed}
+        fetchTables={fetchTables}
+        isLoadingTables={isLoadingTables}
+        addNewTab={addNewTab}
+      />
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* SQL Input Area */}
-        <div className="shrink-0 p-4 border-b relative group">
-          <div className="relative">
-            <textarea
-              value={sql}
-              onChange={(e) => setSql(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="SELECT * FROM your_table"
-              className="w-full min-h-[100px] p-3 pb-12 bg-muted rounded-lg border border-input font-mono text-sm resize-y focus:outline-none focus:ring-2 focus:ring-ring"
-              spellCheck={false}
-            />
-            <Button
-              onClick={runQuery}
-              disabled={isLoading || !sql.trim()}
-              size="icon"
-              className="absolute bottom-3 right-3 rounded-full shadow-lg hover:scale-105 transition-transform"
-              title="Run query (Cmd+Enter)"
-            >
-              <Play
-                size={16}
-                className={isLoading ? "animate-spin" : "ml-0.5"}
-              />
-            </Button>
-          </div>
-        </div>
+      <div className="flex-1 flex flex-col overflow-hidden gap-0">
+        <SqlQueryArea
+          sql={sql}
+          setSql={setSql}
+          runQuery={runQuery}
+          isLoading={isLoading}
+          handleKeyDown={handleKeyDown}
+        />
 
-        {/* Results Area */}
-        <div className="flex-1 overflow-auto p-4">
-          {error ? (
-            <div className="p-4 bg-destructive/10 rounded-lg border border-destructive/20">
-              <p className="text-destructive text-sm font-mono whitespace-pre-wrap">
-                {error}
-              </p>
-            </div>
-          ) : results.length > 0 ? (
-            <div className="sql-results-spreadsheet">
-              <Spreadsheet
-                data={results}
-                columnLabels={displayColumns}
-                onChange={handleDataChange}
-              />
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-              <p>No results</p>
-              <p className="text-sm mt-1">Run a query to see results here</p>
-            </div>
-          )}
-        </div>
+        <SqlResultsArea
+          error={error}
+          results={results}
+          displayColumns={displayColumns}
+          handleDataChange={handleDataChange}
+        />
 
-        {/* Changes Bar */}
         {hasChanges && (
-          <div className="shrink-0 px-4 py-3 border-t bg-muted/50 flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">
-              {changesSummary.totalChanges} change
-              {changesSummary.totalChanges !== 1 ? "s" : ""} to{" "}
-              {changesSummary.rowCount} row
-              {changesSummary.rowCount !== 1 ? "s" : ""}
-              {changesSummary.tableCount > 1 &&
-                ` across ${changesSummary.tableCount} tables`}
-            </span>
-            <Button onClick={saveChanges} disabled={isSaving} size="sm">
-              <Save size={14} className="mr-2" />
-              {isSaving ? "Saving..." : "Save"}
-            </Button>
-          </div>
+          <SqlChangesBar
+            totalChanges={changesSummary.totalChanges}
+            rowCount={changesSummary.rowCount}
+            tableCount={changesSummary.tableCount}
+            saveChanges={saveChanges}
+            discardChanges={discardChanges}
+            isSaving={isSaving}
+          />
         )}
       </div>
     </div>

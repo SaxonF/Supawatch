@@ -26,49 +26,64 @@ export function Sidebar({
   return (
     <div className="w-64 h-full flex flex-col bg-sidebar border-r border-sidebar-border shrink-0">
       {/* Header */}
-      <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-sidebar-border">
+      <div className="shrink-0 flex items-center justify-between pl-4 pr-3 py-3">
         <div className="flex items-center gap-2">
           <svg
-            width="11"
-            height="11"
-            viewBox="0 0 11 11"
+            width="20"
+            height="20"
+            viewBox="0 0 20 20"
             fill="none"
             xmlns="http://www.w3.org/2000/svg"
           >
-            <rect width="1" height="11" fill="white" />
-            <rect x="2" width="1" height="11" fill="white" />
-            <rect x="10" width="1" height="11" fill="white" />
-            <rect x="4" y="6" width="1" height="5" fill="white" />
-            <rect x="4" width="1" height="5" fill="white" />
+            <rect width="1.81818" height="20" fill="white" />
+            <rect x="3.63635" width="1.81818" height="20" fill="white" />
+            <rect x="18.1818" width="1.81818" height="20" fill="white" />
             <rect
-              x="9"
-              width="1"
-              height="5"
-              transform="rotate(90 9 0)"
+              x="7.27277"
+              y="10.9092"
+              width="1.81818"
+              height="9.09091"
+              fill="white"
+            />
+            <rect x="7.27277" width="1.81818" height="9.09091" fill="white" />
+            <rect
+              x="16.3636"
+              width="1.81818"
+              height="9.09091"
+              transform="rotate(90 16.3636 0)"
               fill="white"
             />
             <rect
-              x="9"
-              y="2"
-              width="1"
-              height="5"
-              transform="rotate(90 9 2)"
+              x="16.3636"
+              y="3.63672"
+              width="1.81818"
+              height="9.09091"
+              transform="rotate(90 16.3636 3.63672)"
               fill="white"
             />
             <rect
-              x="9"
-              y="4"
-              width="1"
-              height="5"
-              transform="rotate(90 9 4)"
+              x="16.3636"
+              y="7.27246"
+              width="1.81818"
+              height="9.09091"
+              transform="rotate(90 16.3636 7.27246)"
               fill="white"
             />
-            <rect x="6" y="6" width="1" height="5" fill="white" />
-            <rect x="8" y="6" width="1" height="5" fill="white" />
+            <rect
+              x="10.9091"
+              y="10.9092"
+              width="1.81818"
+              height="9.09091"
+              fill="white"
+            />
+            <rect
+              x="14.5454"
+              y="10.9092"
+              width="1.81818"
+              height="9.09091"
+              fill="white"
+            />
           </svg>
-          <span className="font-semibold text-sidebar-foreground">
-            Supawatch
-          </span>
         </div>
         <Button
           variant="ghost"
@@ -77,12 +92,12 @@ export function Sidebar({
           className="text-sidebar-foreground/60 hover:text-sidebar-foreground"
           title="Settings"
         >
-          <Settings size={16} />
+          <Settings size={16} strokeWidth={1} />
         </Button>
       </div>
 
       {/* Projects List */}
-      <div className="flex-1 overflow-auto py-2">
+      <div className="flex-1 overflow-auto">
         {projects.length === 0 ? (
           <div className="px-4 py-8 text-center text-muted-foreground text-sm">
             <p>No projects yet</p>
@@ -94,10 +109,10 @@ export function Sidebar({
               <button
                 key={project.id}
                 onClick={() => onSelectProject(project.id)}
-                className={`w-full px-4 py-2.5 flex items-center gap-3 text-left transition-colors ${
+                className={`w-full px-4 py-2.5 flex items-center gap-4 text-left transition-colors ${
                   selectedProjectId === project.id
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-sidebar-foreground/80 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+                    ? "bg-primary/10 text-primary"
+                    : "text-primary hover:bg-primary/10 hover:text-primary"
                 }`}
               >
                 <span
@@ -108,9 +123,9 @@ export function Sidebar({
                   }`}
                 />
                 <div className="flex-1 min-w-0">
-                  <div className="font-medium truncate">{project.name}</div>
+                  <div className="font-semibold truncate">{project.name}</div>
                   {project.supabase_project_ref && (
-                    <div className="text-xs text-muted-foreground truncate">
+                    <div className="text-foreground/50 truncate">
                       {project.supabase_project_ref}
                     </div>
                   )}
@@ -128,7 +143,7 @@ export function Sidebar({
           className="w-full justify-center gap-2"
           onClick={onAddProject}
         >
-          <Plus size={16} />
+          <Plus size={16} strokeWidth={1} className="text-muted-foreground" />
           Add Project
         </Button>
       </div>

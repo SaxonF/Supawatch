@@ -9,7 +9,6 @@ import {
   FileDiff,
   Folder,
   PanelLeft,
-  RefreshCw,
   Sprout,
   Trash2,
 } from "lucide-react";
@@ -208,19 +207,19 @@ export function ProjectHeader({
           className="text-muted-foreground hover:text-primary"
           title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
         >
-          <PanelLeft size={18} />
+          <PanelLeft size={16} strokeWidth={1} />
         </Button>
         <div className="w-px h-5 bg-border" />
         <span
-          className={`w-2.5 h-2.5 rounded-full ${
+          className={`w-2 h-2 rounded-full ${
             isWatching
-              ? "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]"
+              ? "bg-primary shadow-[0_0_8px_rgba(34,197,94,0.6)]"
               : "bg-muted-foreground/30"
           }`}
         />
-        <h1 className="text-lg font-semibold">{project.name}</h1>
+        <h1 className="font-semibold">{project.name}</h1>
         {project.supabase_project_ref && (
-          <span className="text-sm text-muted-foreground">
+          <span className="text-muted-foreground">
             {project.supabase_project_ref}
           </span>
         )}
@@ -233,7 +232,7 @@ export function ProjectHeader({
             className="text-muted-foreground hover:text-primary h-7 w-7"
             title="Open folder in Finder"
           >
-            <Folder size={16} />
+            <Folder size={16} strokeWidth={1} />
           </Button>
 
           {project.supabase_project_ref && (
@@ -244,14 +243,23 @@ export function ProjectHeader({
               className="text-muted-foreground hover:text-primary h-7 w-7"
               title="Open Supabase Dashboard"
             >
-              <ExternalLink size={16} />
+              <ExternalLink size={16} strokeWidth={1} />
             </Button>
           )}
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
-        <div className="flex items-center gap-1 mr-2">
+      <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="icon"
+            className="text-muted-foreground hover:text-red-500 hover:bg-red-500/10"
+            onClick={handleDelete}
+            title="Delete project"
+          >
+            <Trash2 size={16} strokeWidth={1} />
+          </Button>
           <Button
             variant="outline"
             size="icon"
@@ -260,7 +268,7 @@ export function ProjectHeader({
             disabled={isLoading}
             title="Run seed files"
           >
-            <Sprout size={18} />
+            <Sprout size={16} strokeWidth={1} />
           </Button>
 
           <Button
@@ -271,69 +279,57 @@ export function ProjectHeader({
             disabled={isLoading}
             title="Pull from remote"
           >
-            <CloudDownload size={18} />
+            <CloudDownload size={16} strokeWidth={1} />
           </Button>
         </div>
-
-        <div className="flex items-center">
-          <Button
-            variant="outline"
-            className="rounded-r-none border-r-0 px-3 hover:bg-muted"
-            onClick={handlePush}
-            disabled={isLoading}
-            title="Push to remote"
-          >
-            <CloudUpload size={16} className="mr-2" />
-            Push
-          </Button>
-          <Button
-            variant="outline"
-            size="icon"
-            className={`rounded-l-none w-9 ${
-              showDiffSidebar
-                ? "bg-muted text-primary hover:text-primary/80"
-                : "text-muted-foreground hover:text-primary hover:bg-muted"
-            }`}
-            onClick={onToggleDiffSidebar}
-            disabled={isLoading}
-            title={showDiffSidebar ? "Hide schema diff" : "Show schema diff"}
-          >
-            <FileDiff size={16} />
-          </Button>
-        </div>
-
-        <Button
-          variant="outline"
-          className={
-            isWatching
-              ? "text-green-500 border-green-500/50 hover:bg-green-500/10"
-              : "text-muted-foreground hover:text-primary"
-          }
-          onClick={toggleWatch}
-          disabled={isLoading}
-          title={isWatching ? "Stop watching" : "Start watching"}
-        >
-          {isLoading ? (
-            <RefreshCw size={16} className="animate-spin mr-2" />
-          ) : isWatching ? (
-            <Eye size={16} className="mr-2" />
-          ) : (
-            <EyeOff size={16} className="mr-2" />
-          )}
-          Watch
-        </Button>
-
         <div className="w-px h-5 bg-border mx-1" />
+        <div className="flex items-center gap-2">
+          <div className="flex items-center">
+            <Button
+              variant="outline"
+              className="rounded-r-none border-r-0 px-3 hover:bg-muted"
+              onClick={handlePush}
+              disabled={isLoading}
+              title="Push to remote"
+            >
+              <CloudUpload size={16} strokeWidth={1} />
+              Push
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              className={`rounded-l-none w-9 ${
+                showDiffSidebar
+                  ? "bg-muted text-primary hover:text-primary/80"
+                  : "text-muted-foreground hover:text-primary hover:bg-muted"
+              }`}
+              onClick={onToggleDiffSidebar}
+              disabled={isLoading}
+              title={showDiffSidebar ? "Hide schema diff" : "Show schema diff"}
+            >
+              <FileDiff size={16} strokeWidth={1} />
+            </Button>
+          </div>
 
-        <Button
-          variant="ghost"
-          size="icon"
-          className="text-muted-foreground hover:text-red-500 hover:bg-red-500/10"
-          onClick={handleDelete}
-          title="Delete project"
-        >
-          <Trash2 size={18} />
-        </Button>
+          <Button
+            variant="outline"
+            className={
+              isWatching
+                ? "text-primary border-primary/50 hover:bg-primary/10 hover:text-primary/75"
+                : "text-muted-foreground hover:text-primary"
+            }
+            onClick={toggleWatch}
+            disabled={isLoading}
+            title={isWatching ? "Stop watching" : "Start watching"}
+          >
+            {isWatching ? (
+              <Eye size={16} strokeWidth={1} />
+            ) : (
+              <EyeOff size={16} strokeWidth={1} />
+            )}
+            Watch
+          </Button>
+        </div>
       </div>
     </header>
   );
