@@ -198,13 +198,12 @@ export function ProjectHeader({
   };
 
   return (
-    <header className="shrink-0 flex items-center justify-between px-5 py-3 border-b bg-background">
-      <div className="flex items-center gap-3">
+    <header className="shrink-0 flex items-center justify-between px-5 py-3 border-b bg-muted/10">
+      <div className="flex items-center gap-4">
         <Button
           variant="ghost"
           size="icon"
           onClick={onToggleSidebar}
-          className="text-muted-foreground hover:text-primary"
           title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
         >
           <PanelLeft size={16} strokeWidth={1} />
@@ -217,19 +216,20 @@ export function ProjectHeader({
               : "bg-muted-foreground/30"
           }`}
         />
-        <h1 className="font-semibold">{project.name}</h1>
-        {project.supabase_project_ref && (
-          <span className="text-muted-foreground">
-            {project.supabase_project_ref}
-          </span>
-        )}
+        <div className="flex items-center gap-2 mb-1">
+          <h1 className="font-semibold">{project.name}</h1>
+          {project.supabase_project_ref && (
+            <span className="text-muted-foreground">
+              {project.supabase_project_ref}
+            </span>
+          )}
+        </div>
 
-        <div className="flex items-center gap-1 ml-2">
+        <div className="flex items-center gap-0">
           <Button
             variant="ghost"
             size="icon"
             onClick={handleOpenFolder}
-            className="text-muted-foreground hover:text-primary h-7 w-7"
             title="Open folder in Finder"
           >
             <Folder size={16} strokeWidth={1} />
@@ -240,7 +240,6 @@ export function ProjectHeader({
               variant="ghost"
               size="icon"
               onClick={handleOpenSupabase}
-              className="text-muted-foreground hover:text-primary h-7 w-7"
               title="Open Supabase Dashboard"
             >
               <ExternalLink size={16} strokeWidth={1} />
@@ -254,7 +253,6 @@ export function ProjectHeader({
           <Button
             variant="outline"
             size="icon"
-            className="text-muted-foreground hover:text-red-500 hover:bg-red-500/10"
             onClick={handleDelete}
             title="Delete project"
           >
@@ -263,7 +261,6 @@ export function ProjectHeader({
           <Button
             variant="outline"
             size="icon"
-            className="text-muted-foreground hover:text-primary"
             onClick={handleRunSeeds}
             disabled={isLoading}
             title="Run seed files"
@@ -274,7 +271,6 @@ export function ProjectHeader({
           <Button
             variant="outline"
             size="icon"
-            className="text-muted-foreground hover:text-primary"
             onClick={handlePull}
             disabled={isLoading}
             title="Pull from remote"
