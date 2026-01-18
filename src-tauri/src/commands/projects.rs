@@ -45,6 +45,8 @@ pub async fn create_project(
     supabase_project_id: Option<String>,
     supabase_project_ref: Option<String>,
     organization_id: Option<String>,
+    generate_typescript: Option<bool>,
+    typescript_output_path: Option<String>,
 ) -> Result<Project, String> {
     let state = app_handle.state::<Arc<AppState>>();
 
@@ -326,11 +328,19 @@ pub async fn create_project(
         }
     }
 
-    let project = if let (Some(pid), Some(pref)) = (project_id, project_ref) {
+    let mut project = if let (Some(pid), Some(pref)) = (project_id, project_ref) {
         Project::with_remote(name, local_path, pid, pref)
     } else {
         Project::new(name, local_path)
     };
+
+    // Apply TypeScript settings if provided
+    if let Some(enabled) = generate_typescript {
+        project.generate_typescript = enabled;
+    }
+    if let Some(path) = typescript_output_path {
+        project.typescript_output_path = Some(path);
+    }
 
     let result = state
         .add_project(project)

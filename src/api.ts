@@ -48,7 +48,9 @@ export async function createProject(
   localPath: string,
   supabaseProjectId?: string,
   supabaseProjectRef?: string,
-  organizationId?: string
+  organizationId?: string,
+  generateTypescript: boolean = true,
+  typescriptOutputPath?: string
 ): Promise<Project> {
   return invoke("create_project", {
     name,
@@ -56,6 +58,8 @@ export async function createProject(
     supabaseProjectId,
     supabaseProjectRef,
     organizationId,
+    generateTypescript,
+    typescriptOutputPath,
   });
 }
 

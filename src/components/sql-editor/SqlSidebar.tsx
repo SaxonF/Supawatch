@@ -145,6 +145,7 @@ export function SqlSidebar({
                   tab,
                   <TableIcon
                     size={14}
+                    strokeWidth={1}
                     className={cn("shrink-0 text-muted-foreground", {
                       "text-primary": tab.id === activeTabId,
                     })}
@@ -182,12 +183,13 @@ export function SqlSidebar({
           </div>
 
           {/* Other Tabs List */}
-          <div className="py-1">
+          <div>
             {otherTabs.map((tab) =>
               renderTabItem(
                 tab,
                 <FileText
                   size={14}
+                  strokeWidth={1}
                   className="shrink-0 text-muted-foreground"
                 />
               )

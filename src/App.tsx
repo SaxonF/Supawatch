@@ -215,12 +215,14 @@ function App() {
               </div>
             </>
           ) : showCreateForm ? (
-            <div className="flex-1 flex items-center justify-center overflow-auto p-6">
-              <div className="w-full max-w-lg">
-                <CreateProjectForm
-                  onCreated={handleProjectCreated}
-                  onCancel={() => setShowCreateForm(false)}
-                />
+            <div className="h-full overflow-auto">
+              <div className="flex-1 flex items-center justify-center p-6 min-h-full">
+                <div className="w-full max-w-lg">
+                  <CreateProjectForm
+                    onCreated={handleProjectCreated}
+                    onCancel={() => setShowCreateForm(false)}
+                  />
+                </div>
               </div>
             </div>
           ) : (
