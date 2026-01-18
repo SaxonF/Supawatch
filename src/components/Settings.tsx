@@ -10,13 +10,25 @@ export function Settings() {
   const [error, setError] = useState<string | null>(null);
   const [, setSuccess] = useState<string | null>(null);
 
+  // OpenAI key state
+  const [openAiKey, setOpenAiKey] = useState("");
+  const [hasOpenAiKey, setHasOpenAiKey] = useState(false);
+  const [isSavingOpenAi, setIsSavingOpenAi] = useState(false);
+  const [openAiError, setOpenAiError] = useState<string | null>(null);
+
   useEffect(() => {
     checkToken();
+    checkOpenAiKey();
   }, []);
 
   const checkToken = async () => {
     const has = await api.hasAccessToken();
     setHasToken(has);
+  };
+
+  const checkOpenAiKey = async () => {
+    const has = await api.hasOpenAiKey();
+    setHasOpenAiKey(has);
   };
 
   const handleSave = async () => {
@@ -61,6 +73,36 @@ export function Settings() {
       setError(null);
     } catch (err) {
       setError(String(err));
+    }
+  };
+
+  const handleSaveOpenAiKey = async () => {
+    if (!openAiKey.trim()) {
+      setOpenAiError("Please enter an OpenAI API key");
+      return;
+    }
+
+    setOpenAiError(null);
+    setIsSavingOpenAi(true);
+
+    try {
+      await api.setOpenAiKey(openAiKey.trim());
+      setHasOpenAiKey(true);
+      setOpenAiKey("");
+    } catch (err) {
+      setOpenAiError(String(err));
+    } finally {
+      setIsSavingOpenAi(false);
+    }
+  };
+
+  const handleClearOpenAiKey = async () => {
+    try {
+      await api.clearOpenAiKey();
+      setHasOpenAiKey(false);
+      setOpenAiError(null);
+    } catch (err) {
+      setOpenAiError(String(err));
     }
   };
 
@@ -115,6 +157,56 @@ export function Settings() {
 
         {error && <div className="mt-2 text-destructive text-sm">{error}</div>}
       </div>
+
+      <div>
+        <label className="block mb-2">OpenAI API Key</label>
+        <p className="text-muted-foreground text-sm mb-2">
+          Used for natural language to SQL conversion in the SQL editor.
+        </p>
+        {hasOpenAiKey ? (
+          <div className="flex items-center gap-2">
+            <input
+              type="password"
+              readOnly
+              value={openAiKey}
+              onChange={(e) => setOpenAiKey(e.target.value)}
+              placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
+              className="bg-chart-2/25 border border-chart-2 rounded-xl h-12 px-6 block w-full"
+              disabled={isSavingOpenAi}
+            />
+            <Button
+              variant="outline"
+              className="h-12 px-6 rounded-xl"
+              onClick={handleClearOpenAiKey}
+            >
+              Clear
+            </Button>
+          </div>
+        ) : (
+          <div className="w-full flex items-center gap-2">
+            <input
+              type="password"
+              value={openAiKey}
+              onChange={(e) => setOpenAiKey(e.target.value)}
+              placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
+              className="bg-input border border-border rounded-xl h-12 px-6 block w-full"
+              disabled={isSavingOpenAi}
+            />
+            <Button
+              className="h-12 px-6 rounded-xl"
+              onClick={handleSaveOpenAiKey}
+              disabled={isSavingOpenAi || !openAiKey.trim()}
+            >
+              {isSavingOpenAi ? "Saving..." : "Save"}
+            </Button>
+          </div>
+        )}
+
+        {openAiError && (
+          <div className="mt-2 text-destructive text-sm">{openAiError}</div>
+        )}
+      </div>
+
       <div>
         <label className="block mb-2">Audit Logs</label>
         <div className="border border-border rounded-xl overflow-hidden max-h-48 overflow-auto">

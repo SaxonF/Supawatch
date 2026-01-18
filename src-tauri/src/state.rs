@@ -7,9 +7,11 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::models::{AppData, LogEntry, Project};
+use crate::schema::DbSchema;
 use crate::supabase_api::SupabaseApi;
 
 const TOKEN_FILE_NAME: &str = ".token";
+const OPENAI_KEY_FILE_NAME: &str = ".openai_key";
 
 #[derive(Error, Debug)]
 pub enum StateError {
@@ -31,8 +33,12 @@ pub struct AppState {
     pub data: RwLock<AppData>,
     pub logs: RwLock<Vec<LogEntry>>,
     pub watchers: RwLock<HashMap<Uuid, WatcherHandle>>,
+    pub openai_key: RwLock<Option<String>>,
+    pub schema_cache: RwLock<HashMap<Uuid, DbSchema>>,
+    pub http_client: reqwest::Client,
     data_path: PathBuf,
     token_path: PathBuf,
+    openai_key_path: PathBuf,
 }
 
 impl AppState {
@@ -40,6 +46,7 @@ impl AppState {
         let data_dir = Self::get_data_dir();
         let data_path = data_dir.join("data.json");
         let token_path = data_dir.join(TOKEN_FILE_NAME);
+        let openai_key_path = data_dir.join(OPENAI_KEY_FILE_NAME);
         
         let (mut data, legacy_token) = Self::load_data(&data_path).unwrap_or_default();
 
@@ -63,12 +70,22 @@ impl AppState {
             println!("[TOKEN] No token found in file or legacy storage");
         }
 
+        // Load OpenAI key
+        let openai_key = Self::load_token_from_file(&openai_key_path);
+        if openai_key.is_some() {
+            println!("[OPENAI] Successfully loaded OpenAI key from file");
+        }
+
         Self {
             data: RwLock::new(data),
             logs: RwLock::new(Vec::new()),
             watchers: RwLock::new(HashMap::new()),
+            openai_key: RwLock::new(openai_key),
+            schema_cache: RwLock::new(HashMap::new()),
+            http_client: reqwest::Client::new(),
             data_path,
             token_path,
+            openai_key_path,
         }
     }
     
@@ -330,7 +347,49 @@ impl AppState {
     /// Get a Supabase API client using the stored access token
     pub async fn get_api_client(&self) -> Result<SupabaseApi, StateError> {
         let token = self.get_access_token().await.ok_or(StateError::NoAccessToken)?;
-        Ok(SupabaseApi::new(token))
+        Ok(SupabaseApi::new(token, self.http_client.clone()))
+    }
+
+    // OpenAI key operations
+    pub async fn set_openai_key(&self, key: String) -> Result<(), StateError> {
+        println!("[OPENAI] set_openai_key called");
+        Self::save_token_to_file(&self.openai_key_path, &key).map_err(StateError::WriteError)?;
+        let mut openai_key = self.openai_key.write().await;
+        *openai_key = Some(key);
+        Ok(())
+    }
+
+    pub async fn get_openai_key(&self) -> Option<String> {
+        let openai_key = self.openai_key.read().await;
+        openai_key.clone()
+    }
+
+    pub async fn clear_openai_key(&self) -> Result<(), StateError> {
+        Self::delete_token_file(&self.openai_key_path).map_err(StateError::WriteError)?;
+        let mut openai_key = self.openai_key.write().await;
+        *openai_key = None;
+        Ok(())
+    }
+
+    pub async fn has_openai_key(&self) -> bool {
+        let openai_key = self.openai_key.read().await;
+        openai_key.is_some()
+    }
+
+    // Schema cache operations
+    pub async fn get_cached_schema(&self, project_id: Uuid) -> Option<DbSchema> {
+        let cache = self.schema_cache.read().await;
+        cache.get(&project_id).cloned()
+    }
+
+    pub async fn set_cached_schema(&self, project_id: Uuid, schema: DbSchema) {
+        let mut cache = self.schema_cache.write().await;
+        cache.insert(project_id, schema);
+    }
+
+    pub async fn clear_cached_schema(&self, project_id: Uuid) {
+        let mut cache = self.schema_cache.write().await;
+        cache.remove(&project_id);
     }
 }
 

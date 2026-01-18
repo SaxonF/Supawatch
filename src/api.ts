@@ -18,6 +18,19 @@ export async function validateAccessToken(): Promise<boolean> {
   return invoke("validate_access_token");
 }
 
+// OpenAI API Key
+export async function setOpenAiKey(key: string): Promise<void> {
+  return invoke("set_openai_key", { key });
+}
+
+export async function hasOpenAiKey(): Promise<boolean> {
+  return invoke("has_openai_key");
+}
+
+export async function clearOpenAiKey(): Promise<void> {
+  return invoke("clear_openai_key");
+}
+
 // Remote Supabase Projects API
 export async function listRemoteProjects(): Promise<RemoteProject[]> {
   return invoke("list_remote_projects");
@@ -109,6 +122,17 @@ export async function runQuery(
   readOnly?: boolean
 ): Promise<unknown> {
   return invoke("run_query", { projectId, query, readOnly });
+}
+
+export async function validateSql(sql: string): Promise<void> {
+  return invoke("validate_sql", { sql });
+}
+
+export async function convertWithAi(
+  projectId: string,
+  input: string
+): Promise<string> {
+  return invoke("convert_with_ai", { projectId, input });
 }
 
 export async function deployEdgeFunction(

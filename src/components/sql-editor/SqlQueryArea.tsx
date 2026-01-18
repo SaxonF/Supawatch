@@ -1,4 +1,4 @@
-import { Play } from "lucide-react";
+import { Play, Sparkles } from "lucide-react";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 
@@ -7,6 +7,7 @@ interface SqlQueryAreaProps {
   setSql: (sql: string) => void;
   runQuery: () => void;
   isLoading: boolean;
+  isProcessingWithAI?: boolean;
   handleKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
 }
 
@@ -15,6 +16,7 @@ export function SqlQueryArea({
   setSql,
   runQuery,
   isLoading,
+  isProcessingWithAI = false,
   handleKeyDown,
 }: SqlQueryAreaProps) {
   return (
@@ -25,24 +27,40 @@ export function SqlQueryArea({
           onChange={(e) => setSql(e.target.value)}
           onKeyDown={handleKeyDown}
           rows={10}
-          placeholder="SELECT * FROM your_table"
+          placeholder="Enter SQL or describe what you want in plain English..."
           className="block rounded-none p-5 !bg-transparent focus:!bg-muted/25 font-mono text-muted-foreground focus:text-foreground w-full border-none focus-visible:ring-0"
           spellCheck={false}
         />
-        <Button
-          onClick={runQuery}
-          disabled={isLoading || !sql.trim()}
-          size="icon"
-          variant={"secondary"}
-          className="absolute bottom-3 right-3 rounded-full shadow-lg hover:scale-105 transition-transform"
-          title="Run query (Cmd+Enter)"
-        >
-          <Play
-            size={16}
-            strokeWidth={1.5}
-            className={isLoading ? "animate-spin" : "ml-0.5"}
-          />
-        </Button>
+        <div className="absolute bottom-3 right-3 flex items-center gap-2">
+          {isProcessingWithAI && (
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/50 px-2 py-1 rounded-full">
+              <Sparkles size={12} className="animate-pulse text-amber-500" />
+              <span>Converting with AI...</span>
+            </div>
+          )}
+          <Button
+            onClick={runQuery}
+            disabled={isLoading || !sql.trim()}
+            size="icon"
+            variant={"secondary"}
+            className="rounded-full shadow-lg hover:scale-105 transition-transform"
+            title="Run query (Cmd+Enter)"
+          >
+            {isProcessingWithAI ? (
+              <Sparkles
+                size={16}
+                strokeWidth={1.5}
+                className="animate-pulse text-amber-500"
+              />
+            ) : (
+              <Play
+                size={16}
+                strokeWidth={1.5}
+                className={isLoading ? "animate-spin" : "ml-0.5"}
+              />
+            )}
+          </Button>
+        </div>
       </div>
     </div>
   );

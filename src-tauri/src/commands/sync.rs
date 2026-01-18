@@ -42,6 +42,9 @@ async fn pull_project_internal(
     let introspector = crate::introspection::Introspector::new(&api, project_ref.clone());
     let remote_schema = introspector.introspect().await.map_err(|e| e.to_string())?;
 
+    // Cache the schema for AI SQL conversion
+    state.set_cached_schema(uuid, remote_schema.clone()).await;
+
     // 2. Generate SQL (Full Dump)
     // We can use the generator to create CREATE statements for everything in remote schema
     // By "diffing" against an empty schema
@@ -310,6 +313,9 @@ async fn push_project_internal(
     state.add_log(log.clone()).await;
     app_handle.emit("log", &log).ok();
 
+    // Clear schema cache since remote schema changed
+    state.clear_cached_schema(uuid).await;
+
     // 6. Generate TypeScript types after successful push
     generate_typescript_for_project(&project, &schema_path, state.inner(), app_handle).await;
 
@@ -347,18 +353,18 @@ pub async fn run_query(
     let result = api
         .run_query(&project_ref, &query, read_only.unwrap_or(false))
         .await
-        .map_err(|e| {
-            let log = LogEntry::error(
-                Some(uuid),
-                LogSource::Schema,
-                format!("Query failed: {}", e),
-            );
-            tauri::async_runtime::block_on(async {
-                state.add_log(log.clone()).await;
-            });
-            app_handle.emit("log", &log).ok();
-            e.to_string()
-        })?;
+        .map_err(|e| e.to_string())?;
+
+    // Log any API errors
+    if let Some(error) = &result.error {
+        let log = LogEntry::error(
+            Some(uuid),
+            LogSource::Schema,
+            format!("Query failed: {}", error),
+        );
+        state.add_log(log.clone()).await;
+        app_handle.emit("log", &log).ok();
+    }
 
     if let Some(error) = result.error {
         let log = LogEntry::error(Some(uuid), LogSource::Schema, format!("Query error: {}", error));
@@ -428,19 +434,22 @@ pub async fn deploy_edge_function(
             &entrypoint,
             files,
         )
-        .await
-        .map_err(|e| {
+        .await;
+
+    // Handle deployment errors
+    let result = match result {
+        Ok(r) => r,
+        Err(e) => {
             let log = LogEntry::error(
                 Some(uuid),
                 LogSource::EdgeFunction,
                 format!("Deploy failed: {}", e),
             );
-            tauri::async_runtime::block_on(async {
-                state.add_log(log.clone()).await;
-            });
+            state.add_log(log.clone()).await;
             app_handle.emit("log", &log).ok();
-            e.to_string()
-        })?;
+            return Err(e.to_string());
+        }
+    };
 
     let log = LogEntry::success(
         Some(uuid),

@@ -35,6 +35,10 @@ fn main() {
             commands::has_access_token,
             commands::clear_access_token,
             commands::validate_access_token,
+            // OpenAI key commands
+            commands::set_openai_key,
+            commands::has_openai_key,
+            commands::clear_openai_key,
             // Remote project commands
             commands::list_remote_projects,
             commands::list_organizations,
@@ -70,6 +74,9 @@ fn main() {
             commands::get_edge_function_logs,
             commands::get_postgres_logs,
             commands::get_auth_logs,
+            // SQL validation and AI commands
+            commands::validate_sql,
+            commands::convert_with_ai,
         ])
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())

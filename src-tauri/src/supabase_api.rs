@@ -137,9 +137,9 @@ pub struct SupabaseApi {
 }
 
 impl SupabaseApi {
-    pub fn new(access_token: String) -> Self {
+    pub fn new(access_token: String, client: reqwest::Client) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client,
             access_token,
         }
     }

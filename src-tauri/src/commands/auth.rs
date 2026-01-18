@@ -41,3 +41,31 @@ pub async fn validate_access_token(app_handle: AppHandle) -> Result<bool, String
         Err(_) => Ok(false),
     }
 }
+
+// OpenAI API key commands
+#[tauri::command]
+pub async fn set_openai_key(
+    app_handle: AppHandle,
+    key: String,
+) -> Result<(), String> {
+    let state = app_handle.state::<Arc<AppState>>();
+    state.set_openai_key(key).await.map_err(|e| e.to_string())?;
+
+    let log = LogEntry::success(None, LogSource::System, "OpenAI API key saved".to_string());
+    state.add_log(log.clone()).await;
+    app_handle.emit("log", &log).ok();
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn has_openai_key(app_handle: AppHandle) -> Result<bool, String> {
+    let state = app_handle.state::<Arc<AppState>>();
+    Ok(state.has_openai_key().await)
+}
+
+#[tauri::command]
+pub async fn clear_openai_key(app_handle: AppHandle) -> Result<(), String> {
+    let state = app_handle.state::<Arc<AppState>>();
+    state.clear_openai_key().await.map_err(|e| e.to_string())
+}

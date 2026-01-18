@@ -35,6 +35,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
   const [editingTabName, setEditingTabName] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isProcessingWithAI, setIsProcessingWithAI] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingTables, setIsLoadingTables] = useState(false);
   const [tablesCollapsed, setTablesCollapsed] = useState(false);
@@ -300,16 +301,56 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
     setIsLoading(true);
     updateCurrentTab({ error: null });
 
+    let queryToRun = sql;
+
     try {
-      const result = await api.runQuery(projectId, sql, true);
+      // First, validate the SQL syntax
+      try {
+        await api.validateSql(sql);
+      } catch (validationError) {
+        // SQL is invalid - try to convert with AI
+        console.log(
+          "SQL validation failed, trying AI conversion:",
+          validationError
+        );
+        setIsProcessingWithAI(true);
+        setIsLoading(false); // Stop regular loading, show AI indicator instead
+
+        try {
+          // Use full schema introspection for AI context
+          const convertedSql = await api.convertWithAi(projectId, sql);
+
+          // Update the SQL in the editor with the converted version
+          queryToRun = convertedSql;
+          updateCurrentTab({ sql: convertedSql });
+          setIsProcessingWithAI(false);
+          setIsLoading(true); // Resume loading for query execution
+        } catch (aiError) {
+          // AI conversion failed - show original validation error
+          updateCurrentTab({
+            error: `Invalid SQL: ${String(
+              validationError
+            )}. AI conversion failed: ${String(aiError)}`,
+            results: [],
+            originalResults: [],
+            displayColumns: [],
+            queryMetadata: null,
+          });
+          setIsProcessingWithAI(false);
+          return;
+        }
+      }
+
+      // Run the (possibly converted) query
+      const result = await api.runQuery(projectId, queryToRun, true);
 
       if (Array.isArray(result) && result.length > 0) {
         const resultCols = Object.keys(result[0]);
 
         // Parse query structure
-        const tables = parseTables(sql);
-        const hasNonEditable = hasNonEditableConstructs(sql);
-        const columns = parseColumns(sql, resultCols, tables);
+        const tables = parseTables(queryToRun);
+        const hasNonEditable = hasNonEditableConstructs(queryToRun);
+        const columns = parseColumns(queryToRun, resultCols, tables);
 
         // Find primary keys for each table
         findPrimaryKeys(columns, tables);
@@ -355,7 +396,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
         };
 
         if (currentTab?.name === "Untitled") {
-          const primaryTable = extractPrimaryTableName(sql);
+          const primaryTable = extractPrimaryTableName(queryToRun);
           if (primaryTable) {
             tabUpdates.name = primaryTable;
           }
@@ -381,6 +422,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
       });
     } finally {
       setIsLoading(false);
+      setIsProcessingWithAI(false);
     }
   }, [sql, projectId, updateCurrentTab, currentTab?.name]);
 
@@ -487,6 +529,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
           setSql={setSql}
           runQuery={runQuery}
           isLoading={isLoading}
+          isProcessingWithAI={isProcessingWithAI}
           handleKeyDown={handleKeyDown}
         />
 
