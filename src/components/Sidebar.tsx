@@ -118,7 +118,7 @@ export function Sidebar({
                 <span
                   className={`w-2 h-2 rounded-full shrink-0 ${
                     project.is_watching
-                      ? "bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.5)]"
+                      ? "bg-primary"
                       : "bg-muted-foreground/30"
                   }`}
                 />

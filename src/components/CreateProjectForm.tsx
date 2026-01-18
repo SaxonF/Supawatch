@@ -156,7 +156,7 @@ export function CreateProjectForm({
       template: "none",
       projectId: "",
       generateTypescript: true,
-      typescriptOutputPath: "",
+      typescriptOutputPath: "src/types/database.ts",
     },
     validatorAdapter: zodValidator(),
     validators: {
@@ -235,85 +235,6 @@ export function CreateProjectForm({
     } catch (err) {
       console.error("Failed to select folder:", err);
       sendNativeNotification("Error", "Failed to select folder");
-    }
-  };
-
-  const selectTypesFolder = async () => {
-    try {
-      const selected = await api.pickProjectFolder();
-      if (selected) {
-        // We need to calculate relative path from project root (localPath) to this folder
-        // This is hard to do reliably in browser JS without path libs or knowing the separator.
-        // However, we can just store the ABSOLUTE path in the UI state for now?
-        // Actually, the backend `Project` struct has `typescript_output_path`.
-        // If I pass an absolute path to `createProject`, the backend can handle relativeness or just store absolute.
-        // The current `Project` struct comment says "relative to project root".
-        // I should probably ask the backend to compute the relative path or do it here.
-        // For now, let's just pass the string they picked.
-        // BUT, the user prompt says "user needs to choose a folder where the database types file should be added".
-        // So if they pick `/Users/me/proj/src/types`, we should probably append `database.ts`.
-
-        // Let's assume we pass the full path to the backend and let the backend handle relativeness if it wants,
-        // OR we try to handle it here.
-        // Given `api` tools, maybe we can just pass the value.
-
-        // Actually, let's just use the selected folder and append /database.ts for display/value?
-        // Or just the folder?
-
-        // "user needs to choose a folder where the database types file should be added"
-        // So the output path should be that folder + "/database.ts" or similar.
-
-        // Let's just set the value to the selected path.
-
-        // But wait, if we are in a webview, `path` module isn't available.
-        // I will just use string manipulation, assuming forward slashes (macOS).
-
-        const projectPath = form.getFieldValue("localPath");
-        if (projectPath && selected.startsWith(projectPath)) {
-          // Make it relative for cleaner display if possible
-          let relative = selected.slice(projectPath.length);
-          if (relative.startsWith("/")) relative = relative.slice(1);
-          if (relative === "") relative = ".";
-
-          // Append database.ts
-          const finalPath = `${relative}/database.ts`;
-          form.setFieldValue("typescriptOutputPath", finalPath);
-        } else {
-          // Just use what they picked (absolute?) or maybe warn it's outside project?
-          // Backend might support absolute paths too?
-          // The struct comments say "relative", but `sync.rs` handles custom paths.
-          // `get_typescript_output_path` joins project path with custom path.
-          // So it MUST be relative.
-
-          // If they pick a folder outside, it might be weird.
-          // For now, let's assume they pick inside.
-
-          // If they haven't picked a localPath yet, we can't compute relative.
-          if (!projectPath) {
-            sendNativeNotification(
-              "Warning",
-              "Please select a Project Folder first."
-            );
-            return;
-          }
-
-          if (!selected.startsWith(projectPath)) {
-            sendNativeNotification(
-              "Warning",
-              "Please select a folder inside the project directory."
-            );
-            return;
-          }
-
-          let relative = selected.slice(projectPath.length);
-          if (relative.startsWith("/")) relative = relative.slice(1);
-          if (relative === "") relative = ".";
-          const finalPath = `${relative}/database.ts`;
-          form.setFieldValue("typescriptOutputPath", finalPath);
-        }
-      }
-    } catch (err) {
-      console.error("Failed to select folder:", err);
     }
   };
 
@@ -543,24 +464,11 @@ export function CreateProjectForm({
                       children={(field) => (
                         <Field>
                           <FieldLabel>Types Output Path</FieldLabel>
-                          <div className="flex gap-2">
-                            <Input
-                              value={field.state.value}
-                              onChange={(e) =>
-                                field.handleChange(e.target.value)
-                              }
-                              placeholder="src/types/database.ts"
-                              className="flex-1"
-                            />
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={selectTypesFolder}
-                              disabled={!form.getFieldValue("localPath")}
-                            >
-                              Select Folder
-                            </Button>
-                          </div>
+                          <Input
+                            value={field.state.value}
+                            onChange={(e) => field.handleChange(e.target.value)}
+                            placeholder="src/types/database.ts"
+                          />
                           <FieldDescription>
                             Relative path to where database.ts should be
                             generated
@@ -606,14 +514,6 @@ export function CreateProjectForm({
               )}
 
               <div className="flex items-center gap-2 mt-4">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={onCancel}
-                  className="flex-1"
-                >
-                  Cancel
-                </Button>
                 <form.Subscribe
                   selector={(state) => [state.canSubmit, state.isSubmitting]}
                   children={([canSubmit, isSubmitting]) => (

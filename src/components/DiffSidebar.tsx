@@ -127,7 +127,7 @@ export function DiffSidebar({
             strokeWidth={1}
             className="text-muted-foreground"
           />
-          Schema Diff
+          Project Diff
         </h2>
         <div className="flex items-center gap-0">
           <Button
@@ -177,22 +177,24 @@ export function DiffSidebar({
           (diff.migration_sql.trim() === "" &&
             !diff.is_destructive &&
             diff.edge_functions.length === 0) ? (
-          <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4 text-center bg-background">
+          <div className="flex flex-col items-center justify-center h-full p-4 text-center bg-background">
             <p>No changes detected</p>
-            <p className="text-sm mt-1">Local schema matches remote</p>
+            <p className="text-sm mt-1 text-muted-foreground">
+              Local schema matches remote
+            </p>
           </div>
         ) : (
           <div className="flex flex-col h-full">
             {diff.edge_functions.length > 0 && (
-              <div className="p-4 border-b border-white/10 shrink-0">
-                <h3 className="font-medium text-xs text-muted-foreground uppercase tracking-wider mb-2">
+              <div className="p-4 border-b shrink-0">
+                <h3 className="text-xs text-muted-foreground uppercase tracking-wider mb-2 font-mono">
                   Edge Functions ({diff.edge_functions.length})
                 </h3>
-                <div className="space-y-2">
+                <div className="flex items-center gap-2">
                   {diff.edge_functions.map((func) => (
                     <div
                       key={func.slug}
-                      className="flex items-center gap-2 text-sm bg-white/5 p-2 rounded"
+                      className="flex items-center gap-2 text-sm rounded-full py-2 px-3 bg-muted"
                     >
                       <div className="w-1.5 h-1.5 rounded-full bg-yellow-500 shrink-0" />
                       <span className="font-mono text-xs">{func.name}</span>
@@ -202,6 +204,9 @@ export function DiffSidebar({
               </div>
             )}
             <div className="flex-1 overflow-auto">
+              <h3 className="text-xs text-muted-foreground uppercase tracking-wider mb-2 font-mono p-4 pb-0">
+                Schema
+              </h3>
               {diff.migration_sql.trim() !== "" ? (
                 <SyntaxHighlighter
                   language="sql"

@@ -93,8 +93,15 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
     }
   }, [projectId]);
 
-  // Fetch tables on mount
+  // Reset tabs and fetch tables when project changes
   useEffect(() => {
+    // Reset to a fresh state with a new default tab
+    const newTab = createNewTab();
+    setTabs([newTab]);
+    setActiveTabId(newTab.id);
+    setEditingTabId(null);
+    setEditingTabName("");
+    // Fetch tables for the new project
     fetchTables();
   }, [projectId]); // Only run when projectId changes, not on every fetchTables change
 
@@ -295,136 +302,144 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
     };
   }, [changes]);
 
-  const runQuery = useCallback(async () => {
-    if (!sql.trim()) return;
+  const runQuery = useCallback(
+    async (queryOverride?: unknown) => {
+      // Handle potential event object from onClick
+      const isOverride = typeof queryOverride === "string";
+      const actualSql = isOverride ? queryOverride : sql;
 
-    setIsLoading(true);
-    updateCurrentTab({ error: null });
+      if (!actualSql.trim()) return;
 
-    let queryToRun = sql;
+      setIsLoading(true);
+      updateCurrentTab({ error: null });
 
-    try {
-      // First, validate the SQL syntax
+      let queryToRun = actualSql;
+
       try {
-        await api.validateSql(sql);
-      } catch (validationError) {
-        // SQL is invalid - try to convert with AI
-        console.log(
-          "SQL validation failed, trying AI conversion:",
-          validationError
-        );
-        setIsProcessingWithAI(true);
-        setIsLoading(false); // Stop regular loading, show AI indicator instead
-
+        // First, validate the SQL syntax
         try {
-          // Use full schema introspection for AI context
-          const convertedSql = await api.convertWithAi(projectId, sql);
+          await api.validateSql(actualSql);
+        } catch (validationError) {
+          // SQL is invalid - try to convert with AI
+          console.log(
+            "SQL validation failed, trying AI conversion:",
+            validationError
+          );
+          setIsProcessingWithAI(true);
+          setIsLoading(false); // Stop regular loading, show AI indicator instead
 
-          // Update the SQL in the editor with the converted version
-          queryToRun = convertedSql;
-          updateCurrentTab({ sql: convertedSql });
-          setIsProcessingWithAI(false);
-          setIsLoading(true); // Resume loading for query execution
-        } catch (aiError) {
-          // AI conversion failed - show original validation error
-          updateCurrentTab({
-            error: `Invalid SQL: ${String(
-              validationError
-            )}. AI conversion failed: ${String(aiError)}`,
-            results: [],
-            originalResults: [],
-            displayColumns: [],
-            queryMetadata: null,
-          });
-          setIsProcessingWithAI(false);
-          return;
-        }
-      }
+          try {
+            // Use full schema introspection for AI context
+            const convertedSql = await api.convertWithAi(projectId, actualSql);
 
-      // Run the (possibly converted) query
-      const result = await api.runQuery(projectId, queryToRun, true);
-
-      if (Array.isArray(result) && result.length > 0) {
-        const resultCols = Object.keys(result[0]);
-
-        // Parse query structure
-        const tables = parseTables(queryToRun);
-        const hasNonEditable = hasNonEditableConstructs(queryToRun);
-        const columns = parseColumns(queryToRun, resultCols, tables);
-
-        // Find primary keys for each table
-        findPrimaryKeys(columns, tables);
-
-        // Determine if query is editable
-        const isEditable =
-          !hasNonEditable &&
-          tables.length > 0 &&
-          tables.some((t) => t.primaryKeyColumn !== null);
-
-        const metadata: QueryMetadata = {
-          tables,
-          columns,
-          isEditable,
-        };
-
-        // Convert to spreadsheet format with readonly flags
-        const data: CellData[][] = result.map((row: Record<string, unknown>) =>
-          columns.map((colInfo) => {
-            const value = row[colInfo.resultName];
-            const table = tables.find((t) => t.name === colInfo.tableName);
-            const hasTablePk = table?.primaryKeyColumn !== null;
-
-            return {
-              value: formatCellValue(value),
-              readOnly:
-                !isEditable ||
-                colInfo.isComputed ||
-                colInfo.isPrimaryKey ||
-                !colInfo.tableName ||
-                !hasTablePk,
-            };
-          })
-        );
-
-        // Auto-rename untitled tabs to the primary table name
-        const tabUpdates: Partial<Tab> = {
-          displayColumns: resultCols,
-          queryMetadata: metadata,
-          results: data,
-          originalResults: JSON.parse(JSON.stringify(data)),
-          error: null,
-        };
-
-        if (currentTab?.name === "Untitled") {
-          const primaryTable = extractPrimaryTableName(queryToRun);
-          if (primaryTable) {
-            tabUpdates.name = primaryTable;
+            // Update the SQL in the editor with the converted version
+            queryToRun = convertedSql;
+            updateCurrentTab({ sql: convertedSql });
+            setIsProcessingWithAI(false);
+            setIsLoading(true); // Resume loading for query execution
+          } catch (aiError) {
+            // AI conversion failed - show original validation error
+            updateCurrentTab({
+              error: `Invalid SQL: ${String(
+                validationError
+              )}. AI conversion failed: ${String(aiError)}`,
+              results: [],
+              originalResults: [],
+              displayColumns: [],
+              queryMetadata: null,
+            });
+            setIsProcessingWithAI(false);
+            return;
           }
         }
 
-        updateCurrentTab(tabUpdates);
-      } else {
+        // Run the (possibly converted) query
+        const result = await api.runQuery(projectId, queryToRun, true);
+
+        if (Array.isArray(result) && result.length > 0) {
+          const resultCols = Object.keys(result[0]);
+
+          // Parse query structure
+          const tables = parseTables(queryToRun);
+          const hasNonEditable = hasNonEditableConstructs(queryToRun);
+          const columns = parseColumns(queryToRun, resultCols, tables);
+
+          // Find primary keys for each table
+          findPrimaryKeys(columns, tables);
+
+          // Determine if query is editable
+          const isEditable =
+            !hasNonEditable &&
+            tables.length > 0 &&
+            tables.some((t) => t.primaryKeyColumn !== null);
+
+          const metadata: QueryMetadata = {
+            tables,
+            columns,
+            isEditable,
+          };
+
+          // Convert to spreadsheet format with readonly flags
+          const data: CellData[][] = result.map(
+            (row: Record<string, unknown>) =>
+              columns.map((colInfo) => {
+                const value = row[colInfo.resultName];
+                const table = tables.find((t) => t.name === colInfo.tableName);
+                const hasTablePk = table?.primaryKeyColumn !== null;
+
+                return {
+                  value: formatCellValue(value),
+                  readOnly:
+                    !isEditable ||
+                    colInfo.isComputed ||
+                    colInfo.isPrimaryKey ||
+                    !colInfo.tableName ||
+                    !hasTablePk,
+                };
+              })
+          );
+
+          // Auto-rename untitled tabs to the primary table name
+          const tabUpdates: Partial<Tab> = {
+            displayColumns: resultCols,
+            queryMetadata: metadata,
+            results: data,
+            originalResults: JSON.parse(JSON.stringify(data)),
+            error: null,
+          };
+
+          if (currentTab?.name === "Untitled") {
+            const primaryTable = extractPrimaryTableName(queryToRun);
+            if (primaryTable) {
+              tabUpdates.name = primaryTable;
+            }
+          }
+
+          updateCurrentTab(tabUpdates);
+        } else {
+          updateCurrentTab({
+            displayColumns: [],
+            results: [],
+            originalResults: [],
+            queryMetadata: null,
+          });
+        }
+      } catch (err) {
+        console.error("Query failed:", err);
         updateCurrentTab({
-          displayColumns: [],
+          error: typeof err === "string" ? err : String(err),
           results: [],
           originalResults: [],
+          displayColumns: [],
           queryMetadata: null,
         });
+      } finally {
+        setIsLoading(false);
+        setIsProcessingWithAI(false);
       }
-    } catch (err) {
-      console.error("Query failed:", err);
-      updateCurrentTab({
-        error: typeof err === "string" ? err : String(err),
-        results: [],
-        originalResults: [],
-        displayColumns: [],
-        queryMetadata: null,
-      });
-    } finally {
-      setIsLoading(false);
-      setIsProcessingWithAI(false);
-    }
-  }, [sql, projectId, updateCurrentTab, currentTab?.name]);
+    },
+    [sql, projectId, updateCurrentTab, currentTab?.name]
+  );
 
   // Auto-run query when a table tab is activated and hasn't been run yet
   useEffect(() => {
@@ -500,6 +515,20 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
 
   const hasChanges = changesSummary.totalChanges > 0;
 
+  const handleFixQuery = useCallback(async () => {
+    if (!sql.trim()) return;
+    setIsProcessingWithAI(true);
+    try {
+      const convertedSql = await api.convertWithAi(projectId, sql);
+      updateCurrentTab({ sql: convertedSql, error: null });
+      await runQuery(convertedSql);
+    } catch (err) {
+      updateCurrentTab({ error: `AI Fix failed: ${err}` });
+    } finally {
+      setIsProcessingWithAI(false);
+    }
+  }, [projectId, sql, updateCurrentTab, runQuery]);
+
   return (
     <div className="flex h-full overflow-hidden">
       <SqlSidebar
@@ -538,6 +567,8 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
           results={results}
           displayColumns={displayColumns}
           handleDataChange={handleDataChange}
+          onFixQuery={handleFixQuery}
+          isProcessingWithAI={isProcessingWithAI}
         />
 
         {hasChanges && (

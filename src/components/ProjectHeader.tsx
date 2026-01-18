@@ -12,7 +12,7 @@ import {
   Sprout,
   Trash2,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import * as api from "../api";
 import type { Project } from "../types";
 import { Button } from "./ui/button";
@@ -38,6 +38,11 @@ export function ProjectHeader({
 }: ProjectHeaderProps) {
   const [isWatching, setIsWatching] = useState(project.is_watching);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Sync isWatching state when project changes
+  useEffect(() => {
+    setIsWatching(project.is_watching);
+  }, [project.id, project.is_watching]);
 
   const toggleWatch = async () => {
     setIsLoading(true);

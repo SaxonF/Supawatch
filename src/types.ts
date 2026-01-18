@@ -53,8 +53,15 @@ export interface SupabaseLogEntry {
   event_message: string;
   metadata: any;
   request: any;
-  source: "postgres" | "edge_function" | "auth" | "unknown";
+  source:
+    | "postgres"
+    | "edge_function"
+    | "auth"
+    | "api_gateway"
+    | "edge_function_log"
+    | "unknown";
   error_severity?: string;
+  level?: string;
   status?: number;
 }
 

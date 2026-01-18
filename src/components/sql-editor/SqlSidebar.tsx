@@ -139,7 +139,7 @@ export function SqlSidebar({
 
           {/* Tables List */}
           {!tablesCollapsed && (
-            <div>
+            <div className="mb-4">
               {tableTabs.map((tab) =>
                 renderTabItem(
                   tab,
@@ -190,7 +190,9 @@ export function SqlSidebar({
                 <FileText
                   size={14}
                   strokeWidth={1}
-                  className="shrink-0 text-muted-foreground"
+                  className={cn("shrink-0 text-muted-foreground", {
+                    "text-primary": tab.id === activeTabId,
+                  })}
                 />
               )
             )}

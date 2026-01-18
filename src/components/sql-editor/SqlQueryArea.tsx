@@ -26,16 +26,15 @@ export function SqlQueryArea({
           value={sql}
           onChange={(e) => setSql(e.target.value)}
           onKeyDown={handleKeyDown}
-          rows={10}
+          rows={5}
           placeholder="Enter SQL or describe what you want in plain English..."
           className="block rounded-none p-5 !bg-transparent focus:!bg-muted/25 font-mono text-muted-foreground focus:text-foreground w-full border-none focus-visible:ring-0"
           spellCheck={false}
         />
         <div className="absolute bottom-3 right-3 flex items-center gap-2">
           {isProcessingWithAI && (
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/50 px-2 py-1 rounded-full">
-              <Sparkles size={12} className="animate-pulse text-amber-500" />
-              <span>Converting with AI...</span>
+            <div className="rounded-full bg-primary/20 text-primary py-1.5 px-3 text-sm font-medium flex items-center gap-2">
+              <span>Generating with AI...</span>
             </div>
           )}
           <Button
@@ -49,8 +48,8 @@ export function SqlQueryArea({
             {isProcessingWithAI ? (
               <Sparkles
                 size={16}
-                strokeWidth={1.5}
-                className="animate-pulse text-amber-500"
+                strokeWidth={1}
+                className="animate-pulse text-primary"
               />
             ) : (
               <Play
