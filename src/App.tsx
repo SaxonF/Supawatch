@@ -137,8 +137,14 @@ function App() {
         <Sidebar
           projects={projects}
           selectedProjectId={selectedProjectId}
-          onSelectProject={setSelectedProjectId}
-          onAddProject={() => setShowCreateForm(true)}
+          onSelectProject={(id) => {
+            setSelectedProjectId(id);
+            setShowCreateForm(false);
+          }}
+          onAddProject={() => {
+            setShowCreateForm(true);
+            setSelectedProjectId(null);
+          }}
           onOpenSettings={() => setShowSettings(true)}
           collapsed={sidebarCollapsed}
         />
@@ -208,6 +214,15 @@ function App() {
                   )}
               </div>
             </>
+          ) : showCreateForm ? (
+            <div className="flex-1 flex items-center justify-center overflow-auto p-6">
+              <div className="w-full max-w-lg">
+                <CreateProjectForm
+                  onCreated={handleProjectCreated}
+                  onCancel={() => setShowCreateForm(false)}
+                />
+              </div>
+            </div>
           ) : (
             <div className="flex-1 flex items-center justify-center text-muted-foreground">
               <div className="text-center">
@@ -219,19 +234,6 @@ function App() {
             </div>
           )}
         </div>
-
-        {/* Create Project Modal */}
-
-        {showCreateForm && (
-          <div className="absolute inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
-            <div className="bg-background border rounded-2xl p-6 w-full max-w-lg mx-4 shadow-xl">
-              <CreateProjectForm
-                onCreated={handleProjectCreated}
-                onCancel={() => setShowCreateForm(false)}
-              />
-            </div>
-          </div>
-        )}
 
         {/* Settings Modal */}
         {showSettings && (
