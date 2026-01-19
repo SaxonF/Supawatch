@@ -1,5 +1,4 @@
 import { useForm } from "@tanstack/react-form";
-import { zodValidator } from "@tanstack/zod-form-adapter";
 import {
   isPermissionGranted,
   requestPermission,
@@ -158,7 +157,6 @@ export function CreateProjectForm({
       generateTypescript: true,
       typescriptOutputPath: "src/types/database.ts",
     },
-    validatorAdapter: zodValidator(),
     validators: {
       onSubmit: mode === "create" ? createSchema : syncSchema,
     },
@@ -430,6 +428,36 @@ export function CreateProjectForm({
                 )}
               />
 
+              {mode === "create" && isEmptyFolder && templates.length > 0 && (
+                <form.Field
+                  name="template"
+                  children={(field) => (
+                    <Field>
+                      <FieldLabel>Template</FieldLabel>
+                      <Select
+                        value={field.state.value}
+                        onValueChange={field.handleChange}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select template" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">None</SelectItem>
+                          {templates.map((t) => (
+                            <SelectItem key={t} value={t}>
+                              {t}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FieldDescription>
+                        Choose a starter template for your empty folder
+                      </FieldDescription>
+                    </Field>
+                  )}
+                />
+              )}
+
               <form.Field
                 name="generateTypescript"
                 children={(field) => (
@@ -482,36 +510,6 @@ export function CreateProjectForm({
                   ) : null
                 }
               />
-
-              {mode === "create" && isEmptyFolder && templates.length > 0 && (
-                <form.Field
-                  name="template"
-                  children={(field) => (
-                    <Field>
-                      <FieldLabel>Template</FieldLabel>
-                      <Select
-                        value={field.state.value}
-                        onValueChange={field.handleChange}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select template" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">None</SelectItem>
-                          {templates.map((t) => (
-                            <SelectItem key={t} value={t}>
-                              {t}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FieldDescription>
-                        Choose a starter template for your empty folder
-                      </FieldDescription>
-                    </Field>
-                  )}
-                />
-              )}
 
               <div className="flex items-center gap-2 mt-4">
                 <form.Subscribe

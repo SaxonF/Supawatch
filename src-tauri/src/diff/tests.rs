@@ -2201,3 +2201,155 @@ fn test_table_diff_is_empty() {
     assert!(diff.table_changes.is_empty());
 }
 
+#[test]
+fn test_function_definition_normalization() {
+    // Test that functions with equivalent definitions but different formatting
+    // (dollar quoting, quoted identifiers) are NOT marked as updates
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    // Remote format: uses $function$ dollar quoting and unquoted identifiers
+    let remote_definition = r#"begin
+  return query
+  select r.id, r.slug, r.name
+  from public.recipes r
+  where (
+    select count(*)
+    from public.recipe_ingredients ri
+    where ri.recipe_id = r.id
+  ) = array_length(ingredient_ids, 1);
+end;"#;
+
+    // Local format: uses $$ dollar quoting and quoted identifiers
+    // This is what pg_dump / schema introspection often produces differently
+    let local_definition = r#"begin
+  return query
+  select r.id, r.slug, r.name
+  from public.recipes r
+  where (
+    select count(*)
+    from public.recipe_ingredients ri
+    where ri.recipe_id = r.id
+  ) = array_length(ingredient_ids, 1);
+end;"#;
+
+    remote.functions.insert(
+        "\"public\".\"find_recipes_by_ingredients\"(uuid[])".to_string(),
+        FunctionInfo {
+            schema: "public".to_string(),
+            name: "find_recipes_by_ingredients".to_string(),
+            args: vec![FunctionArg {
+                name: "ingredient_ids".to_string(),
+                type_: "uuid[]".to_string(),
+                mode: None,
+                default_value: None,
+            }],
+            return_type: "TABLE(id uuid, slug text, name text)".to_string(),
+            language: "plpgsql".to_string(),
+            definition: remote_definition.to_string(),
+            volatility: None,
+            is_strict: false,
+            security_definer: false,
+        },
+    );
+
+    local.functions.insert(
+        "\"public\".\"find_recipes_by_ingredients\"(uuid[])".to_string(),
+        FunctionInfo {
+            schema: "public".to_string(),
+            name: "find_recipes_by_ingredients".to_string(),
+            args: vec![FunctionArg {
+                name: "ingredient_ids".to_string(),
+                type_: "uuid[]".to_string(),
+                mode: None,
+                default_value: None,
+            }],
+            return_type: "table(id uuid, slug text, name text)".to_string(), // Different case
+            language: "plpgsql".to_string(),
+            definition: local_definition.to_string(),
+            volatility: None,
+            is_strict: false,
+            security_definer: false,
+        },
+    );
+
+    let diff = compute_diff(&remote, &local);
+    assert!(
+        diff.functions_to_update.is_empty(),
+        "Functions with equivalent definitions but different formatting should NOT be marked for update"
+    );
+}
+
+#[test]
+fn test_function_with_different_dollar_quotes_normalization() {
+    // Test specifically for $function$ vs $$ dollar quoting
+    use super::utils::normalize_function_definition;
+
+    let remote_def = "$function$SELECT 1$function$";
+    let local_def = "$$SELECT 1$$";
+
+    let normalized_remote = normalize_function_definition(remote_def);
+    let normalized_local = normalize_function_definition(local_def);
+
+    assert_eq!(
+        normalized_remote, normalized_local,
+        "Different dollar quote styles should normalize to the same value"
+    );
+}
+
+#[test]
+fn test_function_with_quoted_identifiers_normalization() {
+    // Test that quoted identifiers are stripped
+    use super::utils::normalize_function_definition;
+
+    let remote_def = "SELECT * FROM public.users";
+    let local_def = r#"SELECT * FROM "public"."users""#;
+
+    let normalized_remote = normalize_function_definition(remote_def);
+    let normalized_local = normalize_function_definition(local_def);
+
+    assert_eq!(
+        normalized_remote, normalized_local,
+        "Quoted and unquoted identifiers should normalize to the same value"
+    );
+}
+
+#[test]
+fn test_view_definition_normalization() {
+    use super::utils::normalize_view_definition;
+
+    // Local definition might include quotes around identifiers
+    let local_def = r#"SELECT r.id, r.slug, r.name FROM "public"."recipes" r"#;
+    
+    // Remote definition from pg_get_viewdef doesn't include quotes
+    let remote_def = r#"SELECT r.id, r.slug, r.name FROM public.recipes r"#;
+
+    let normalized_local = normalize_view_definition(local_def);
+    let normalized_remote = normalize_view_definition(remote_def);
+
+    assert_eq!(
+        normalized_local, normalized_remote,
+        "View definitions with quoted vs unquoted identifiers should normalize to the same value.\nLocal: {}\nRemote: {}",
+        normalized_local, normalized_remote
+    );
+}
+
+#[test]
+fn test_view_definition_strips_create_view_prefix() {
+    use super::utils::normalize_view_definition;
+
+    // Local might have full CREATE VIEW statement
+    let with_create = r#"CREATE OR REPLACE VIEW "public"."my_view" AS SELECT id FROM users"#;
+    
+    // Remote only has the SELECT
+    let just_select = r#"SELECT id FROM users"#;
+
+    let normalized_with_create = normalize_view_definition(with_create);
+    let normalized_just_select = normalize_view_definition(just_select);
+
+    assert_eq!(
+        normalized_with_create, normalized_just_select,
+        "CREATE VIEW prefix should be stripped during normalization.\nWith CREATE: {}\nJust SELECT: {}",
+        normalized_with_create, normalized_just_select
+    );
+}

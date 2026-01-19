@@ -18,7 +18,7 @@ pub async fn get_views(
             SELECT
                 n.nspname as schema,
                 c.relname as name,
-                pg_get_viewdef(c.oid, true) as definition,
+                pg_get_viewdef(c.oid, false) as definition,
                 false as is_materialized,
                 obj_description(c.oid, 'pg_class') as comment,
                 c.reloptions as options,
@@ -37,7 +37,7 @@ pub async fn get_views(
             SELECT
                 n.nspname as schema,
                 c.relname as name,
-                pg_get_viewdef(c.oid, true) as definition,
+                pg_get_viewdef(c.oid, false) as definition,
                 true as is_materialized,
                 obj_description(c.oid, 'pg_class') as comment,
                 c.reloptions as options,

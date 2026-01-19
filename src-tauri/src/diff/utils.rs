@@ -54,6 +54,111 @@ pub fn normalize_option(opt: &Option<String>) -> Option<String> {
     opt.as_ref().map(|s| normalize_sql(s))
 }
 
+/// Normalize function definitions for comparison.
+/// Handles differences between remote introspection and local parsing:
+/// - Dollar quoting: $function$...$function$ vs $$...$$
+/// - Quoted identifiers: "public"."func_name" vs public.func_name
+/// - Whitespace normalization
+/// - Case normalization for language keywords
+pub fn normalize_function_definition(definition: &str) -> String {
+    let mut s = definition.to_string();
+    
+    // Normalize dollar quoting - replace common $<tag>$ patterns with $$
+    // These are the most common dollar-quote tags used in PostgreSQL
+    let dollar_quote_tags = [
+        "$function$", "$FUNCTION$", 
+        "$body$", "$BODY$",
+        "$code$", "$CODE$",
+        "$sql$", "$SQL$",
+        "$plpgsql$", "$PLPGSQL$",
+    ];
+    for tag in dollar_quote_tags {
+        s = s.replace(tag, "$$");
+    }
+    
+    // Remove double quotes around identifiers
+    // This handles "public"."func_name" -> public.func_name
+    s = s.replace("\"", "");
+    
+    // Apply standard SQL normalization (collapses whitespace, lowercases, normalizes parens)
+    normalize_sql(&s)
+}
+
+/// Normalize view definitions for comparison.
+/// Handles differences between remote introspection (pg_get_viewdef) and local parsing:
+/// - Local includes full "CREATE OR REPLACE VIEW ... AS SELECT ..." 
+/// - Remote returns just the "SELECT ..." part
+/// - Quoted identifiers, whitespace, type casts
+/// - pg_get_viewdef adds extra parens in FILTER(WHERE(...)) vs FILTER(WHERE ...)
+/// - pg_get_viewdef adds nested parens around JOINs: FROM((t1 join t2...
+pub fn normalize_view_definition(definition: &str) -> String {
+    let mut s = definition.to_string();
+    
+    // Strip CREATE [OR REPLACE] VIEW ... AS prefix to get just the SELECT statement
+    // Local parsing includes the full statement, remote introspection only returns the query
+    let lower = s.to_lowercase();
+    if let Some(as_pos) = lower.find(" as ") {
+        // Check if this looks like a CREATE VIEW statement (starts with CREATE)
+        let trimmed_lower = lower.trim_start();
+        if trimmed_lower.starts_with("create") {
+            // Skip past the " AS " to get just the SELECT statement
+            s = s[as_pos + 4..].to_string();
+        }
+    }
+    
+    // Remove double quotes around identifiers
+    s = s.replace("\"", "");
+    
+    // Apply standard SQL normalization (collapses whitespace, lowercases, normalizes parens)
+    let mut normalized = normalize_sql(&s);
+    
+    // Iteratively collapse nested parentheses (( -> ( and )) -> )
+    // pg_get_viewdef wraps JOINs and other constructs in extra parens
+    // Do this FIRST before other replacements
+    loop {
+        let before = normalized.clone();
+        normalized = normalized.replace("((", "(");
+        normalized = normalized.replace("))", ")");
+        if normalized == before {
+            break;
+        }
+    }
+    
+    // Handle pg_get_viewdef adding extra parentheses in FILTER(WHERE(...))
+    // Normalize "filter(where(" to "filter(where "
+    normalized = normalized.replace("filter(where(", "filter(where ");
+    
+    // Handle pg_get_viewdef wrapping FROM clause in parentheses: FROM(table vs FROM table
+    normalized = normalized.replace("from(", "from ");
+    normalized = normalized.replace("from (", "from ");
+    
+    // Handle pg_get_viewdef wrapping ON clause conditions in parentheses: ON(condition) vs ON condition
+    normalized = normalized.replace("on(", "on ");
+    normalized = normalized.replace("on (", "on ");
+    
+    // Remove orphaned closing parens before SQL keywords that might result from the above
+    // These patterns occur when we remove opening parens but the closing ones remain
+    normalized = normalized.replace(")left", " left");
+    normalized = normalized.replace(") left", " left");
+    normalized = normalized.replace(")right", " right");
+    normalized = normalized.replace(") right", " right");
+    normalized = normalized.replace(")inner", " inner");
+    normalized = normalized.replace(") inner", " inner");
+    normalized = normalized.replace(")join", " join");
+    normalized = normalized.replace(") join", " join");
+    normalized = normalized.replace(")group", " group");
+    normalized = normalized.replace(") group", " group");
+    normalized = normalized.replace(")order", " order");
+    normalized = normalized.replace(") order", " order");
+    normalized = normalized.replace(")where", " where");
+    normalized = normalized.replace(") where", " where");
+    
+    // Strip trailing semicolon - pg_get_viewdef includes it, sqlparser doesn't
+    let normalized = normalized.trim_end_matches(';').to_string();
+    
+    normalized
+}
+
 /// Normalize CHECK constraint expressions for comparison.
 /// Strips the CHECK keyword, type casts, and normalizes expressions.
 /// This handles differences between local parsing (CHECK (status IN ('a', 'b'))) and

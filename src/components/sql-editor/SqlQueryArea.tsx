@@ -42,7 +42,7 @@ export function SqlQueryArea({
             disabled={isLoading || !sql.trim()}
             size="icon"
             variant={"secondary"}
-            className="rounded-full shadow-lg hover:scale-105 transition-transform"
+            className="rounded-full shadow-lg"
             title="Run query (Cmd+Enter)"
           >
             {isProcessingWithAI ? (
@@ -55,7 +55,7 @@ export function SqlQueryArea({
               <Play
                 size={16}
                 strokeWidth={1.5}
-                className={isLoading ? "animate-spin" : "ml-0.5"}
+                className={isLoading ? "animate-pulse ml-0.5" : "ml-0.5"}
               />
             )}
           </Button>

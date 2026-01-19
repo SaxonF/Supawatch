@@ -112,7 +112,7 @@ export function Sidebar({
                 className={`w-full px-4 py-2.5 flex items-center gap-4 text-left transition-colors ${
                   selectedProjectId === project.id
                     ? "bg-primary/10 text-primary"
-                    : "text-primary hover:bg-primary/10 hover:text-primary"
+                    : "text-foreground hover:bg-primary/10 hover:text-foreground"
                 }`}
               >
                 <span

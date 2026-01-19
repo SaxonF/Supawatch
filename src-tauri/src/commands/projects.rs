@@ -125,6 +125,37 @@ pub async fn create_project(
                             );
                             state.add_log(log.clone()).await;
                             app_handle.emit("log", &log).ok();
+
+                            // Generate TypeScript types if enabled
+                            if generate_typescript.unwrap_or(true) {
+                                let project_path = std::path::Path::new(&local_path);
+                                let output_path = sync::get_typescript_output_path(
+                                    project_path,
+                                    typescript_output_path.as_deref(),
+                                );
+
+                                if let Err(e) = sync::generate_typescript_types(&schema_path, &output_path).await {
+                                    let log = LogEntry::error(
+                                        None,
+                                        LogSource::System,
+                                        format!("Failed to generate TypeScript types: {}", e),
+                                    );
+                                    state.add_log(log.clone()).await;
+                                    app_handle.emit("log", &log).ok();
+                                } else {
+                                    let relative_output = output_path
+                                        .strip_prefix(project_path)
+                                        .unwrap_or(&output_path)
+                                        .to_string_lossy();
+                                    let log = LogEntry::success(
+                                        None,
+                                        LogSource::System,
+                                        format!("TypeScript types generated: {}", relative_output),
+                                    );
+                                    state.add_log(log.clone()).await;
+                                    app_handle.emit("log", &log).ok();
+                                }
+                            }
                         },
                         Err(e) => {
                              println!("[DEBUG] Introspection failed: {}", e);

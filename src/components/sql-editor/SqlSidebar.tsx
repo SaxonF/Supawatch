@@ -70,11 +70,11 @@ export function SqlSidebar({
           onChange={(e) => setEditingTabName(e.target.value)}
           onBlur={finishEditingTab}
           onKeyDown={handleTabKeyDown}
-          className="flex-1 bg-transparent border-none outline-none min-w-0"
+          className="flex-1 bg-transparent border-none outline-none min-w-0 text-sm"
           onClick={(e) => e.stopPropagation()}
         />
       ) : (
-        <span className="flex-1 text truncate" title={tab.name}>
+        <span className="flex-1 text truncate text-sm" title={tab.name}>
           {tab.name}
         </span>
       )}
@@ -153,8 +153,8 @@ export function SqlSidebar({
                 )
               )}
               {tableTabs.length === 0 && (
-                <div className="px-3 py-2 text-center text-muted-foreground text-xs">
-                  No tables found
+                <div className="px-8 py-2 text-left text-muted-foreground text-sm">
+                  No tables
                 </div>
               )}
             </div>

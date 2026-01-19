@@ -192,9 +192,16 @@ pub fn compute_diff(remote: &DbSchema, local: &DbSchema) -> SchemaDiff {
             diff.functions_to_create.push(local_func.clone());
         } else {
             let remote_func = remote.functions.get(name).unwrap();
-            if local_func.definition != remote_func.definition
-                || local_func.return_type != remote_func.return_type
-                || local_func.language != remote_func.language
+            // Normalize function definitions before comparison to handle formatting differences
+            // (dollar quoting, quoted identifiers, whitespace)
+            let local_def_normalized = utils::normalize_function_definition(&local_func.definition);
+            let remote_def_normalized = utils::normalize_function_definition(&remote_func.definition);
+            let local_return_normalized = local_func.return_type.to_lowercase();
+            let remote_return_normalized = remote_func.return_type.to_lowercase();
+            
+            if local_def_normalized != remote_def_normalized
+                || local_return_normalized != remote_return_normalized
+                || local_func.language.to_lowercase() != remote_func.language.to_lowercase()
             {
                 diff.functions_to_update.push(local_func.clone());
             }
