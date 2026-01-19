@@ -8,6 +8,7 @@ import { CreateProjectForm } from "./components/CreateProjectForm";
 import { DiffSidebar } from "./components/DiffSidebar";
 import { ProjectHeader } from "./components/ProjectHeader";
 import { ProjectLogs } from "./components/ProjectLogs";
+import { PullSidebar } from "./components/PullSidebar";
 import { SeedSidebar } from "./components/SeedSidebar";
 import { Settings } from "./components/Settings";
 import { Sidebar } from "./components/Sidebar";
@@ -27,6 +28,7 @@ function App() {
   const [logsExpanded, setLogsExpanded] = useState(false);
   const [showDiffSidebar, setShowDiffSidebar] = useState(false);
   const [showSeedSidebar, setShowSeedSidebar] = useState(false);
+  const [showPullSidebar, setShowPullSidebar] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const selectedProject =
@@ -65,6 +67,15 @@ function App() {
       setShowDiffSidebar(false);
     }
     setShowSeedSidebar(!showSeedSidebar);
+  };
+
+  const togglePullSidebar = () => {
+    if (!showPullSidebar) {
+      setLogsExpanded(false);
+      setShowDiffSidebar(false);
+      setShowSeedSidebar(false);
+    }
+    setShowPullSidebar(!showPullSidebar);
   };
 
   useEffect(() => {
@@ -175,6 +186,8 @@ function App() {
                 onToggleDiffSidebar={toggleDiffSidebar}
                 showSeedSidebar={showSeedSidebar}
                 onToggleSeedSidebar={toggleSeedSidebar}
+                showPullSidebar={showPullSidebar}
+                onTogglePullSidebar={togglePullSidebar}
                 sidebarCollapsed={sidebarCollapsed}
                 onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
               />
@@ -182,7 +195,7 @@ function App() {
                 {/* Main Content (SqlEditor + Logs) */}
                 <div
                   className={`flex-1 flex overflow-hidden transition-opacity duration-300 ${
-                    showDiffSidebar || showSeedSidebar
+                    showDiffSidebar || showSeedSidebar || showPullSidebar
                       ? "opacity-25 pointer-events-none"
                       : ""
                   }`}
@@ -236,6 +249,21 @@ function App() {
                     <SeedSidebar
                       projectId={selectedProject.id}
                       onClose={() => setShowSeedSidebar(false)}
+                    />
+                  </div>
+                )}
+
+                {/* Pull Sidebar - Overlay Sheet */}
+                {showPullSidebar && selectedProject && (
+                  <div className="absolute top-0 right-0 bottom-0 w-[450px] border-l bg-background flex flex-col overflow-hidden shrink-0 z-20 shadow-xl">
+                    <PullSidebar
+                      projectId={selectedProject.id}
+                      onClose={() => setShowPullSidebar(false)}
+                      onSuccess={() => {
+                        setShowPullSidebar(false);
+                        // Maybe reload project / logs?
+                        loadProjects();
+                      }}
                     />
                   </div>
                 )}

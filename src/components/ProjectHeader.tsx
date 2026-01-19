@@ -25,6 +25,8 @@ interface ProjectHeaderProps {
   onToggleDiffSidebar: () => void;
   showSeedSidebar: boolean;
   onToggleSeedSidebar: () => void;
+  showPullSidebar: boolean;
+  onTogglePullSidebar: () => void;
   sidebarCollapsed: boolean;
   onToggleSidebar: () => void;
 }
@@ -37,6 +39,8 @@ export function ProjectHeader({
   onToggleDiffSidebar,
   showSeedSidebar,
   onToggleSeedSidebar,
+  showPullSidebar,
+  onTogglePullSidebar,
   sidebarCollapsed,
   onToggleSidebar,
 }: ProjectHeaderProps) {
@@ -60,36 +64,6 @@ export function ProjectHeader({
       onUpdate();
     } catch (err) {
       console.error("Failed to toggle watch:", err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handlePull = async () => {
-    const confirmed = await ask(
-      `Overwrite local changes for "${project.name}"? This cannot be undone.`,
-      {
-        title: "Confirm Pull",
-        kind: "warning",
-        okLabel: "Overwrite",
-        cancelLabel: "Cancel",
-      }
-    );
-
-    if (!confirmed) return;
-    setIsLoading(true);
-    try {
-      await api.pullProject(project.id);
-      await ask("Project pulled successfully", {
-        title: "Success",
-        kind: "info",
-      });
-    } catch (err) {
-      console.error("Failed to pull project:", err);
-      await ask("Failed to pull project: " + String(err), {
-        title: "Error",
-        kind: "error",
-      });
     } finally {
       setIsLoading(false);
     }
@@ -266,9 +240,14 @@ export function ProjectHeader({
           <Button
             variant="outline"
             size="icon"
-            onClick={handlePull}
+            className={
+              showPullSidebar
+                ? "bg-muted text-primary hover:text-primary/80"
+                : "hover:text-primary"
+            }
+            onClick={onTogglePullSidebar}
             disabled={isLoading}
-            title="Pull from remote"
+            title={showPullSidebar ? "Hide remote content" : "Pull from remote"}
           >
             <CloudDownload size={16} strokeWidth={1} />
           </Button>

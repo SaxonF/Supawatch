@@ -77,3 +77,8 @@ export interface DiffResponse {
   is_destructive: boolean;
   edge_functions: EdgeFunctionDiff[];
 }
+
+export interface PullDiffResponse {
+  migration_sql: string;
+  edge_functions: EdgeFunctionDiff[];
+}

@@ -43,6 +43,7 @@ fn main() {
             commands::list_remote_projects,
             commands::list_organizations,
             commands::pull_project,
+            commands::get_pull_diff,
             commands::push_project,
             commands::get_project_diff,
             // Project commands

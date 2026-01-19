@@ -174,6 +174,12 @@ export async function getProjectDiff(
   return invoke("get_project_diff", { projectId });
 }
 
+export async function getPullDiff(
+  projectId: string
+): Promise<import("./types").PullDiffResponse> {
+  return invoke("get_pull_diff", { projectId });
+}
+
 // Supabase Logs API
 export async function querySupabaseLogs(
   projectId: string,

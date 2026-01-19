@@ -8,6 +8,65 @@ use crate::state::AppState;
 use crate::sync;
 use crate::tray::update_icon;
 
+#[derive(serde::Serialize)]
+pub struct PullDiffResponse {
+    pub migration_sql: String,
+    pub edge_functions: Vec<sync::EdgeFunctionDiff>,
+}
+
+async fn fetch_remote_schema_sql(
+    api: &crate::supabase_api::SupabaseApi,
+    project_ref: &str,
+) -> Result<(String, crate::schema::DbSchema), String> {
+    // 1. Introspect Remote
+    let introspector = crate::introspection::Introspector::new(api, project_ref.to_string());
+    let remote_schema = introspector.introspect().await.map_err(|e| e.to_string())?;
+
+    // 2. Generate SQL (Full Dump)
+    let empty_schema = crate::schema::DbSchema::new();
+    let diff = crate::diff::compute_diff(&empty_schema, &remote_schema);
+    let sql = crate::generator::generate_sql(&diff, &remote_schema);
+
+    Ok((sql, remote_schema))
+}
+
+#[tauri::command]
+pub async fn get_pull_diff(
+    app_handle: AppHandle,
+    project_id: String,
+) -> Result<PullDiffResponse, String> {
+    let state = app_handle.state::<Arc<AppState>>();
+    let uuid = Uuid::parse_str(&project_id).map_err(|e| e.to_string())?;
+
+    let project = state.get_project(uuid).await.map_err(|e| e.to_string())?;
+    let project_ref = project
+        .supabase_project_ref
+        .clone()
+        .ok_or("Project not linked to Supabase")?;
+
+    let api = state.get_api_client().await.map_err(|e| e.to_string())?;
+
+    // 1. Get Schema SQL
+    let (migration_sql, _) = fetch_remote_schema_sql(&api, &project_ref).await?;
+
+    // 2. List Edge Functions
+    let funcs = api.list_functions(&project_ref).await.map_err(|e| e.to_string())?;
+    let edge_functions = funcs
+        .into_iter()
+        .map(|f| sync::EdgeFunctionDiff {
+            slug: f.slug.clone(),
+            name: f.name.clone(),
+            path: format!("supabase/functions/{}", f.slug),
+        })
+        .collect();
+
+    Ok(PullDiffResponse {
+        migration_sql,
+        edge_functions,
+    })
+}
+
+
 #[tauri::command]
 pub async fn pull_project(
     app_handle: AppHandle,
@@ -38,23 +97,11 @@ async fn pull_project_internal(
     state.add_log(log.clone()).await;
     app_handle.emit("log", &log).ok();
 
-    // 1. Introspect Remote
-    let introspector = crate::introspection::Introspector::new(&api, project_ref.clone());
-    let remote_schema = introspector.introspect().await.map_err(|e| e.to_string())?;
+    // 1. Fetch Remote Schema (Introspect + Generate SQL)
+    let (sql, remote_schema) = fetch_remote_schema_sql(&api, &project_ref).await?;
 
     // Cache the schema for AI SQL conversion
-    state.set_cached_schema(uuid, remote_schema.clone()).await;
-
-    // 2. Generate SQL (Full Dump)
-    // We can use the generator to create CREATE statements for everything in remote schema
-    // By "diffing" against an empty schema
-    let empty_schema = crate::schema::DbSchema::new();
-    let diff = crate::diff::compute_diff(&empty_schema, &remote_schema); // Remote is 'local' (target), Empty is 'remote' (base) -> All creates
-    // Wait, compute_diff(remote, local) -> diff to transform remote to local?
-    // compute_diff(base, target) -> diff to transform base to target.
-    // We want to transform Empty -> Remote. So compute_diff(empty, remote).
-    
-    let sql = crate::generator::generate_sql(&diff, &remote_schema);
+    state.set_cached_schema(uuid, remote_schema).await;
 
     // 3. Write to file
     let supabase_dir = std::path::Path::new(&project.local_path).join("supabase");
