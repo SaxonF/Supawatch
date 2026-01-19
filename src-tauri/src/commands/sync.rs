@@ -760,3 +760,59 @@ pub async fn get_project_diff(
         edge_functions,
     })
 }
+
+#[tauri::command]
+pub async fn get_seed_content(
+    app_handle: AppHandle,
+    project_id: String,
+) -> Result<String, String> {
+    let state = app_handle.state::<Arc<AppState>>();
+    let uuid = Uuid::parse_str(&project_id).map_err(|e| e.to_string())?;
+
+    let project = state.get_project(uuid).await.map_err(|e| e.to_string())?;
+
+    // Find seed directory
+    let seed_dir = Path::new(&project.local_path).join("supabase").join("seed");
+
+    if !seed_dir.exists() {
+        return Ok("-- No seed directory found at supabase/seed".to_string());
+    }
+
+    // Collect all .sql files in the seed directory
+    let mut seed_files: Vec<std::path::PathBuf> = Vec::new();
+    match tokio::fs::read_dir(&seed_dir).await {
+        Ok(mut entries) => {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let path = entry.path();
+                if path.is_file() && path.extension().map_or(false, |ext| ext == "sql") {
+                    seed_files.push(path);
+                }
+            }
+        }
+        Err(_) => return Ok("-- Failed to read seed directory".to_string()),
+    }
+
+    if seed_files.is_empty() {
+        return Ok("-- No .sql files found in seed directory".to_string());
+    }
+
+    // Sort files alphabetically by filename
+    seed_files.sort_by(|a, b| {
+        a.file_name()
+            .unwrap_or_default()
+            .cmp(b.file_name().unwrap_or_default())
+    });
+
+    let mut combined_sql = String::new();
+
+    for seed_path in seed_files {
+        let filename = seed_path.file_name().unwrap_or_default().to_string_lossy();
+        combined_sql.push_str(&format!("-- File: {}\n", filename));
+        
+        let sql = tokio::fs::read_to_string(&seed_path).await.map_err(|e| e.to_string())?;
+        combined_sql.push_str(&sql);
+        combined_sql.push_str("\n\n");
+    }
+
+    Ok(combined_sql)
+}

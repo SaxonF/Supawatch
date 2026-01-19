@@ -69,6 +69,7 @@ fn main() {
             commands::deploy_edge_function,
             commands::get_remote_schema,
             commands::run_seeds,
+            commands::get_seed_content,
             // Supabase Logs API commands
             commands::query_supabase_logs,
             commands::get_edge_function_logs,

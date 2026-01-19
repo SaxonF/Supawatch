@@ -8,6 +8,7 @@ import { CreateProjectForm } from "./components/CreateProjectForm";
 import { DiffSidebar } from "./components/DiffSidebar";
 import { ProjectHeader } from "./components/ProjectHeader";
 import { ProjectLogs } from "./components/ProjectLogs";
+import { SeedSidebar } from "./components/SeedSidebar";
 import { Settings } from "./components/Settings";
 import { Sidebar } from "./components/Sidebar";
 import { SqlEditor } from "./components/SqlEditor";
@@ -25,6 +26,7 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [logsExpanded, setLogsExpanded] = useState(false);
   const [showDiffSidebar, setShowDiffSidebar] = useState(false);
+  const [showSeedSidebar, setShowSeedSidebar] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const selectedProject =
@@ -50,8 +52,19 @@ function App() {
   };
 
   const toggleDiffSidebar = () => {
-    if (!showDiffSidebar) setLogsExpanded(false);
+    if (!showDiffSidebar) {
+      setLogsExpanded(false);
+      setShowSeedSidebar(false);
+    }
     setShowDiffSidebar(!showDiffSidebar);
+  };
+
+  const toggleSeedSidebar = () => {
+    if (!showSeedSidebar) {
+      setLogsExpanded(false);
+      setShowDiffSidebar(false);
+    }
+    setShowSeedSidebar(!showSeedSidebar);
   };
 
   useEffect(() => {
@@ -160,6 +173,8 @@ function App() {
                 onDelete={handleProjectDeleted}
                 showDiffSidebar={showDiffSidebar}
                 onToggleDiffSidebar={toggleDiffSidebar}
+                showSeedSidebar={showSeedSidebar}
+                onToggleSeedSidebar={toggleSeedSidebar}
                 sidebarCollapsed={sidebarCollapsed}
                 onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
               />
@@ -167,7 +182,9 @@ function App() {
                 {/* Main Content (SqlEditor + Logs) */}
                 <div
                   className={`flex-1 flex overflow-hidden transition-opacity duration-300 ${
-                    showDiffSidebar ? "opacity-25 pointer-events-none" : ""
+                    showDiffSidebar || showSeedSidebar
+                      ? "opacity-25 pointer-events-none"
+                      : ""
                   }`}
                 >
                   {/* SQL Editor - Main Content */}
@@ -212,6 +229,16 @@ function App() {
                       />
                     </div>
                   )}
+
+                {/* Seed Sidebar - Overlay Sheet */}
+                {showSeedSidebar && selectedProject && (
+                  <div className="absolute top-0 right-0 bottom-0 w-[450px] border-l bg-background flex flex-col overflow-hidden shrink-0 z-20 shadow-xl">
+                    <SeedSidebar
+                      projectId={selectedProject.id}
+                      onClose={() => setShowSeedSidebar(false)}
+                    />
+                  </div>
+                )}
               </div>
             </>
           ) : showCreateForm ? (

@@ -23,6 +23,8 @@ interface ProjectHeaderProps {
   onDelete: () => void;
   showDiffSidebar: boolean;
   onToggleDiffSidebar: () => void;
+  showSeedSidebar: boolean;
+  onToggleSeedSidebar: () => void;
   sidebarCollapsed: boolean;
   onToggleSidebar: () => void;
 }
@@ -33,6 +35,8 @@ export function ProjectHeader({
   onDelete,
   showDiffSidebar,
   onToggleDiffSidebar,
+  showSeedSidebar,
+  onToggleSeedSidebar,
   sidebarCollapsed,
   onToggleSidebar,
 }: ProjectHeaderProps) {
@@ -183,25 +187,6 @@ export function ProjectHeader({
     }
   };
 
-  const handleRunSeeds = async () => {
-    setIsLoading(true);
-    try {
-      const result = await api.runSeeds(project.id);
-      await ask(result, {
-        title: "Seeds Executed",
-        kind: "info",
-      });
-    } catch (err) {
-      console.error("Failed to run seeds:", err);
-      await ask("Failed to run seeds: " + String(err), {
-        title: "Error",
-        kind: "error",
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   return (
     <header className="shrink-0 flex items-center justify-between px-5 py-3 border-b bg-muted/10">
       <div className="flex items-center gap-4">
@@ -266,9 +251,14 @@ export function ProjectHeader({
           <Button
             variant="outline"
             size="icon"
-            onClick={handleRunSeeds}
+            className={
+              showSeedSidebar
+                ? "bg-muted text-primary hover:text-primary/80"
+                : "hover:text-primary"
+            }
+            onClick={onToggleSeedSidebar}
             disabled={isLoading}
-            title="Run seed files"
+            title={showSeedSidebar ? "Hide seed files" : "Show seed files"}
           >
             <Sprout size={16} strokeWidth={1} />
           </Button>

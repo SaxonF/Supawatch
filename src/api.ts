@@ -235,3 +235,7 @@ export async function copyTemplate(
 export async function runSeeds(projectId: string): Promise<string> {
   return invoke("run_seeds", { projectId });
 }
+
+export async function getSeedContent(projectId: string): Promise<string> {
+  return invoke("get_seed_content", { projectId });
+}
