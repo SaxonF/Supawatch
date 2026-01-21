@@ -50,6 +50,7 @@ sqlparser = "0.60.0"
 eszip = "0.106.0"
 futures = "0.3.31"
 async-recursion = "1.1.1"
+tauri-plugin-store = "2"
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem

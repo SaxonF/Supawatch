@@ -1,3 +1,4 @@
+import type { Item, ViewState } from "@/specs/types";
 import { type CellBase, type Matrix } from "react-spreadsheet";
 
 export interface CellData extends CellBase {
@@ -55,6 +56,12 @@ export interface Tab {
   queryMetadata: QueryMetadata | null;
   error: string | null;
   isTableTab: boolean;
+
+  // Spec-driven tab properties
+  groupId?: string; // Which group this tab belongs to
+  specItem?: Item; // The spec item this tab is based on
+  viewStack?: ViewState[]; // Navigation stack within this tab
+  formValues?: Record<string, unknown>; // Current form field values
 }
 
 export interface SqlEditorProps {

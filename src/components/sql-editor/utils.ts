@@ -30,7 +30,7 @@ export const TABLES_QUERY = `
   SELECT table_schema as schema, table_name as name
   FROM information_schema.tables
   WHERE table_schema NOT IN (${EXCLUDED_SCHEMAS.map((s) => `'${s}'`).join(
-    ", "
+    ", ",
   )})
     AND table_schema NOT LIKE 'pg_toast%'
     AND table_schema NOT LIKE 'pg_temp%'
@@ -53,6 +53,46 @@ export function createNewTab(): Tab {
     queryMetadata: null,
     error: null,
     isTableTab: false,
+  };
+}
+
+/**
+ * Interpolate :param placeholders in a string with values from params
+ */
+export function interpolateTemplate(
+  template: string,
+  params: Record<string, string>,
+): string {
+  return template.replace(/:(\w+)/g, (match, key) => {
+    return params[key] ?? match;
+  });
+}
+
+/**
+ * Create a tab from a spec item
+ */
+export function createSpecTab(
+  groupId: string,
+  item: { id: string; name: string; type: string; sql: string },
+  params: Record<string, string> = {},
+): Tab {
+  const name = interpolateTemplate(item.name, params);
+  const sql = interpolateTemplate(item.sql, params);
+
+  return {
+    id: generateTabId(),
+    name,
+    sql,
+    results: [],
+    originalResults: [],
+    displayColumns: [],
+    queryMetadata: null,
+    error: null,
+    isTableTab: groupId === "tables",
+    groupId,
+    specItem: item as Tab["specItem"],
+    viewStack: [{ itemId: item.id, params }],
+    formValues: {},
   };
 }
 
@@ -97,7 +137,7 @@ export function parseTables(sql: string): TableInfo[] {
   // Match FROM table [alias] - supports quoted identifiers and schema.table
   const fromRegex = new RegExp(
     `\\bfrom\\s+(${TABLE_IDENTIFIER})(?:\\s+(?:as\\s+)?(${SIMPLE_IDENTIFIER}))?`,
-    "i"
+    "i",
   );
   const fromMatch = normalized.match(fromRegex);
   if (fromMatch) {
@@ -114,7 +154,7 @@ export function parseTables(sql: string): TableInfo[] {
   // Match JOIN table [alias] - supports quoted identifiers and schema.table
   const joinRegex = new RegExp(
     `\\bjoin\\s+(${TABLE_IDENTIFIER})(?:\\s+(?:as\\s+)?(${SIMPLE_IDENTIFIER}))?`,
-    "gi"
+    "gi",
   );
   let joinMatch;
   while ((joinMatch = joinRegex.exec(normalized)) !== null) {
@@ -156,7 +196,7 @@ export function hasNonEditableConstructs(sql: string): boolean {
 export function parseColumns(
   sql: string,
   resultColumns: string[],
-  tables: TableInfo[]
+  tables: TableInfo[],
 ): ColumnInfo[] {
   const normalized = sql.replace(/\s+/g, " ").trim();
 
@@ -198,7 +238,7 @@ export function parseColumns(
       // Look for patterns like: table.column as alias, table.column alias, table.column
       const prefixPattern = new RegExp(
         `\\b([a-z_][a-z0-9_]*)\\.([a-z_][a-z0-9_]*)(?:\\s+(?:as\\s+)?${resultCol})?\\b`,
-        "gi"
+        "gi",
       );
 
       let match;
@@ -231,12 +271,12 @@ export function parseColumns(
         new RegExp(`\\([^)]+\\)\\s+(?:as\\s+)?${resultCol}\\b`, "i"),
         new RegExp(
           `\\w+\\s*[+\\-*/]\\s*\\w+.*?(?:as\\s+)?${resultCol}\\b`,
-          "i"
+          "i",
         ),
         new RegExp(`\\w+\\s*\\|\\|\\s*\\w+.*?(?:as\\s+)?${resultCol}\\b`, "i"),
         new RegExp(
           `\\b(?:coalesce|case|nullif|concat)\\s*\\(.*?(?:as\\s+)?${resultCol}\\b`,
-          "i"
+          "i",
         ),
       ];
 
@@ -250,7 +290,7 @@ export function parseColumns(
 // Find primary key columns for each table in the result set
 export function findPrimaryKeys(
   columns: ColumnInfo[],
-  tables: TableInfo[]
+  tables: TableInfo[],
 ): void {
   const pkNames = ["id", "uuid", "pk", "_id"];
 
@@ -259,7 +299,8 @@ export function findPrimaryKeys(
     for (const pkName of pkNames) {
       const matchingCol = columns.find(
         (col) =>
-          col.tableName === table.name && col.fieldName.toLowerCase() === pkName
+          col.tableName === table.name &&
+          col.fieldName.toLowerCase() === pkName,
       );
       if (matchingCol) {
         table.primaryKeyColumn = matchingCol.resultName;
@@ -273,7 +314,7 @@ export function findPrimaryKeys(
     if (!table.primaryKeyColumn) {
       for (const pkName of pkNames) {
         const matchingCol = columns.find(
-          (col) => col.resultName.toLowerCase() === pkName && !col.isPrimaryKey
+          (col) => col.resultName.toLowerCase() === pkName && !col.isPrimaryKey,
         );
         if (matchingCol) {
           table.primaryKeyColumn = matchingCol.resultName;
@@ -314,7 +355,7 @@ export function generateUpdateSql(
   tableName: string,
   primaryKeyField: string,
   primaryKeyValue: string,
-  changes: Record<string, { oldValue: string; newValue: string }>
+  changes: Record<string, { oldValue: string; newValue: string }>,
 ): string {
   const setClauses = Object.entries(changes)
     .map(([fieldName, { newValue }]) => {
@@ -335,4 +376,86 @@ export function generateUpdateSql(
   const escapedPkValue = `'${primaryKeyValue.replace(/'/g, "''")}'`;
 
   return `UPDATE "${tableName}" SET ${setClauses} WHERE "${primaryKeyField}" = ${escapedPkValue}`;
+}
+
+/**
+ * Resolve the currently active item and params from the view stack
+ */
+export function resolveActiveItem(
+  rootItem: { id: string; children?: any[] } & any,
+  viewStack: { itemId: string; params: Record<string, string> }[] = [],
+): { item: any; params: Record<string, string> } {
+  if (!viewStack.length) return { item: rootItem, params: {} };
+
+  // The first item in stack MUST match rootItem
+  if (viewStack[0].itemId !== rootItem.id) {
+    return { item: rootItem, params: {} };
+  }
+
+  let currentItem = rootItem;
+  let currentParams = viewStack[0].params;
+
+  // Iterate subsequent stack items
+  for (let i = 1; i < viewStack.length; i++) {
+    const stackItem = viewStack[i];
+    const child = currentItem.children?.find(
+      (c: any) => c.id === stackItem.itemId,
+    );
+    if (child) {
+      currentItem = child;
+      currentParams = stackItem.params;
+    } else {
+      break;
+    }
+  }
+
+  return { item: currentItem, params: currentParams };
+}
+
+// Persistence Helpers
+
+export function persistTabs(projectId: string, tabs: Tab[]) {
+  // Sanitize tabs before saving - remove heavy data
+  const sanitizedTabs = tabs.map((tab) => ({
+    ...tab,
+    results: [],
+    originalResults: [],
+    queryMetadata: null,
+    error: null,
+  }));
+  try {
+    localStorage.setItem(
+      `supawatch:tabs:${projectId}`,
+      JSON.stringify(sanitizedTabs),
+    );
+  } catch (e) {
+    console.error("Failed to persist tabs:", e);
+  }
+}
+
+export function loadPersistedTabs(projectId: string): Tab[] | null {
+  try {
+    const json = localStorage.getItem(`supawatch:tabs:${projectId}`);
+    return json ? JSON.parse(json) : null;
+  } catch (e) {
+    console.error("Failed to load persisted tabs:", e);
+    return null;
+  }
+}
+
+export function persistActiveTab(projectId: string, tabId: string) {
+  try {
+    localStorage.setItem(`supawatch:activeTab:${projectId}`, tabId);
+  } catch (e) {
+    console.error("Failed to persist active tab:", e);
+  }
+}
+
+export function loadPersistedActiveTab(projectId: string): string | null {
+  try {
+    return localStorage.getItem(`supawatch:activeTab:${projectId}`);
+  } catch (e) {
+    console.error("Failed to load persisted active tab:", e);
+    return null;
+  }
 }

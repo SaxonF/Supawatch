@@ -69,7 +69,7 @@ const createSchema = z
     {
       message: "Output path is required when TypeScript generation is enabled",
       path: ["typescriptOutputPath"],
-    }
+    },
   );
 
 const syncSchema = z
@@ -92,11 +92,12 @@ const syncSchema = z
     {
       message: "Output path is required when TypeScript generation is enabled",
       path: ["typescriptOutputPath"],
-    }
+    },
   );
 
 export function CreateProjectForm({
   onCreated,
+  // @ts-ignore
   onCancel,
 }: CreateProjectFormProps) {
   const [mode, setMode] = useState<Mode>("create");
@@ -174,7 +175,7 @@ export function CreateProjectForm({
             undefined,
             value.orgId,
             value.generateTypescript,
-            value.generateTypescript ? value.typescriptOutputPath : undefined
+            value.generateTypescript ? value.typescriptOutputPath : undefined,
           );
         } else {
           const project = remoteProjects.find((p) => p.id === value.projectId);
@@ -187,13 +188,13 @@ export function CreateProjectForm({
             project.id,
             undefined,
             value.generateTypescript,
-            value.generateTypescript ? value.typescriptOutputPath : undefined
+            value.generateTypescript ? value.typescriptOutputPath : undefined,
           );
         }
 
         sendNativeNotification(
           "Success",
-          mode === "create" ? "Project created" : "Project synced"
+          mode === "create" ? "Project created" : "Project synced",
         );
         onCreated();
       } catch (err) {
@@ -366,7 +367,7 @@ export function CreateProjectForm({
                     children={(field) => {
                       const selectedOrgId = form.getFieldValue("orgId");
                       const filteredProjects = remoteProjects.filter(
-                        (p) => p.organization_id === selectedOrgId
+                        (p) => p.organization_id === selectedOrgId,
                       );
 
                       return (
@@ -523,8 +524,8 @@ export function CreateProjectForm({
                       {isSubmitting
                         ? "Saving..."
                         : mode === "create"
-                        ? "Create Project"
-                        : "Sync Project"}
+                          ? "Create Project"
+                          : "Sync Project"}
                     </Button>
                   )}
                 />

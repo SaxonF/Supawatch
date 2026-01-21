@@ -1,0 +1,147 @@
+{
+  "groups": [
+    {
+      "id": "tables",
+      "name": "Tables",
+      "icon": "Table",
+      "itemsQuery": "SELECT schemaname AS schema, tablename AS name FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",
+      "itemTemplate": {
+        "id": ":schema.:name",
+        "name": ":name",
+        "type": "query",
+        "sql": "SELECT * FROM \":schema\".\":name\" LIMIT 100",
+        "visible": true,
+        "autoRun": true
+      }
+    },
+    {
+      "id": "admin",
+      "name": "Admin",
+      "icon": "Settings",
+      "items": [
+        {
+          "id": "cron",
+          "name": "Cron",
+          "icon": "Clock",
+          "visible": true,
+          "autoRun": true,
+          "type": "query",
+          "sql": "SELECT jobid, jobname, schedule, command, active FROM cron.job ORDER BY jobname",
+          "primaryAction": {
+            "label": "Create Job",
+            "itemId": "create"
+          },
+          "rowActions": [
+            {
+              "label": "Edit",
+              "itemId": "edit",
+              "params": { "jobid": "jobid" }
+            },
+            {
+              "label": "Delete",
+              "itemId": "delete",
+              "params": { "jobid": "jobid" },
+              "variant": "destructive"
+            }
+          ],
+          "children": [
+            {
+              "id": "create",
+              "name": "Create Job",
+              "visible": false,
+              "type": "mutation",
+              "sql": "SELECT cron.schedule(:jobname, :schedule, :command)",
+              "form": {
+                "fields": [
+                  {
+                    "name": "jobname",
+                    "label": "Job Name",
+                    "type": "text",
+                    "required": true,
+                    "placeholder": "my-cron-job"
+                  },
+                  {
+                    "name": "schedule",
+                    "label": "Schedule",
+                    "type": "text",
+                    "required": true,
+                    "placeholder": "*/5 * * * *"
+                  },
+                  {
+                    "name": "command",
+                    "label": "Command",
+                    "type": "textarea",
+                    "required": true,
+                    "placeholder": "SELECT my_function()"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "edit",
+              "name": "Edit Job",
+              "visible": false,
+              "type": "mutation",
+              "sql": "UPDATE cron.job SET jobname = :jobname, schedule = :schedule, command = :command, active = :active WHERE jobid = :jobid",
+              "loadQuery": "SELECT * FROM cron.job WHERE jobid = :jobid",
+              "form": {
+                "fields": [
+                  {
+                    "name": "jobname",
+                    "label": "Job Name",
+                    "type": "text",
+                    "required": true
+                  },
+                  {
+                    "name": "schedule",
+                    "label": "Schedule",
+                    "type": "text",
+                    "required": true
+                  },
+                  {
+                    "name": "command",
+                    "label": "Command",
+                    "type": "textarea",
+                    "required": true
+                  },
+                  { "name": "active", "label": "Active", "type": "boolean" }
+                ]
+              }
+            },
+            {
+              "id": "delete",
+              "name": "Delete Job",
+              "visible": false,
+              "type": "mutation",
+              "sql": "SELECT cron.unschedule(:jobid)",
+              "form": {
+                "fields": [
+                  {
+                    "name": "jobid",
+                    "label": "Job ID",
+                    "type": "text",
+                    "required": true
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "scripts",
+      "name": "Scripts",
+      "icon": "FileText",
+      "itemsFromState": "tabs",
+      "userCreatable": true,
+      "itemTemplate": {
+        "id": ":id",
+        "name": "Untitled",
+        "type": "query",
+        "sql": "",
+        "visible": true
+      }
+    }
+  ]
+}
