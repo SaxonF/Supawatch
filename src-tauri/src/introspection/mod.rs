@@ -568,6 +568,7 @@ mod tests {
                     "table_name": "posts",
                     "constraint_name": "fk_user",
                     "column_name": "user_id",
+                    "foreign_schema": "public",
                     "foreign_table": "users",
                     "foreign_column": "id",
                     "on_delete": "CASCADE",

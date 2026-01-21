@@ -75,8 +75,9 @@ pub fn generate_create_policy(table_name: &str, policy: &PolicyInfo) -> String {
 
 pub fn generate_add_foreign_key(table_name: &str, fk: &ForeignKeyInfo) -> String {
     let mut sql = format!(
-        "ALTER TABLE {} ADD CONSTRAINT \"{}\" FOREIGN KEY (\"{}\") REFERENCES \"{}\"(\"{}\")",
-        table_name, fk.constraint_name, fk.column_name, fk.foreign_table, fk.foreign_column
+        "ALTER TABLE {} ADD CONSTRAINT \"{}\" FOREIGN KEY (\"{}\") REFERENCES \"{}\".\"{}\"{}", 
+        table_name, fk.constraint_name, fk.column_name, fk.foreign_schema, fk.foreign_table,
+        format!("(\"{}\")", fk.foreign_column)
     );
 
     if fk.on_delete != "NO ACTION" {

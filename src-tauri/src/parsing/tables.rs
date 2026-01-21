@@ -30,7 +30,7 @@ pub fn handle_create_table(
                 if let (Some(col), Some(ref_col)) =
                     (fk.columns.first(), fk.referred_columns.first())
                 {
-                    let (_, ref_table) = parse_object_name(&fk.foreign_table);
+                    let (ref_schema, ref_table) = parse_object_name(&fk.foreign_table);
                     foreign_keys.push(ForeignKeyInfo {
                         constraint_name: fk
                             .name
@@ -38,6 +38,7 @@ pub fn handle_create_table(
                             .map(|n| strip_quotes(&n.value))
                             .unwrap_or_else(|| format!("fk_{}_{}", table_name, strip_quotes(&col.to_string()))),
                         column_name: strip_quotes(&col.to_string()),
+                        foreign_schema: ref_schema,
                         foreign_table: ref_table,
                         foreign_column: strip_quotes(&ref_col.to_string()),
                         on_delete: fk
@@ -112,11 +113,12 @@ pub fn handle_alter_table(
                                 } else {
                                     format!("fk_{}_{}", table_name, strip_quotes(&col.to_string()))
                                 };
-                                let (_, ref_table) = parse_object_name(&fk.foreign_table);
+                                let (ref_schema, ref_table) = parse_object_name(&fk.foreign_table);
 
                                 t_info.foreign_keys.push(ForeignKeyInfo {
                                     constraint_name,
                                     column_name: strip_quotes(&col.to_string()),
+                                    foreign_schema: ref_schema,
                                     foreign_table: ref_table,
                                     foreign_column: strip_quotes(&ref_col.to_string()),
                                     on_delete: fk
@@ -334,8 +336,8 @@ pub fn parse_columns(
                     });
                 }
                 ColumnOption::ForeignKey(fk_constraint) => {
-                    // Handle inline REFERENCES like: user_id uuid REFERENCES users(id)
-                    let (_, ref_table) = parse_object_name(&fk_constraint.foreign_table);
+                    // Handle inline REFERENCES like: user_id uuid REFERENCES auth.users(id)
+                    let (ref_schema, ref_table) = parse_object_name(&fk_constraint.foreign_table);
                     let ref_column = fk_constraint
                         .referred_columns
                         .first()
@@ -350,6 +352,7 @@ pub fn parse_columns(
                     fks.push(ForeignKeyInfo {
                         constraint_name,
                         column_name: name.clone(),
+                        foreign_schema: ref_schema,
                         foreign_table: ref_table,
                         foreign_column: ref_column,
                         on_delete: fk_constraint

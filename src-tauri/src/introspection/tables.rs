@@ -64,6 +64,7 @@ pub const TABLES_BULK_QUERY: &str = r#"
             c.relname as table_name,
             con.conname as constraint_name,
             a.attname as column_name,
+            nf.nspname as foreign_schema,
             cf.relname as foreign_table,
             af.attname as foreign_column,
             CASE con.confdeltype
@@ -86,6 +87,7 @@ pub const TABLES_BULK_QUERY: &str = r#"
         JOIN pg_class c ON con.conrelid = c.oid
         JOIN pg_namespace n ON c.relnamespace = n.oid
         JOIN pg_class cf ON con.confrelid = cf.oid
+        JOIN pg_namespace nf ON cf.relnamespace = nf.oid
         CROSS JOIN LATERAL unnest(con.conkey, con.confkey) AS k(con_attnum, conf_attnum)
         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.con_attnum
         JOIN pg_attribute af ON af.attrelid = cf.oid AND af.attnum = k.conf_attnum
@@ -274,6 +276,7 @@ pub fn parse_bulk_response(data: &serde_json::Value) -> Result<HashMap<String, T
         table_name: String,
         constraint_name: String,
         column_name: String,
+        foreign_schema: String,
         foreign_table: String,
         foreign_column: String,
         on_delete: String,
@@ -435,6 +438,7 @@ pub fn parse_bulk_response(data: &serde_json::Value) -> Result<HashMap<String, T
             table.foreign_keys.push(ForeignKeyInfo {
                 constraint_name: fk.constraint_name,
                 column_name: fk.column_name,
+                foreign_schema: fk.foreign_schema,
                 foreign_table: fk.foreign_table,
                 foreign_column: fk.foreign_column,
                 on_delete: fk.on_delete,

@@ -65,6 +65,7 @@ pub struct ColumnInfo {
 pub struct ForeignKeyInfo {
     pub constraint_name: String,
     pub column_name: String,
+    pub foreign_schema: String,
     pub foreign_table: String,
     pub foreign_column: String,
     pub on_delete: String,
@@ -287,6 +288,7 @@ impl Default for ForeignKeyInfo {
         Self {
             constraint_name: String::new(),
             column_name: String::new(),
+            foreign_schema: "public".to_string(),
             foreign_table: String::new(),
             foreign_column: String::new(),
             on_delete: "NO ACTION".to_string(),

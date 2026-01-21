@@ -293,6 +293,7 @@ pub fn indexes_differ(local: &IndexInfo, remote: &IndexInfo) -> bool {
 
 pub fn foreign_keys_differ(local: &ForeignKeyInfo, remote: &ForeignKeyInfo) -> bool {
     local.column_name != remote.column_name
+        || local.foreign_schema != remote.foreign_schema
         || local.foreign_table != remote.foreign_table
         || local.foreign_column != remote.foreign_column
         || local.on_delete != remote.on_delete

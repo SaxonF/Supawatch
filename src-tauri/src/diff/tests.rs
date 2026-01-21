@@ -497,6 +497,7 @@ fn test_foreign_key_on_update_comparison() {
     let local = ForeignKeyInfo {
         constraint_name: "fk_test".to_string(),
         column_name: "user_id".to_string(),
+        foreign_schema: "public".to_string(),
         foreign_table: "users".to_string(),
         foreign_column: "id".to_string(),
         on_delete: "CASCADE".to_string(),
@@ -506,6 +507,7 @@ fn test_foreign_key_on_update_comparison() {
     let remote = ForeignKeyInfo {
         constraint_name: "fk_test".to_string(),
         column_name: "user_id".to_string(),
+        foreign_schema: "public".to_string(),
         foreign_table: "users".to_string(),
         foreign_column: "id".to_string(),
         on_delete: "CASCADE".to_string(),
@@ -1823,6 +1825,7 @@ fn test_foreign_key_add() {
     local_table.foreign_keys.push(ForeignKeyInfo {
         constraint_name: "fk_user".into(),
         column_name: "user_id".into(),
+        foreign_schema: "public".into(),
         foreign_table: "users".into(),
         foreign_column: "id".into(),
         on_delete: "CASCADE".into(),
@@ -1850,6 +1853,7 @@ fn test_foreign_key_drop() {
         foreign_keys: vec![ForeignKeyInfo {
             constraint_name: "fk_user".into(),
             column_name: "user_id".into(),
+            foreign_schema: "public".into(),
             foreign_table: "users".into(),
             foreign_column: "id".into(),
             on_delete: "CASCADE".into(),

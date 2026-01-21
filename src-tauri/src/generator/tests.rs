@@ -97,6 +97,7 @@ fn test_generate_foreign_key_with_on_update() {
     let fk = ForeignKeyInfo {
         constraint_name: "fk_user_org".to_string(),
         column_name: "org_id".to_string(),
+        foreign_schema: "public".to_string(),
         foreign_table: "organizations".to_string(),
         foreign_column: "id".to_string(),
         on_delete: "CASCADE".to_string(),
