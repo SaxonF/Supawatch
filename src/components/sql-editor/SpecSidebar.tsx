@@ -1,17 +1,8 @@
 import * as api from "@/api";
 import { cn } from "@/lib/utils";
 import { defaultSidebarSpec, Group, Item } from "@/specs";
-import {
-  ChevronDown,
-  ChevronRight,
-  Clock,
-  FileText,
-  Plus,
-  RefreshCw,
-  Settings,
-  Table as TableIcon,
-  X,
-} from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, RefreshCw, X } from "lucide-react";
+import { DynamicIcon } from "lucide-react/dynamic";
 import { useCallback, useEffect, useState } from "react";
 import * as store from "../../utils/store";
 import { Button } from "../ui/button";
@@ -39,21 +30,6 @@ interface SpecSidebarProps {
   finishEditingTab: () => void;
   handleTabKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
 }
-
-// Map icon names to components
-const iconMap: Record<
-  string,
-  React.ComponentType<{
-    size?: number;
-    strokeWidth?: number;
-    className?: string;
-  }>
-> = {
-  Table: TableIcon,
-  Clock: Clock,
-  Settings: Settings,
-  FileText: FileText,
-};
 
 interface DynamicItem {
   id: string;
@@ -207,7 +183,7 @@ export function SpecSidebar({
   ) => {
     if (item.visible === false) return null;
 
-    const IconComponent = item.icon ? iconMap[item.icon] : FileText;
+    const iconName = item.icon || "FileText";
     const existingTab = tabs.find(
       (t) => t.groupId === groupId && t.specItem?.id === item.id,
     );
@@ -237,15 +213,14 @@ export function SpecSidebar({
             : "hover:bg-muted/50 border-l-transparent",
         )}
       >
-        {IconComponent && (
-          <IconComponent
-            size={14}
-            strokeWidth={1}
-            className={cn("shrink-0 text-muted-foreground", {
-              "text-primary": isActive,
-            })}
-          />
-        )}
+        <DynamicIcon
+          name={iconName as any}
+          size={14}
+          strokeWidth={1}
+          className={cn("shrink-0 text-muted-foreground", {
+            "text-primary": isActive,
+          })}
+        />
 
         {isEditing ? (
           <input

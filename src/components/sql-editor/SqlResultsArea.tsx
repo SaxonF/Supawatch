@@ -5,7 +5,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { RowAction } from "@/specs/types";
+import { ChartSpec, RowAction } from "@/specs/types";
 import { AlertCircleIcon, MoreHorizontal, Sparkles } from "lucide-react";
 import Spreadsheet from "react-spreadsheet";
 import { Button } from "../ui/button";
@@ -20,7 +20,17 @@ interface SqlResultsAreaProps {
   isProcessingWithAI?: boolean;
   rowActions?: RowAction[];
   onRowAction?: (action: RowAction, row: Record<string, any>) => void;
+  chart?: ChartSpec;
 }
+
+import {
+  ChartConfig,
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+} from "@/components/ui/chart";
+import * as React from "react";
+import { Bar, BarChart, CartesianGrid, XAxis } from "recharts";
 
 export function SqlResultsArea({
   error,
@@ -31,7 +41,43 @@ export function SqlResultsArea({
   isProcessingWithAI = false,
   rowActions,
   onRowAction,
+  chart,
 }: SqlResultsAreaProps) {
+  // Generate internal chart config from ChartSpec
+  const internalChartConfig = React.useMemo<ChartConfig | null>(() => {
+    if (!chart) return null;
+
+    // Assign colors from chart css variables
+    const config: ChartConfig = {};
+    chart.yAxis.forEach((axis, idx) => {
+      // Rotate through 5 chart colors
+      const colorIndex = (idx % 5) + 1;
+      config[axis.name] = {
+        label: axis.label || axis.name,
+        color: `var(--chart-${colorIndex})`,
+      };
+    });
+
+    return config;
+  }, [chart]);
+
+  // Transform results for chart if needed
+  const chartData = React.useMemo(() => {
+    if (!chart || !results.length) return [];
+
+    return results.map((row) => {
+      const rowData: Record<string, any> = {};
+      displayColumns.forEach((col, idx) => {
+        const cellValue = row[idx]?.value;
+        // Try to parse numbers for chart values
+        const numValue = Number(cellValue);
+        rowData[col] =
+          !isNaN(numValue) && cellValue !== "" ? numValue : cellValue;
+      });
+      return rowData;
+    });
+  }, [results, displayColumns, chart]);
+
   return (
     <div className="select-none flex-1 overflow-auto [scrollbar-width:none] [scrollbar-height:none] [&::-webkit-scrollbar]:hidden">
       {error ? (
@@ -61,8 +107,48 @@ export function SqlResultsArea({
           </Alert>
         </div>
       ) : results.length > 0 ? (
-        <div className="sql-results-spreadsheet">
-          {rowActions && rowActions.length > 0 ? (
+        <div className="sql-results-spreadsheet h-full flex flex-col">
+          {chart && internalChartConfig ? (
+            <div className="flex-1 p-6">
+              <ChartContainer
+                config={internalChartConfig}
+                className="h-full w-full"
+              >
+                <BarChart accessibilityLayer data={chartData}>
+                  <CartesianGrid vertical={false} />
+                  <XAxis
+                    dataKey={chart.xAxis.name}
+                    tickLine={false}
+                    tickMargin={10}
+                    axisLine={false}
+                    tickFormatter={(value) => {
+                      // Attempt to format dates if the value looks like a date
+                      const date = new Date(value);
+                      if (!isNaN(date.getTime())) {
+                        return date.toLocaleDateString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                        });
+                      }
+                      return value;
+                    }}
+                  />
+                  <ChartTooltip
+                    cursor={false}
+                    content={<ChartTooltipContent hideLabel {...({} as any)} />}
+                  />
+                  {chart.yAxis.map((axis) => (
+                    <Bar
+                      key={axis.name}
+                      dataKey={axis.name}
+                      fill={`var(--color-${axis.name})`}
+                      radius={8}
+                    />
+                  ))}
+                </BarChart>
+              </ChartContainer>
+            </div>
+          ) : rowActions && rowActions.length > 0 ? (
             <div className="flex-1 overflow-auto">
               <table className="w-full border-collapse">
                 <thead className="bg-background sticky top-0 z-10">

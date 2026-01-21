@@ -44,6 +44,20 @@ export interface Item {
   };
 
   autoRun?: boolean; // If true, automatically run the query when opened
+
+  // Chart configuration
+  chart?: ChartSpec;
+}
+
+export interface ChartSpec {
+  xAxis: {
+    name: string;
+    label?: string;
+  };
+  yAxis: {
+    name: string; // The column to plot
+    label?: string;
+  }[]; // Allow multiple series
 }
 
 export interface FormConfig {

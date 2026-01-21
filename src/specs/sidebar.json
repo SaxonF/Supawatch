@@ -3,10 +3,11 @@
     {
       "id": "tables",
       "name": "Tables",
-      "icon": "Table",
+      "icon": "table",
       "itemsQuery": "SELECT schemaname AS schema, tablename AS name FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",
       "itemTemplate": {
         "id": ":schema.:name",
+        "icon": "table",
         "name": ":name",
         "type": "query",
         "sql": "SELECT * FROM \":schema\".\":name\" LIMIT 100",
@@ -17,12 +18,12 @@
     {
       "id": "admin",
       "name": "Admin",
-      "icon": "Settings",
+      "icon": "settings",
       "items": [
         {
           "id": "cron",
           "name": "Cron",
-          "icon": "Clock",
+          "icon": "clock",
           "visible": true,
           "autoRun": true,
           "type": "query",
@@ -126,19 +127,41 @@
               }
             }
           ]
+        },
+        {
+          "id": "users",
+          "name": "Users",
+          "icon": "contact",
+          "visible": true,
+          "autoRun": true,
+          "type": "query",
+          "sql": "SELECT d.date::date as date, count(u.id) as count FROM generate_series(date_trunc('week', current_date - interval '3 months'), date_trunc('week', current_date), '1 week'::interval) as d(date) LEFT JOIN auth.users u ON date_trunc('week', u.created_at)::date = d.date::date GROUP BY 1 ORDER BY 1",
+          "chart": {
+            "xAxis": {
+              "name": "date",
+              "label": "Date"
+            },
+            "yAxis": [
+              {
+                "name": "count",
+                "label": "Users"
+              }
+            ]
+          }
         }
       ]
     },
     {
       "id": "scripts",
       "name": "Scripts",
-      "icon": "FileText",
+      "icon": "file-text",
       "itemsFromState": "tabs",
       "userCreatable": true,
       "itemTemplate": {
         "id": ":id",
         "name": "Untitled",
         "type": "query",
+        "icon": "file-text",
         "sql": "",
         "visible": true
       }

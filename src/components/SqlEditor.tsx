@@ -603,6 +603,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
           const activeSpecItem = currentTab.specItem
             ? resolveActiveItem(currentTab.specItem, currentTab.viewStack).item
             : null;
+
           const activeParams = currentTab.specItem
             ? resolveActiveItem(currentTab.specItem, currentTab.viewStack)
                 .params
@@ -829,6 +830,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
                       }),
                     );
                   }}
+                  chart={activeSpecItem?.chart}
                 />
               )}
             </>
