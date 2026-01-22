@@ -50,7 +50,7 @@ export async function createProject(
   supabaseProjectRef?: string,
   organizationId?: string,
   generateTypescript: boolean = true,
-  typescriptOutputPath?: string
+  typescriptOutputPath?: string,
 ): Promise<Project> {
   return invoke("create_project", {
     name,
@@ -89,7 +89,7 @@ export async function pickProjectFolder(): Promise<string | null> {
 
 export async function linkSupabaseProject(
   projectId: string,
-  supabaseProjectRef: string
+  supabaseProjectRef: string,
 ): Promise<Project> {
   return invoke("link_supabase_project", { projectId, supabaseProjectRef });
 }
@@ -110,7 +110,7 @@ export async function isWatching(projectId: string): Promise<boolean> {
 // Logs API
 export async function getLogs(
   projectId?: string,
-  limit?: number
+  limit?: number,
 ): Promise<LogEntry[]> {
   return invoke("get_logs", { projectId, limit });
 }
@@ -123,7 +123,7 @@ export async function clearLogs(projectId?: string): Promise<void> {
 export async function runQuery(
   projectId: string,
   query: string,
-  readOnly?: boolean
+  readOnly?: boolean,
 ): Promise<unknown> {
   return invoke("run_query", { projectId, query, readOnly });
 }
@@ -134,16 +134,21 @@ export async function validateSql(sql: string): Promise<void> {
 
 export async function convertWithAi(
   projectId: string,
-  input: string
+  input: string,
+  errorMessage?: string,
 ): Promise<string> {
-  return invoke("convert_with_ai", { projectId, input });
+  return invoke("convert_with_ai", {
+    projectId,
+    input,
+    errorMessage,
+  });
 }
 
 export async function deployEdgeFunction(
   projectId: string,
   functionSlug: string,
   functionName: string,
-  functionPath: string
+  functionPath: string,
 ): Promise<string> {
   return invoke("deploy_edge_function", {
     projectId,
@@ -163,19 +168,19 @@ export async function pullProject(projectId: string): Promise<void> {
 
 export async function pushProject(
   projectId: string,
-  force?: boolean
+  force?: boolean,
 ): Promise<string> {
   return invoke("push_project", { projectId, force });
 }
 
 export async function getProjectDiff(
-  projectId: string
+  projectId: string,
 ): Promise<import("./types").DiffResponse> {
   return invoke("get_project_diff", { projectId });
 }
 
 export async function getPullDiff(
-  projectId: string
+  projectId: string,
 ): Promise<import("./types").PullDiffResponse> {
   return invoke("get_pull_diff", { projectId });
 }
@@ -185,7 +190,7 @@ export async function querySupabaseLogs(
   projectId: string,
   sql?: string,
   isoTimestampStart?: string,
-  isoTimestampEnd?: string
+  isoTimestampEnd?: string,
 ): Promise<unknown> {
   return invoke("query_supabase_logs", {
     projectId,
@@ -198,7 +203,7 @@ export async function querySupabaseLogs(
 export async function getEdgeFunctionLogs(
   projectId: string,
   functionName?: string,
-  minutes?: number
+  minutes?: number,
 ): Promise<unknown> {
   return invoke("get_edge_function_logs", {
     projectId,
@@ -209,14 +214,14 @@ export async function getEdgeFunctionLogs(
 
 export async function getPostgresLogs(
   projectId: string,
-  minutes?: number
+  minutes?: number,
 ): Promise<unknown> {
   return invoke("get_postgres_logs", { projectId, minutes });
 }
 
 export async function getAuthLogs(
   projectId: string,
-  minutes?: number
+  minutes?: number,
 ): Promise<unknown> {
   return invoke("get_auth_logs", { projectId, minutes });
 }
@@ -232,7 +237,7 @@ export async function getTemplates(): Promise<string[]> {
 
 export async function copyTemplate(
   templateName: string,
-  targetPath: string
+  targetPath: string,
 ): Promise<void> {
   return invoke("copy_template", { templateName, targetPath });
 }

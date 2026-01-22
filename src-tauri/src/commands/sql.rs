@@ -67,6 +67,7 @@ pub async fn convert_with_ai(
     app_handle: AppHandle,
     project_id: String,
     input: String,
+    error_message: Option<String>,
 ) -> Result<String, String> {
     let state = app_handle.state::<Arc<AppState>>();
     
@@ -108,16 +109,17 @@ pub async fn convert_with_ai(
         }
     };
 
-    let system_prompt = format!(
+    let mut system_prompt = format!(
         r#"You are a PostgreSQL SQL expert. Convert the user's input into valid PostgreSQL SQL.
 
 Rules:
-1. If the input is invalid SQL, fix the syntax errors
-2. If the input is natural language, convert it to a valid SQL query
-3. Return ONLY the SQL query, no explanations or markdown
-4. Use standard PostgreSQL syntax
-5. For SELECT queries, include reasonable LIMIT if not specified
-6. Use the exact table and column names from the schema below
+1. Preserve the original intent of the query. If the user is calling a function (e.g. cron.schedule), DO NOT change it to a SELECT statement.
+2. If the input is invalid SQL, fix the syntax errors while maintaining the logic.
+3. If the input is natural language, or partially natural language, convert it to a valid SQL query.
+4. Return ONLY the SQL query, no explanations or markdown.
+5. Use standard PostgreSQL syntax.
+6. For data retrieval SELECT queries (NOT function calls), include reasonable LIMIT if not specified.
+7. Use the exact table and column names from the schema below.
 
 Database Schema:
 {}
@@ -125,6 +127,17 @@ Database Schema:
 Return only valid PostgreSQL SQL."#,
         if schema_context.is_empty() { "No schema available".to_string() } else { schema_context }
     );
+
+    let user_content = if let Some(err) = error_message {
+        format!("Query: {}\n\nError: {}\n\nPlease fix the query to resolve the error.", input, err)
+    } else {
+        input
+    };
+
+    println!("--- AI Request Debug Start ---");
+    println!("System Prompt:\n{}", system_prompt);
+    println!("\nUser Content:\n{}", user_content);
+    println!("--- AI Request Debug End ---");
 
     let response = state.http_client
         .post("https://api.openai.com/v1/chat/completions")
@@ -139,11 +152,9 @@ Return only valid PostgreSQL SQL."#,
                 },
                 {
                     "role": "user",
-                    "content": input
+                    "content": user_content
                 }
             ],
-            "temperature": 0.1,
-            "max_tokens": 500
         }))
         .send()
         .await

@@ -20,7 +20,7 @@ export function SqlQueryArea({
   handleKeyDown,
 }: SqlQueryAreaProps) {
   return (
-    <div className="shrink-0 border-b relative group bg-gradient-to-br from-transparent to-muted/20">
+    <div className="shrink-0 relative group bg-gradient-to-br from-transparent to-muted/20">
       <div className="relative">
         <Textarea
           value={sql}

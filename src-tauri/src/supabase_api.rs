@@ -270,10 +270,11 @@ impl SupabaseApi {
             .send()
             .await?;
 
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
+        let status = response.status();
+        if !status.is_success() {
+            let status_code = status.as_u16();
             let message = response.text().await.unwrap_or_default();
-            return Err(ApiError::ApiError { status, message });
+            return Err(ApiError::ApiError { status: status_code, message });
         }
 
         let body_text = response.text().await?;

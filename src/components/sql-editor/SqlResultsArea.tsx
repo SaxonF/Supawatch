@@ -16,7 +16,7 @@ interface SqlResultsAreaProps {
   results: SpreadsheetData;
   displayColumns: string[];
   handleDataChange: (newData: SpreadsheetData) => void;
-  onFixQuery?: () => void;
+  onFixQuery?: (error?: string) => void;
   isProcessingWithAI?: boolean;
   rowActions?: RowAction[];
   onRowAction?: (action: RowAction, row: Record<string, any>) => void;
@@ -96,7 +96,7 @@ export function SqlResultsArea({
                   variant="outline"
                   size="sm"
                   className="w-fit text-foreground"
-                  onClick={onFixQuery}
+                  onClick={() => onFixQuery(error || undefined)}
                   disabled={isProcessingWithAI}
                 >
                   <Sparkles size={16} strokeWidth={1} />
@@ -112,7 +112,7 @@ export function SqlResultsArea({
             <div className="flex-1 p-6">
               <ChartContainer
                 config={internalChartConfig}
-                className="h-full w-full"
+                className="h-full w-full aspect-auto min-h-0"
               >
                 <BarChart accessibilityLayer data={chartData}>
                   <CartesianGrid vertical={false} />

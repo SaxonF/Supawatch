@@ -9,10 +9,14 @@
         "id": ":schema.:name",
         "icon": "table",
         "name": ":name",
-        "type": "query",
-        "sql": "SELECT * FROM \":schema\".\":name\" LIMIT 100",
         "visible": true,
-        "autoRun": true
+        "autoRun": true,
+        "queries": [
+          {
+            "sql": "SELECT * FROM \":schema\".\":name\" LIMIT 100",
+            "results": "table"
+          }
+        ]
       }
     },
     {
@@ -26,105 +30,118 @@
           "icon": "clock",
           "visible": true,
           "autoRun": true,
-          "type": "query",
-          "sql": "SELECT jobid, jobname, schedule, command, active FROM cron.job ORDER BY jobname",
+          "queries": [
+            {
+              "sql": "SELECT jobid, jobname, schedule, command, active FROM cron.job ORDER BY jobname",
+              "results": "table",
+              "rowActions": [
+                {
+                  "label": "Edit",
+                  "itemId": "edit",
+                  "params": { "jobid": "jobid" }
+                },
+                {
+                  "label": "Delete",
+                  "itemId": "delete",
+                  "params": { "jobid": "jobid" },
+                  "variant": "destructive"
+                }
+              ]
+            }
+          ],
           "primaryAction": {
             "label": "Create Job",
             "itemId": "create"
           },
-          "rowActions": [
-            {
-              "label": "Edit",
-              "itemId": "edit",
-              "params": { "jobid": "jobid" }
-            },
-            {
-              "label": "Delete",
-              "itemId": "delete",
-              "params": { "jobid": "jobid" },
-              "variant": "destructive"
-            }
-          ],
           "children": [
             {
               "id": "create",
               "name": "Create Job",
               "visible": false,
-              "type": "mutation",
-              "sql": "SELECT cron.schedule(:jobname, :schedule, :command)",
-              "form": {
-                "fields": [
-                  {
-                    "name": "jobname",
-                    "label": "Job Name",
-                    "type": "text",
-                    "required": true,
-                    "placeholder": "my-cron-job"
-                  },
-                  {
-                    "name": "schedule",
-                    "label": "Schedule",
-                    "type": "text",
-                    "required": true,
-                    "placeholder": "*/5 * * * *"
-                  },
-                  {
-                    "name": "command",
-                    "label": "Command",
-                    "type": "textarea",
-                    "required": true,
-                    "placeholder": "SELECT my_function()"
-                  }
-                ]
-              }
+              "queries": [
+                {
+                  "sql": "SELECT cron.schedule(':jobname', ':schedule', ':command')",
+                  "returnToParent": true,
+                  "results": null,
+                  "parameters": [
+                    {
+                      "name": "jobname",
+                      "label": "Job Name",
+                      "type": "text",
+                      "required": true,
+                      "placeholder": "my-cron-job"
+                    },
+                    {
+                      "name": "schedule",
+                      "label": "Schedule",
+                      "type": "text",
+                      "required": true,
+                      "placeholder": "*/5 * * * *"
+                    },
+                    {
+                      "name": "command",
+                      "label": "Command",
+                      "type": "textarea",
+                      "required": true,
+                      "placeholder": "SELECT my_function()"
+                    }
+                  ]
+                }
+              ]
             },
             {
               "id": "edit",
               "name": "Edit Job",
               "visible": false,
-              "type": "mutation",
-              "sql": "UPDATE cron.job SET jobname = :jobname, schedule = :schedule, command = :command, active = :active WHERE jobid = :jobid",
-              "loadQuery": "SELECT * FROM cron.job WHERE jobid = :jobid",
-              "form": {
-                "fields": [
-                  {
-                    "name": "jobname",
-                    "label": "Job Name",
-                    "type": "text",
-                    "required": true
-                  },
-                  {
-                    "name": "schedule",
-                    "label": "Schedule",
-                    "type": "text",
-                    "required": true
-                  },
-                  {
-                    "name": "command",
-                    "label": "Command",
-                    "type": "textarea",
-                    "required": true
-                  },
-                  { "name": "active", "label": "Active", "type": "boolean" }
-                ]
-              }
+              "queries": [
+                {
+                  "sql": "UPDATE cron.job SET jobname = :jobname, schedule = :schedule, command = :command, active = :active WHERE jobid = :jobid",
+                  "loadQuery": "SELECT * FROM cron.job WHERE jobid = :jobid",
+                  "returnToParent": true,
+                  "results": null,
+                  "parameters": [
+                    {
+                      "name": "jobname",
+                      "label": "Job Name",
+                      "type": "text",
+                      "required": true
+                    },
+                    {
+                      "name": "schedule",
+                      "label": "Schedule",
+                      "type": "text",
+                      "required": true
+                    },
+                    {
+                      "name": "command",
+                      "label": "Command",
+                      "type": "textarea",
+                      "required": true
+                    },
+                    { "name": "active", "label": "Active", "type": "boolean" }
+                  ]
+                }
+              ]
             },
             {
               "id": "delete",
               "name": "Delete Job",
               "visible": false,
-              "type": "mutation",
-              "sql": "SELECT cron.unschedule(:jobid)",
-              "form": {
-                "fields": [
-                  {
-                    "name": "jobid",
-                    "label": "Job ID",
-                    "type": "text",
-                    "required": true
-                  }
-                ]
-              }
+              "queries": [
+                {
+                  "sql": "SELECT cron.unschedule(:jobid)",
+                  "returnToParent": true,
+                  "results": null,
+                  "parameters": [
+                    {
+                      "name": "jobid",
+                      "label": "Job ID",
+                      "type": "text",
+                      "required": true
+                    }
+                  ]
+                }
+              ]
             }
           ]
         },
@@ -134,20 +151,28 @@
           "icon": "contact",
           "visible": true,
           "autoRun": true,
-          "type": "query",
-          "sql": "SELECT d.date::date as date, count(u.id) as count FROM generate_series(date_trunc('week', current_date - interval '3 months'), date_trunc('week', current_date), '1 week'::interval) as d(date) LEFT JOIN auth.users u ON date_trunc('week', u.created_at)::date = d.date::date GROUP BY 1 ORDER BY 1",
-          "chart": {
-            "xAxis": {
-              "name": "date",
-              "label": "Date"
-            },
-            "yAxis": [
-              {
-                "name": "count",
-                "label": "Users"
+          "queries": [
+            {
+              "sql": "SELECT d.date::date as date, count(u.id) as count FROM generate_series(date_trunc('week', current_date - interval '3 months'), date_trunc('week', current_date), '1 week'::interval) as d(date) LEFT JOIN auth.users u ON date_trunc('week', u.created_at)::date = d.date::date GROUP BY 1 ORDER BY 1",
+              "results": "chart",
+              "chart": {
+                "xAxis": {
+                  "name": "date",
+                  "label": "Date"
+                },
+                "yAxis": [
+                  {
+                    "name": "count",
+                    "label": "Users"
+                  }
+                ]
               }
-            ]
-          }
+            },
+            {
+              "sql": "SELECT id, email, created_at, last_sign_in_at FROM auth.users ORDER BY created_at DESC LIMIT 50",
+              "results": "table"
+            }
+          ]
         }
       ]
     },
@@ -160,10 +185,14 @@
       "itemTemplate": {
         "id": ":id",
         "name": "Untitled",
-        "type": "query",
         "icon": "file-text",
-        "sql": "",
-        "visible": true
+        "visible": true,
+        "queries": [
+          {
+            "sql": "",
+            "results": "table"
+          }
+        ]
       }
     }
   ]

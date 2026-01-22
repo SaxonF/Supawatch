@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../api";
+import { defaultSidebarSpec } from "../specs";
 import * as store from "../utils/store";
+import { QueryBlock } from "./sql-editor/QueryBlock";
 import { SpecSidebar } from "./sql-editor/SpecSidebar";
 import { SqlChangesBar } from "./sql-editor/SqlChangesBar";
-import { SqlFormArea } from "./sql-editor/SqlFormArea";
-import { SqlQueryArea } from "./sql-editor/SqlQueryArea";
-import { SqlResultsArea } from "./sql-editor/SqlResultsArea";
 import {
   CellData,
   QueryMetadata,
+  QueryState,
   RowChanges,
   SpreadsheetData,
   SqlEditorProps,
@@ -21,6 +21,7 @@ import {
   extractPrimaryTableName,
   findPrimaryKeys,
   formatCellValue,
+  generateQueryStates,
   generateUpdateSql,
   hasNonEditableConstructs,
   interpolateTemplate,
@@ -29,6 +30,33 @@ import {
   resolveActiveItem,
 } from "./sql-editor/utils";
 import { Button } from "./ui/button";
+
+/**
+ * Look up the original spec item from defaultSidebarSpec by groupId and itemId.
+ * This ensures we always get the original SQL templates with proper quoting,
+ * rather than using potentially corrupted persisted tab state.
+ */
+function getOriginalSpecItem(
+  groupId: string,
+  itemId: string,
+): { id: string; queries?: any[]; children?: any[] } | null {
+  const group = defaultSidebarSpec.groups.find((g) => g.id === groupId);
+  if (!group) return null;
+
+  // Check static items
+  if (group.items) {
+    const item = group.items.find((i) => i.id === itemId);
+    if (item) return item;
+  }
+
+  // Check itemTemplate (for dynamic groups like tables)
+  if (group.itemTemplate) {
+    // For dynamic items, return the template
+    return group.itemTemplate;
+  }
+
+  return null;
+}
 
 export function SqlEditor({ projectId }: SqlEditorProps) {
   const [tabs, setTabs] = useState<Tab[]>([createNewTab()]);
@@ -220,21 +248,26 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
   );
 
   // Calculate changes between original and current results, grouped by table
-  const changes = useMemo((): RowChanges[] => {
-    if (!queryMetadata?.isEditable) return [];
+  // Helper to calculate changes for a single query's results
+  const calculateChangesForQuery = (
+    qResults: SpreadsheetData,
+    qOriginalResults: SpreadsheetData,
+    qMetadata: QueryMetadata | null,
+  ): RowChanges[] => {
+    if (!qMetadata?.isEditable) return [];
 
     const rowChanges: RowChanges[] = [];
 
-    for (let rowIdx = 0; rowIdx < results.length; rowIdx++) {
-      const currentRow = results[rowIdx];
-      const originalRow = originalResults[rowIdx];
+    for (let rowIdx = 0; rowIdx < qResults.length; rowIdx++) {
+      const currentRow = qResults[rowIdx];
+      const originalRow = qOriginalResults[rowIdx];
       if (!currentRow || !originalRow) continue;
 
       // Group changes by table
       const tableChangesMap: Record<string, TableChange> = {};
 
-      for (let colIdx = 0; colIdx < queryMetadata.columns.length; colIdx++) {
-        const colInfo = queryMetadata.columns[colIdx];
+      for (let colIdx = 0; colIdx < qMetadata.columns.length; colIdx++) {
+        const colInfo = qMetadata.columns[colIdx];
         const currentCell = currentRow[colIdx];
         const originalCell = originalRow[colIdx];
 
@@ -248,13 +281,13 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
 
         if (currentValue !== originalValue) {
           // Find the table info
-          const tableInfo = queryMetadata.tables.find(
+          const tableInfo = qMetadata.tables.find(
             (t) => t.name === colInfo.tableName,
           );
           if (!tableInfo || !tableInfo.primaryKeyColumn) continue;
 
           // Get primary key value for this table
-          const pkColIdx = queryMetadata.columns.findIndex(
+          const pkColIdx = qMetadata.columns.findIndex(
             (c) => c.resultName === tableInfo.primaryKeyColumn,
           );
           if (pkColIdx === -1) continue;
@@ -287,7 +320,26 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
     }
 
     return rowChanges;
-  }, [results, originalResults, queryMetadata]);
+  };
+
+  const changes = useMemo((): RowChanges[] => {
+    // If using queryStates, aggregate changes from all queries
+    if (currentTab?.queryStates && currentTab.queryStates.length > 0) {
+      const allChanges: RowChanges[] = [];
+      for (const qs of currentTab.queryStates) {
+        const qsChanges = calculateChangesForQuery(
+          qs.results,
+          qs.originalResults,
+          qs.queryMetadata,
+        );
+        allChanges.push(...qsChanges);
+      }
+      return allChanges;
+    }
+
+    // Legacy: use tab-level results/metadata
+    return calculateChangesForQuery(results, originalResults, queryMetadata);
+  }, [results, originalResults, queryMetadata, currentTab?.queryStates]);
 
   // Count total changes
   const changesSummary = useMemo(() => {
@@ -309,15 +361,42 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
   }, [changes]);
 
   const runQuery = useCallback(
-    async (queryOverride?: unknown) => {
+    async (queryOverride?: unknown, queryIndex?: number) => {
       // Handle potential event object from onClick
       const isOverride = typeof queryOverride === "string";
-      const actualSql = isOverride ? queryOverride : sql;
 
-      if (!actualSql.trim()) return;
+      // Determine which SQL to run
+      let currentSql = sql;
+      if (queryIndex !== undefined && currentTab.queryStates?.[queryIndex]) {
+        currentSql = currentTab.queryStates[queryIndex].sql;
+      }
+
+      const actualSql = isOverride ? (queryOverride as string) : currentSql;
+
+      if (!actualSql.trim()) return false;
+
+      // Helper to update state for specific query or main tab
+      const updateState = (updates: Partial<Tab> | Partial<QueryState>) => {
+        setTabs((prevTabs) =>
+          prevTabs.map((tab) => {
+            if (tab.id !== activeTabId) return tab;
+
+            if (queryIndex !== undefined && tab.queryStates) {
+              const newQueryStates = [...tab.queryStates];
+              newQueryStates[queryIndex] = {
+                ...newQueryStates[queryIndex],
+                ...updates,
+              } as any;
+              return { ...tab, queryStates: newQueryStates };
+            }
+
+            return { ...tab, ...updates };
+          }),
+        );
+      };
 
       setIsLoading(true);
-      updateCurrentTab({ error: null });
+      updateState({ error: null });
 
       let queryToRun = actualSql;
       let timeoutId: NodeJS.Timeout | null = null;
@@ -341,7 +420,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
 
             // Update the SQL in the editor with the converted version
             queryToRun = convertedSql;
-            updateCurrentTab({ sql: convertedSql });
+            updateState({ sql: convertedSql });
             setIsProcessingWithAI(false);
             setIsLoading(true); // Resume loading for query execution
           } catch (aiError) {
@@ -353,7 +432,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
             const aiErrorMessage =
               aiError instanceof Error ? aiError.message : String(aiError);
 
-            updateCurrentTab({
+            updateState({
               error: `Invalid SQL: ${errorMessage}. AI conversion failed: ${aiErrorMessage}`,
               results: [],
               originalResults: [],
@@ -361,7 +440,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
               queryMetadata: null,
             });
             setIsProcessingWithAI(false);
-            return;
+            return false;
           }
         }
 
@@ -422,7 +501,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
           );
 
           // Auto-rename untitled tabs to the primary table name
-          const tabUpdates: Partial<Tab> = {
+          const tabUpdates: any = {
             displayColumns: resultCols,
             queryMetadata: metadata,
             results: data,
@@ -430,21 +509,25 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
             error: null,
           };
 
-          if (currentTab?.name === "Untitled") {
+          if (currentTab?.name === "Untitled" && queryIndex === undefined) {
+            // Only auto-rename on main query
             const primaryTable = extractPrimaryTableName(queryToRun);
             if (primaryTable) {
               tabUpdates.name = primaryTable;
             }
           }
 
-          updateCurrentTab(tabUpdates);
+          updateState(tabUpdates);
+          return true;
         } else {
-          updateCurrentTab({
+          updateState({
             displayColumns: [],
             results: [],
             originalResults: [],
             queryMetadata: null,
+            error: null,
           });
+          return true;
         }
       } catch (err: unknown) {
         console.error("Query failed:", err);
@@ -455,23 +538,23 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
               ? err
               : JSON.stringify(err);
 
-        updateCurrentTab({
+        updateState({
           error: errorMessage,
           results: [],
           originalResults: [],
           displayColumns: [],
-          queryMetadata: null,
+          queryMetadata: null, // Clear metadata
         });
+        return false;
       } finally {
         if (timeoutId) clearTimeout(timeoutId);
         setIsLoading(false);
         setIsProcessingWithAI(false);
       }
     },
-    [sql, projectId, updateCurrentTab, currentTab?.name],
+    [sql, projectId, activeTabId, currentTab?.name, currentTab?.queryStates],
   );
 
-  // Auto-run query when a table tab is activated and hasn't been run yet
   // Auto-run query when a table tab is activated and hasn't been run yet
   useEffect(() => {
     // Resolve active item for spec tabs to check its specific autoRun property
@@ -479,28 +562,41 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
       ? resolveActiveItem(currentTab.specItem, currentTab.viewStack).item
       : null;
 
-    if (
-      // Auto-run if active spec item says so (not just the root item), or legacy table tab check
-      (activeSpecItem?.autoRun || currentTab?.isTableTab) &&
-      !currentTab.queryMetadata &&
-      !isLoading &&
-      !error
-    ) {
-      runQuery();
+    const shouldAutoRun = activeSpecItem?.autoRun || currentTab?.isTableTab;
+
+    if (shouldAutoRun && !isLoading && !error) {
+      if (currentTab?.queryStates) {
+        // Run all queries that haven't been run or need update
+        // We run them sequentially
+        currentTab.queryStates.forEach((qs, idx) => {
+          // Check if results are empty - rudimentary check for "needs run"
+          // Ideally we'd have a specific "hasRun" flag or similar
+          if (qs.results.length === 0 && !qs.error) {
+            runQuery(undefined, idx);
+          }
+        });
+      } else {
+        // Legacy single query
+        // Avoid infinite loops by checking if we have results?
+        // But existing logic relied on !error and !isLoading + dependency array trickery
+        // The previous code had a specific check:
+        // (activeSpecItem?.autoRun || currentTab?.isTableTab) && !isLoading && !error
+        runQuery();
+      }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runQuery is called, not read; including it causes infinite loops
   }, [
     activeTabId,
     currentTab?.specItem,
     currentTab?.viewStack,
     currentTab?.isTableTab,
-    currentTab?.queryMetadata,
-    isLoading,
-    error,
-    runQuery,
+    // We add queryStates length to detect when it's initialized
+    currentTab?.queryStates?.length,
+    // runQuery is stable
   ]);
 
   const saveChanges = async () => {
-    if (!queryMetadata?.isEditable || changes.length === 0) return;
+    if (changes.length === 0) return;
 
     setIsSaving(true);
     updateCurrentTab({ error: null });
@@ -521,9 +617,25 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
       }
 
       // Update original results to reflect saved state
-      updateCurrentTab({
-        originalResults: JSON.parse(JSON.stringify(results)),
-      });
+      setTabs((prevTabs) =>
+        prevTabs.map((tab) => {
+          if (tab.id !== activeTabId) return tab;
+
+          // Update queryStates originalResults if present
+          const updatedQueryStates = tab.queryStates?.map((qs) => ({
+            ...qs,
+            originalResults: JSON.parse(JSON.stringify(qs.results)),
+          }));
+
+          return {
+            ...tab,
+            // Update legacy tab-level originalResults
+            originalResults: JSON.parse(JSON.stringify(tab.results)),
+            // Update queryStates originalResults
+            queryStates: updatedQueryStates,
+          };
+        }),
+      );
     } catch (err) {
       console.error("Save failed:", err);
       updateCurrentTab({ error: typeof err === "string" ? err : String(err) });
@@ -532,41 +644,118 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
     }
   };
 
-  const handleDataChange = useCallback(
-    (newData: SpreadsheetData) => {
-      updateCurrentTab({ results: newData });
-    },
-    [updateCurrentTab],
-  );
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault();
-      runQuery();
-    }
-  };
-
   const discardChanges = useCallback(() => {
-    updateCurrentTab({
-      results: JSON.parse(JSON.stringify(originalResults)),
-    });
-  }, [updateCurrentTab, originalResults]);
+    setTabs((prevTabs) =>
+      prevTabs.map((tab) => {
+        if (tab.id !== activeTabId) return tab;
+
+        // Revert queryStates if present
+        const revertedQueryStates = tab.queryStates?.map((qs) => ({
+          ...qs,
+          results: JSON.parse(JSON.stringify(qs.originalResults)),
+        }));
+
+        return {
+          ...tab,
+          // Revert legacy tab-level results
+          results: JSON.parse(JSON.stringify(tab.originalResults)),
+          // Revert queryStates results
+          queryStates: revertedQueryStates,
+        };
+      }),
+    );
+  }, [activeTabId]);
 
   const hasChanges = changesSummary.totalChanges > 0;
 
-  const handleFixQuery = useCallback(async () => {
-    if (!sql.trim()) return;
-    setIsProcessingWithAI(true);
-    try {
-      const convertedSql = await api.convertWithAi(projectId, sql);
-      updateCurrentTab({ sql: convertedSql, error: null });
-      await runQuery(convertedSql);
-    } catch (err) {
-      updateCurrentTab({ error: `AI Fix failed: ${err}` });
-    } finally {
-      setIsProcessingWithAI(false);
+  const handleFixQuery = useCallback(
+    async (errorOverride?: string) => {
+      if (!sql.trim()) return;
+      setIsProcessingWithAI(true);
+      try {
+        const errorToUse =
+          typeof errorOverride === "string" && errorOverride
+            ? errorOverride
+            : error;
+
+        const convertedSql = await api.convertWithAi(
+          projectId,
+          sql,
+          errorToUse || undefined,
+        );
+        updateCurrentTab({ sql: convertedSql, error: null });
+        await runQuery(convertedSql);
+      } catch (err) {
+        updateCurrentTab({ error: `AI Fix failed: ${err}` });
+      } finally {
+        setIsProcessingWithAI(false);
+      }
+    },
+    [projectId, sql, error, updateCurrentTab, runQuery],
+  );
+
+  const handleBack = useCallback(() => {
+    setTabs((prev) =>
+      prev.map((t) => {
+        if (t.id !== activeTabId) return t;
+
+        // Get the ORIGINAL spec item from defaultSidebarSpec
+        const originalRootItem = t.groupId
+          ? getOriginalSpecItem(t.groupId, t.specItem?.id || "")
+          : null;
+        const rootItem = originalRootItem || t.specItem;
+        if (!rootItem) return t;
+
+        const newStack = t.viewStack?.slice(0, -1) || [];
+        const { item: prevItem, params: prevParams } = resolveActiveItem(
+          rootItem,
+          newStack,
+        );
+
+        // Generate fresh query states for the parent item
+        const newQueryStates = generateQueryStates(
+          prevItem.queries || [],
+          prevParams,
+        );
+
+        return {
+          ...t,
+          viewStack: newStack,
+          sql: "",
+          formValues: {},
+          results: [],
+          queryMetadata: null,
+          error: null,
+          queryStates: newQueryStates,
+        };
+      }),
+    );
+  }, [activeTabId]);
+
+  const handleMutationSubmit = useCallback(async () => {
+    const success = await runQuery();
+
+    console.log("success:", success);
+
+    // Check if we should return to parent
+    const activeSpecItem = currentTab.specItem
+      ? resolveActiveItem(currentTab.specItem, currentTab.viewStack || []).item
+      : null;
+
+    if (
+      activeSpecItem?.returnToParent &&
+      currentTab.viewStack &&
+      currentTab.viewStack.length > 0
+    ) {
+      handleBack();
     }
-  }, [projectId, sql, updateCurrentTab, runQuery]);
+  }, [
+    runQuery,
+    currentTab.specItem,
+    currentTab.viewStack,
+    activeTabId,
+    handleBack,
+  ]);
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -618,31 +807,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
                     {currentTab.viewStack && currentTab.viewStack.length > 1 ? (
                       <>
                         <button
-                          onClick={() => {
-                            setTabs((prev) =>
-                              prev.map((t) => {
-                                if (t.id !== activeTabId) return t;
-                                const newStack =
-                                  t.viewStack?.slice(0, -1) || [];
-                                const { item: prevItem, params: prevParams } =
-                                  resolveActiveItem(t.specItem!, newStack);
-                                return {
-                                  ...t,
-                                  viewStack: newStack,
-                                  sql: prevItem.sql
-                                    ? interpolateTemplate(
-                                        prevItem.sql,
-                                        prevParams,
-                                      )
-                                    : "",
-                                  formValues: {},
-                                  results: [],
-                                  queryMetadata: null, // Clear metadata to trigger auto-run if applicable
-                                  error: null,
-                                };
-                              }),
-                            );
-                          }}
+                          onClick={handleBack}
                           className="text-sm font-medium text-muted-foreground flex items-center gap-1 font-medium"
                         >
                           Back
@@ -665,6 +830,17 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
                           setTabs((prev) =>
                             prev.map((t) => {
                               if (t.id !== activeTabId) return t;
+
+                              // Get the ORIGINAL spec item from defaultSidebarSpec
+                              const originalRootItem = t.groupId
+                                ? getOriginalSpecItem(
+                                    t.groupId,
+                                    t.specItem?.id || "",
+                                  )
+                                : null;
+                              const rootItem = originalRootItem || t.specItem;
+                              if (!rootItem) return t;
+
                               const currentStack = t.viewStack || [];
                               const newParams = { ...activeParams };
                               const newStack = [
@@ -672,20 +848,22 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
                                 { itemId: action.itemId, params: newParams },
                               ];
                               const { item: newItem, params: finalParams } =
-                                resolveActiveItem(t.specItem!, newStack);
+                                resolveActiveItem(rootItem, newStack);
+
+                              // Generate fresh query states for the new item
+                              const newQueryStates = generateQueryStates(
+                                newItem.queries || [],
+                                finalParams,
+                              );
 
                               return {
                                 ...t,
                                 viewStack: newStack,
-                                sql: newItem.sql
-                                  ? interpolateTemplate(
-                                      newItem.sql,
-                                      finalParams,
-                                    )
-                                  : "",
+                                sql: "",
                                 formValues: {},
                                 results: [],
                                 error: null,
+                                queryStates: newQueryStates,
                               };
                             }),
                           );
@@ -698,140 +876,213 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
                 </div>
               )}
 
-              <SqlQueryArea
-                sql={sql}
-                setSql={setSql}
-                runQuery={runQuery}
-                isLoading={isLoading}
-                isProcessingWithAI={isProcessingWithAI}
-                handleKeyDown={handleKeyDown}
-              />
+              {currentTab.queryStates && (
+                <div className="flex-1 flex flex-col overflow-auto">
+                  {currentTab.queryStates.map((qs, idx) => (
+                    <QueryBlock
+                      key={idx}
+                      index={idx}
+                      queryState={qs}
+                      projectId={projectId}
+                      activeParams={activeParams}
+                      isProcessingWithAI={isProcessingWithAI}
+                      isLoading={isLoading}
+                      formValues={currentTab.formValues || {}}
+                      onFixQuery={(queryIndex, errorMsg) => {
+                        // Fix query for specific index
+                        const queryState = currentTab.queryStates?.[queryIndex];
+                        if (!queryState?.sql.trim()) return;
+                        setIsProcessingWithAI(true);
+                        api
+                          .convertWithAi(projectId, queryState.sql, errorMsg)
+                          .then((convertedSql) => {
+                            setTabs((prev) =>
+                              prev.map((t) => {
+                                if (t.id !== activeTabId || !t.queryStates)
+                                  return t;
+                                const newStates = [...t.queryStates];
+                                newStates[queryIndex] = {
+                                  ...newStates[queryIndex],
+                                  sql: convertedSql,
+                                  error: null,
+                                };
+                                return { ...t, queryStates: newStates };
+                              }),
+                            );
+                            // Re-run the query with fixed SQL
+                            runQuery(convertedSql, queryIndex);
+                          })
+                          .catch((err) => {
+                            setTabs((prev) =>
+                              prev.map((t) => {
+                                if (t.id !== activeTabId || !t.queryStates)
+                                  return t;
+                                const newStates = [...t.queryStates];
+                                newStates[queryIndex] = {
+                                  ...newStates[queryIndex],
+                                  error: `AI Fix failed: ${err}`,
+                                };
+                                return { ...t, queryStates: newStates };
+                              }),
+                            );
+                          })
+                          .finally(() => setIsProcessingWithAI(false));
+                      }}
+                      onFormValuesChange={(
+                        newValues: Record<string, unknown>,
+                      ) => {
+                        // We update the tab's formValues.
+                        // In a multi-query scenario, we might want to merge, but simple set is fine for now
+                        // assuming one form at a time or non-colliding keys.
+                        setTabs((prev) =>
+                          prev.map((t) => {
+                            if (t.id !== activeTabId) return t;
 
-              {activeSpecItem?.type === "mutation" && activeSpecItem.form ? (
-                <SqlFormArea
-                  projectId={projectId}
-                  sql={sql}
-                  formConfig={activeSpecItem.form}
-                  loadQuery={activeSpecItem.loadQuery}
-                  params={activeParams}
-                  formValues={currentTab.formValues || {}}
-                  onFormValuesChange={(values) =>
-                    setTabs((prev) =>
-                      prev.map((t) => {
-                        if (t.id !== activeTabId) return t;
+                            // Get the ORIGINAL spec item from defaultSidebarSpec (not persisted state)
+                            // to ensure SQL templates have proper quoting like ':param'
+                            const originalRootItem = t.groupId
+                              ? getOriginalSpecItem(
+                                  t.groupId,
+                                  t.specItem?.id || "",
+                                )
+                              : null;
 
-                        // Helper to properly quote values for SQL interpolation
-                        const quoteValue = (val: unknown) => {
-                          if (val === null || val === undefined) return "NULL";
-                          return `'${String(val).replace(/'/g, "''")}'`;
-                        };
+                            // Use original spec if available, fall back to persisted specItem
+                            const rootItem = originalRootItem || t.specItem;
+                            if (!rootItem) return t;
 
-                        const params = {
-                          ...Object.fromEntries(
-                            Object.entries(activeParams).map(([k, v]) => [
-                              k,
-                              quoteValue(v),
-                            ]),
-                          ),
-                          ...Object.fromEntries(
-                            Object.entries(values).map(([k, v]) => [
-                              k,
-                              quoteValue(v),
-                            ]),
-                          ),
-                        };
+                            // Resolve the ACTIVE item from the viewStack
+                            const { item: activeItem } = resolveActiveItem(
+                              rootItem,
+                              t.viewStack,
+                            );
+                            const mergedParams = {
+                              ...activeParams,
+                              ...newValues,
+                            } as Record<string, string>;
 
-                        return {
-                          ...t,
-                          formValues: values,
-                          sql: activeSpecItem.sql
-                            ? interpolateTemplate(activeSpecItem.sql, params)
-                            : t.sql,
-                        };
-                      }),
-                    )
-                  }
-                  onSubmit={runQuery}
-                  onCancel={
-                    currentTab.viewStack && currentTab.viewStack.length > 1
-                      ? () => {
-                          setTabs((prev) =>
-                            prev.map((t) => {
-                              if (t.id !== activeTabId) return t;
-                              const newStack = t.viewStack?.slice(0, -1) || [];
-                              const { item: prevItem, params: prevParams } =
-                                resolveActiveItem(t.specItem!, newStack);
-                              return {
-                                ...t,
-                                viewStack: newStack,
-                                sql: prevItem.sql
-                                  ? interpolateTemplate(
-                                      prevItem.sql,
-                                      prevParams,
-                                    )
-                                  : "",
-                                formValues: {},
-                                results: [],
-                                queryMetadata: null, // Clear metadata to trigger auto-run if applicable
-                                error: null,
-                              };
-                            }),
-                          );
-                        }
-                      : undefined
-                  }
-                  isSubmitting={isLoading}
-                  error={error}
-                />
-              ) : (
-                <SqlResultsArea
-                  error={error}
-                  results={results}
-                  displayColumns={displayColumns}
-                  handleDataChange={handleDataChange}
-                  onFixQuery={handleFixQuery}
-                  isProcessingWithAI={isProcessingWithAI}
-                  rowActions={activeSpecItem?.rowActions}
-                  onRowAction={(action, row) => {
-                    setTabs((prev) =>
-                      prev.map((t) => {
-                        if (t.id !== activeTabId) return t;
+                            // Re-interpolate all queries based on new form values
+                            // Use the ACTIVE item's queries as template
+                            const rawQueries = activeItem.queries || [];
 
-                        const currentStack = t.viewStack || [];
-                        const newParams: Record<string, string> = {
-                          ...activeParams,
-                        };
+                            // We only want to update SQL/loadQuery, preserving other state like results
+                            const updatedStates = t.queryStates!.map(
+                              (existingQs, qIdx) => {
+                                const rawQ = rawQueries[qIdx];
+                                if (!rawQ) return existingQs;
 
-                        if (action.params) {
-                          for (const [key, colName] of Object.entries(
-                            action.params,
-                          )) {
-                            newParams[key] = String(row[colName] || "");
-                          }
-                        }
+                                return {
+                                  ...existingQs,
+                                  sql: interpolateTemplate(
+                                    rawQ.sql,
+                                    mergedParams,
+                                  ),
+                                  loadQuery: rawQ.loadQuery
+                                    ? interpolateTemplate(
+                                        rawQ.loadQuery,
+                                        mergedParams,
+                                      )
+                                    : undefined,
+                                };
+                              },
+                            );
 
-                        const newStack = [
-                          ...currentStack,
-                          { itemId: action.itemId, params: newParams },
-                        ];
-                        const { item: newItem, params: finalParams } =
-                          resolveActiveItem(t.specItem!, newStack);
+                            return {
+                              ...t,
+                              formValues: { ...t.formValues, ...newValues },
+                              queryStates: updatedStates,
+                            };
+                          }),
+                        );
+                      }}
+                      onRunQuery={(index: number) => runQuery(undefined, index)}
+                      onSqlChange={(index: number, newSql: string) => {
+                        setTabs((prev) =>
+                          prev.map((t) => {
+                            if (t.id !== activeTabId || !t.queryStates)
+                              return t;
+                            const newStates = [...t.queryStates];
+                            newStates[index] = {
+                              ...newStates[index],
+                              sql: newSql,
+                            };
+                            return { ...t, queryStates: newStates };
+                          }),
+                        );
+                      }}
+                      onResultsChange={(index: number, newData: any) => {
+                        setTabs((prev) =>
+                          prev.map((t) => {
+                            if (t.id !== activeTabId || !t.queryStates)
+                              return t;
+                            const newStates = [...t.queryStates];
+                            newStates[index] = {
+                              ...newStates[index],
+                              results: newData,
+                            };
+                            return { ...t, queryStates: newStates };
+                          }),
+                        );
+                      }}
+                      onRowAction={(action: any, row: any) => {
+                        setTabs((prev) =>
+                          prev.map((t) => {
+                            if (t.id !== activeTabId) return t;
 
-                        return {
-                          ...t,
-                          viewStack: newStack,
-                          sql: newItem.sql
-                            ? interpolateTemplate(newItem.sql, finalParams)
-                            : "",
-                          formValues: {},
-                          results: [],
-                          error: null,
-                        };
-                      }),
-                    );
-                  }}
-                  chart={activeSpecItem?.chart}
-                />
+                            // Get the ORIGINAL spec item from defaultSidebarSpec
+                            const originalRootItem = t.groupId
+                              ? getOriginalSpecItem(
+                                  t.groupId,
+                                  t.specItem?.id || "",
+                                )
+                              : null;
+                            const rootItem = originalRootItem || t.specItem;
+                            if (!rootItem) return t;
+
+                            const currentStack = t.viewStack || [];
+                            const newParams: Record<string, string> = {
+                              ...activeParams,
+                            };
+
+                            if (action.params) {
+                              for (const [key, colName] of Object.entries(
+                                action.params,
+                              )) {
+                                newParams[key] = String(
+                                  row[colName as string] || "",
+                                );
+                              }
+                            }
+
+                            const newStack = [
+                              ...currentStack,
+                              { itemId: action.itemId, params: newParams },
+                            ];
+                            const { item: newItem, params: finalParams } =
+                              resolveActiveItem(rootItem, newStack);
+
+                            // Use generateQueryStates to create fresh states for the new item
+                            const newQueryStates = generateQueryStates(
+                              newItem.queries || [],
+                              finalParams,
+                            );
+
+                            return {
+                              ...t,
+                              viewStack: newStack,
+                              // Legacy top-level sql cleared
+                              sql: "",
+                              formValues: {},
+                              results: [],
+                              error: null,
+                              queryStates: newQueryStates,
+                            };
+                          }),
+                        );
+                      }}
+                    />
+                  ))}
+                </div>
               )}
             </>
           );

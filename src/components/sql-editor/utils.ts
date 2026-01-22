@@ -1,4 +1,4 @@
-import { ColumnInfo, Tab, TableInfo } from "./types";
+import { ColumnInfo, QueryState, Tab, TableInfo } from "./types";
 
 // Schema exclusion list matching backend introspection
 export const EXCLUDED_SCHEMAS = [
@@ -46,13 +46,24 @@ export function createNewTab(): Tab {
   return {
     id: generateTabId(),
     name: "Untitled",
-    sql: "SELECT * FROM ",
+    sql: "SELECT * FROM ", // Legacy placeholder
     results: [],
     originalResults: [],
     displayColumns: [],
     queryMetadata: null,
     error: null,
     isTableTab: false,
+    queryStates: [
+      {
+        sql: "SELECT * FROM ",
+        results: [],
+        originalResults: [],
+        displayColumns: [],
+        queryMetadata: null,
+        error: null,
+        resultsConfig: "table",
+      },
+    ],
   };
 }
 
@@ -73,27 +84,83 @@ export function interpolateTemplate(
  */
 export function createSpecTab(
   groupId: string,
-  item: { id: string; name: string; type: string; sql: string },
+  item: {
+    id: string;
+    name: string;
+    sql?: string;
+    queries?: {
+      sql: string;
+      chart?: any;
+      rowActions?: any[];
+      results?: any;
+      parameters?: any[];
+      loadQuery?: string;
+      returnToParent?: boolean;
+    }[];
+  },
   params: Record<string, string> = {},
 ): Tab {
   const name = interpolateTemplate(item.name, params);
-  const sql = interpolateTemplate(item.sql, params);
+  const sql = interpolateTemplate(item.sql || "", params);
 
+  // Determine effective queries (legacy compat or new unified structure)
+  // For now, consistent with strict refactor, we rely on item.queries
+  const queries = item.queries || [];
+
+  // Initialize query states
+  const queryStates = generateQueryStates(queries, params);
+
+  // Create the tab
   return {
     id: generateTabId(),
     name,
-    sql,
+    // Legacy fields - keeping them for now as fallbacks or empty,
+    // but SqlEditor should rely on queryStates.
+    sql: "",
     results: [],
     originalResults: [],
     displayColumns: [],
     queryMetadata: null,
     error: null,
     isTableTab: groupId === "tables",
+    queryStates,
     groupId,
     specItem: item as Tab["specItem"],
     viewStack: [{ itemId: item.id, params }],
     formValues: {},
   };
+}
+
+export function generateQueryStates(
+  queries: {
+    sql: string;
+    chart?: any;
+    rowActions?: any[];
+    results?: any;
+    parameters?: any[];
+    loadQuery?: string;
+    returnToParent?: boolean;
+  }[],
+  params: Record<string, string>,
+): QueryState[] {
+  return queries.map((q) => ({
+    sql: interpolateTemplate(q.sql, params),
+    results: [],
+    originalResults: [],
+    displayColumns: [],
+    queryMetadata: null,
+    error: null,
+    chart: q.chart,
+    rowActions: q.rowActions,
+
+    // Unified config
+    resultsConfig: q.results,
+    parameters: q.parameters,
+    loadQuery: q.loadQuery
+      ? interpolateTemplate(q.loadQuery, params)
+      : undefined,
+    returnToParent: q.returnToParent,
+  }));
 }
 
 // Extract table name, handling quoted identifiers and schema.table format

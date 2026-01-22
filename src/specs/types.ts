@@ -24,18 +24,22 @@ export interface Item {
   icon?: string;
   visible?: boolean; // default true - if false, hidden child
 
-  type: "query" | "mutation";
-  sql: string; // Query SQL or mutation SQL
+  // Unified queries support
+  queries?: {
+    sql: string;
 
-  // For mutations
-  form?: FormConfig;
-  loadQuery?: string; // Pre-fill form from query
+    // Results configuration
+    results?: "table" | "chart" | null; // Default 'table'
+    chart?: ChartSpec; // Only used if results === 'chart'
 
-  // Child items (for navigation)
-  children?: Item[];
+    // Input configuration
+    parameters?: FormField[]; // Example: if present, show form
+    loadQuery?: string; // Query to pre-fill parameters/form values
 
-  // Row actions (for query results)
-  rowActions?: RowAction[];
+    // Actions & Navigation
+    rowActions?: RowAction[];
+    returnToParent?: boolean;
+  }[];
 
   // Primary action button (above results)
   primaryAction?: {
@@ -45,8 +49,8 @@ export interface Item {
 
   autoRun?: boolean; // If true, automatically run the query when opened
 
-  // Chart configuration
-  chart?: ChartSpec;
+  // Legacy children for navigation structure (e.g. keeping sidebar hierarchy)
+  children?: Item[];
 }
 
 export interface ChartSpec {

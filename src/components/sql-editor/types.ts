@@ -1,4 +1,4 @@
-import type { Item, ViewState } from "@/specs/types";
+import type { ChartSpec, Item, ViewState } from "@/specs/types";
 import { type CellBase, type Matrix } from "react-spreadsheet";
 
 export interface CellData extends CellBase {
@@ -46,9 +46,28 @@ export interface TableRef {
   name: string;
 }
 
+export interface QueryState {
+  sql: string;
+  results: SpreadsheetData;
+  originalResults: SpreadsheetData;
+  displayColumns: string[];
+  queryMetadata: QueryMetadata | null;
+  error: string | null;
+
+  // Config from Spec
+  chart?: ChartSpec;
+  rowActions?: any[];
+  resultsConfig?: "table" | "chart" | null;
+  parameters?: any[]; // FormField[]
+  loadQuery?: string;
+  returnToParent?: boolean;
+}
+
 export interface Tab {
   id: string;
   name: string;
+
+  // Single query state (legacy/simple)
   sql: string;
   results: SpreadsheetData;
   originalResults: SpreadsheetData;
@@ -56,6 +75,9 @@ export interface Tab {
   queryMetadata: QueryMetadata | null;
   error: string | null;
   isTableTab: boolean;
+
+  // Multiple queries state
+  queryStates?: QueryState[];
 
   // Spec-driven tab properties
   groupId?: string; // Which group this tab belongs to

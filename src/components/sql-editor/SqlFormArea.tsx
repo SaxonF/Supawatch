@@ -26,11 +26,11 @@ interface SqlFormAreaProps {
   onSubmit: () => void;
   onCancel?: () => void;
   isSubmitting?: boolean;
-  error?: string | null;
+  isProcessingWithAI?: boolean;
 }
 
 /**
- * Renders a form in the results area for mutation items
+ * Renders a form for mutation items - error display is handled by parent QueryBlock
  */
 export function SqlFormArea({
   projectId,
@@ -42,10 +42,9 @@ export function SqlFormArea({
   onSubmit,
   onCancel,
   isSubmitting = false,
-  error,
+  isProcessingWithAI = false,
 }: SqlFormAreaProps) {
   const [isLoading, setIsLoading] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Load existing data if loadQuery is defined
   useEffect(() => {
@@ -53,11 +52,10 @@ export function SqlFormArea({
 
     async function loadData() {
       setIsLoading(true);
-      setLoadError(null);
 
       try {
         // Interpolate params into loadQuery
-        const sql = loadQuery!.replace(/:(\w+)/g, (_, key) => {
+        const sql = loadQuery!.replace(/:(w+)/g, (_, key) => {
           const value = params[key];
           if (value === null || value === undefined) return "NULL";
           return `'${String(value).replace(/'/g, "''")}'`;
@@ -76,7 +74,7 @@ export function SqlFormArea({
           onFormValuesChange({ ...formValues, ...loaded });
         }
       } catch (err) {
-        setLoadError(String(err));
+        console.error("Failed to load form data:", err);
       } finally {
         setIsLoading(false);
       }
@@ -178,8 +176,6 @@ export function SqlFormArea({
     );
   }
 
-  const displayError = loadError || error;
-
   return (
     <form
       onSubmit={handleSubmit}
@@ -197,12 +193,6 @@ export function SqlFormArea({
             </Field>
           ))}
         </FieldGroup>
-
-        {displayError && (
-          <div className="mt-4 p-3 rounded-md bg-destructive/10 text-destructive text-sm">
-            {displayError}
-          </div>
-        )}
       </div>
 
       <div className="shrink-0 px-4 py-3 border-t bg-muted/50 flex items-center justify-end gap-2">
@@ -211,7 +201,7 @@ export function SqlFormArea({
             Cancel
           </Button>
         )}
-        <Button type="submit" disabled={isSubmitting}>
+        <Button type="submit" disabled={isSubmitting || isProcessingWithAI}>
           {isSubmitting && <Loader2 className="mr-2 size-4 animate-spin" />}
           Run
         </Button>
