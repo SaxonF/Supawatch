@@ -1,7 +1,9 @@
+import * as api from "@/api";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertCircleIcon, Sparkles } from "lucide-react";
-import { useState } from "react";
+import { AlertCircleIcon, Loader2, Sparkles } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Button } from "../ui/button";
+import { QueryInput } from "./QueryInput";
 import { SqlFormArea } from "./SqlFormArea";
 import { SqlQueryArea } from "./SqlQueryArea";
 import { SqlResultsArea } from "./SqlResultsArea";
@@ -41,6 +43,46 @@ export function QueryBlock({
   const [mode, setMode] = useState<"form" | "sql">(
     qs.parameters?.length ? "form" : "sql",
   );
+  const [isLoadingData, setIsLoadingData] = useState(false);
+
+  // Load existing data if loadQuery is defined (for edit forms)
+  useEffect(() => {
+    if (!qs.loadQuery || !qs.parameters?.length) return;
+
+    async function loadData() {
+      setIsLoadingData(true);
+
+      try {
+        // Interpolate params into loadQuery
+        const sql = qs.loadQuery!.replace(/:(\w+)/g, (_, key) => {
+          const value = activeParams[key];
+          if (value === null || value === undefined) return "NULL";
+          return `'${String(value).replace(/'/g, "''")}'`;
+        });
+
+        const result = await api.runQuery(projectId, sql, true);
+
+        if (Array.isArray(result) && result.length > 0) {
+          const row = result[0] as Record<string, unknown>;
+          const loaded: Record<string, unknown> = {};
+          for (const field of qs.parameters!) {
+            if (row[field.name] !== undefined) {
+              loaded[field.name] = row[field.name];
+            }
+          }
+          onFormValuesChange({ ...formValues, ...loaded });
+        }
+      } catch (err) {
+        console.error("Failed to load form data:", err);
+      } finally {
+        setIsLoadingData(false);
+      }
+    }
+
+    loadData();
+    // Only run on mount or when loadQuery/params change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qs.loadQuery, projectId, JSON.stringify(activeParams)]);
 
   // Error display component - shown when there's an error
   const errorDisplay = qs.error && (
@@ -71,69 +113,49 @@ export function QueryBlock({
     </div>
   );
 
+  // Show loading state when loading data for forms
+  if (isLoadingData) {
+    return (
+      <div className="flex-1 flex flex-col border-b min-h-[300px] items-center justify-center">
+        <Loader2 className="size-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
   return (
     <div className="flex-1 flex flex-col border-b min-h-[300px]">
       <div className="flex-1 flex flex-col overflow-hidden gap-0">
-        <div className="shrink-0 border-b bg-muted/20 flex flex-col">
-          {/* Header / Tabs if parameters exist */}
-          {qs.parameters && qs.parameters.length > 0 && (
-            <div className="flex items-center px-4 border-b bg-background">
-              <div className="flex gap-4">
-                <button
-                  onClick={() => setMode("form")}
-                  className={`py-2 text-sm font-medium border-b-2 ${
-                    mode === "form"
-                      ? "border-primary text-primary"
-                      : "border-transparent text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  Form
-                </button>
-                <button
-                  onClick={() => setMode("sql")}
-                  className={`py-2 text-sm font-medium border-b-2 ${
-                    mode === "sql"
-                      ? "border-primary text-primary"
-                      : "border-transparent text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  SQL
-                </button>
-              </div>
+        <div className="group shrink-0 border-b bg-muted/20 flex flex-col relative group">
+          <QueryInput
+            mode={mode}
+            setMode={setMode}
+            showToggle={!!(qs.parameters && qs.parameters.length > 0)}
+            onRun={() => onRunQuery(index)}
+            isLoading={isLoading}
+            isProcessingWithAI={isProcessingWithAI}
+          >
+            <div className="overflow-auto min-h-[150px] h-full">
+              {mode === "form" && qs.parameters ? (
+                <SqlFormArea
+                  formConfig={{ fields: qs.parameters }}
+                  formValues={formValues}
+                  onFormValuesChange={onFormValuesChange}
+                  onSubmit={() => onRunQuery(index)}
+                />
+              ) : (
+                <SqlQueryArea
+                  sql={qs.sql}
+                  setSql={(newSql) => onSqlChange(index, newSql)}
+                  handleKeyDown={(e) => {
+                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                      e.preventDefault();
+                      onRunQuery(index);
+                    }
+                  }}
+                />
+              )}
             </div>
-          )}
-
-          {/* Content Area (Form or SQL) */}
-          <div className="overflow-auto">
-            {mode === "form" && qs.parameters ? (
-              <SqlFormArea
-                projectId={projectId}
-                sql={qs.sql}
-                formConfig={{ fields: qs.parameters }}
-                loadQuery={qs.loadQuery}
-                params={activeParams}
-                formValues={formValues}
-                onFormValuesChange={onFormValuesChange}
-                onSubmit={() => onRunQuery(index)}
-                isSubmitting={isLoading}
-                isProcessingWithAI={isProcessingWithAI}
-              />
-            ) : (
-              <SqlQueryArea
-                sql={qs.sql}
-                setSql={(newSql) => onSqlChange(index, newSql)}
-                runQuery={() => onRunQuery(index)}
-                isLoading={isLoading}
-                isProcessingWithAI={isProcessingWithAI}
-                handleKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                    e.preventDefault();
-                    onRunQuery(index);
-                  }
-                }}
-              />
-            )}
-          </div>
+          </QueryInput>
         </div>
 
         {/* Error Display - shown at QueryBlock level when no results area */}

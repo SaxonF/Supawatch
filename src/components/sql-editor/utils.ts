@@ -100,8 +100,16 @@ export function createSpecTab(
   },
   params: Record<string, string> = {},
 ): Tab {
+  // Generate unique tab ID first
+  const tabId = generateTabId();
+
   const name = interpolateTemplate(item.name, params);
-  const sql = interpolateTemplate(item.sql || "", params);
+
+  // For items with unresolved :id placeholder (e.g., scripts), use the unique tab ID
+  // This ensures each state-driven item has a unique specItem.id for matching
+  const specItemId = item.id.includes(":id")
+    ? tabId
+    : interpolateTemplate(item.id, params);
 
   // Determine effective queries (legacy compat or new unified structure)
   // For now, consistent with strict refactor, we rely on item.queries
@@ -112,7 +120,7 @@ export function createSpecTab(
 
   // Create the tab
   return {
-    id: generateTabId(),
+    id: tabId,
     name,
     // Legacy fields - keeping them for now as fallbacks or empty,
     // but SqlEditor should rely on queryStates.
@@ -125,8 +133,8 @@ export function createSpecTab(
     isTableTab: groupId === "tables",
     queryStates,
     groupId,
-    specItem: item as Tab["specItem"],
-    viewStack: [{ itemId: item.id, params }],
+    specItem: { ...item, id: specItemId } as Tab["specItem"],
+    viewStack: [{ itemId: specItemId, params }],
     formValues: {},
   };
 }

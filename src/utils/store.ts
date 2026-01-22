@@ -14,6 +14,10 @@ async function getStore() {
 
 export async function save(key: string, value: any) {
   const store = await getStore();
+  if (key.includes("tabs")) {
+    console.error("[PERSISTENCE] Saving tabs:", JSON.stringify(value, null, 2));
+  }
+
   await store.set(key, value);
   await store.save();
 }
@@ -21,6 +25,15 @@ export async function save(key: string, value: any) {
 export async function load<T>(key: string): Promise<T | null> {
   const store = await getStore();
   const value = await store.get<T>(key);
+
+  console.error(
+    `[PERSISTENCE] store.load called for key: ${key}. Found value type: ${typeof value}`,
+  );
+
+  if (key.includes("tabs")) {
+    console.error("[PERSISTENCE] Loaded tabs:", JSON.stringify(value, null, 2));
+  }
+
   return value ?? null;
 }
 

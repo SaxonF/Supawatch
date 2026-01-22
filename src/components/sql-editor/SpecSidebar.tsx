@@ -285,6 +285,14 @@ export function SpecSidebar({
     } else if (isStateDriven) {
       // Items from tab state - filter tabs by this group
       const groupTabs = tabs.filter((t) => t.groupId === group.id);
+
+      if (group.id === "scripts") {
+        console.error(
+          `[PERSISTENCE] SpecSidebar rendering scripts. Found ${groupTabs.length} tabs.`,
+          groupTabs,
+        );
+      }
+
       itemsToRender = groupTabs.map((t) => ({
         item: {
           ...(t.specItem || {

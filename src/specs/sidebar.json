@@ -130,6 +130,7 @@
               "queries": [
                 {
                   "sql": "SELECT cron.unschedule(:jobid)",
+                  "loadQuery": "SELECT * FROM cron.job WHERE jobid = :jobid",
                   "returnToParent": true,
                   "results": null,
                   "parameters": [

@@ -1,3 +1,4 @@
+import { Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../api";
 import { defaultSidebarSpec } from "../specs";
@@ -49,10 +50,15 @@ function getOriginalSpecItem(
     if (item) return item;
   }
 
-  // Check itemTemplate (for dynamic groups like tables)
+  // Check itemTemplate (for dynamic groups like tables or scripts)
   if (group.itemTemplate) {
-    // For dynamic items, return the template
-    return group.itemTemplate;
+    // For dynamic items, return the template BUT with the ID injected.
+    // This is critical because validation logic often checks if specItem.id === currentItem.id.
+    // Dynamic items like scripts have ":id" in the template, but the instance has a concrete ID.
+    return {
+      ...group.itemTemplate,
+      id: itemId,
+    };
   }
 
   return null;
@@ -69,6 +75,9 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
   const [isSaving, setIsSaving] = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
 
+  // Track if state has been initialized from store to prevent overwriting with default state
+  const isInitialized = useRef(false);
+
   // Load state and fetch tables when project changes
   useEffect(() => {
     // Reset state for new project immediately
@@ -77,25 +86,68 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
     setIsLoading(true);
 
     const loadState = async () => {
+      console.error(
+        "[PERSISTENCE] loadState starting for projectId:",
+        projectId,
+      );
       try {
-        const persistedTabs = await store.load<Tab[]>(
-          store.PROJECT_KEYS.tabs(projectId),
-        );
+        const tabsKey = store.PROJECT_KEYS.tabs(projectId);
+        console.error("[PERSISTENCE] Loading tabs with key:", tabsKey);
+
+        const persistedTabs = await store.load<Tab[]>(tabsKey);
+
+        if (!persistedTabs) {
+          console.error(
+            "[PERSISTENCE] Store returned null/undefined for key:",
+            tabsKey,
+          );
+        }
         const persistedActiveTab = await store.load<string>(
           store.PROJECT_KEYS.activeTab(projectId),
         );
 
-        // Sanitize loaded tabs
+        // Sanitize loaded tabs - clear results and other large data
         const safeTabs =
           persistedTabs && Array.isArray(persistedTabs)
-            ? persistedTabs.map((t) => ({
-                ...t,
-                results: [],
-                originalResults: [],
-                queryMetadata: null,
-                error: null,
-              }))
+            ? persistedTabs.map((t) => {
+                // Fix for missing groupId on scripts (persistence issue recovery)
+                let groupId = t.groupId;
+                // If it looks like a script (specItem.id matches tab.id) but has no groupId, assign it to scripts
+                if (
+                  !groupId &&
+                  t.specItem &&
+                  t.specItem.id === t.id &&
+                  t.name
+                ) {
+                  groupId = "scripts";
+                }
+
+                return {
+                  ...t,
+                  groupId, // Ensure groupId is preserved/restored
+                  results: [],
+                  originalResults: [],
+                  queryMetadata: null,
+                  error: null,
+                  // Sanitize queryStates as well
+                  queryStates: t.queryStates?.map((qs: any) => ({
+                    ...qs,
+                    results: [],
+                    originalResults: [],
+                    queryMetadata: null,
+                    error: null,
+                  })),
+                };
+              })
             : null;
+
+        if (safeTabs) {
+          console.error(
+            "[PERSISTENCE] SqlEditor loaded safeTabs:",
+            safeTabs.length,
+            safeTabs,
+          );
+        }
 
         if (safeTabs && safeTabs.length > 0) {
           setTabs(safeTabs);
@@ -108,6 +160,11 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
             setActiveTabId(safeTabs[0]?.id || "");
           }
         } else {
+          console.error(
+            "[PERSISTENCE] No persisted tabs found for project:",
+            projectId,
+            ". Resetting to default.",
+          );
           // Reset to a fresh state with a new default tab
           const newTab = createNewTab();
           setTabs([newTab]);
@@ -121,6 +178,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
         setActiveTabId(newTab.id);
       } finally {
         setIsLoading(false);
+        isInitialized.current = true;
       }
     };
 
@@ -129,16 +187,36 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
 
   // Persist tabs when changed
   useEffect(() => {
+    // Prevent saving if we haven't loaded state yet (avoids overwriting store with default state on mount)
+    if (!isInitialized.current) return;
+
     if (tabs.length > 0) {
-      // Sanitize before saving
+      // Sanitize before saving - remove large data from tabs and queryStates
       const tabsToSave = tabs.map((t) => ({
         ...t,
+        groupId: t.groupId, // Explicitly include groupId to ensure persistence
         results: [],
         originalResults: [],
         queryMetadata: null,
         error: null,
+        // Sanitize queryStates as well
+        queryStates: t.queryStates?.map((qs) => ({
+          ...qs,
+          results: [],
+          originalResults: [],
+          queryMetadata: null,
+          error: null,
+        })),
       }));
-      store.save(store.PROJECT_KEYS.tabs(projectId), tabsToSave);
+
+      const tabsKey = store.PROJECT_KEYS.tabs(projectId);
+      if (tabsKey.includes("tabs")) {
+        console.error(
+          "[PERSISTENCE] Saving tabs:",
+          JSON.stringify(tabsToSave, null, 2),
+        );
+      }
+      store.save(tabsKey, tabsToSave);
     }
   }, [projectId, tabs]);
 
@@ -732,31 +810,6 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
     );
   }, [activeTabId]);
 
-  const handleMutationSubmit = useCallback(async () => {
-    const success = await runQuery();
-
-    console.log("success:", success);
-
-    // Check if we should return to parent
-    const activeSpecItem = currentTab.specItem
-      ? resolveActiveItem(currentTab.specItem, currentTab.viewStack || []).item
-      : null;
-
-    if (
-      activeSpecItem?.returnToParent &&
-      currentTab.viewStack &&
-      currentTab.viewStack.length > 0
-    ) {
-      handleBack();
-    }
-  }, [
-    runQuery,
-    currentTab.specItem,
-    currentTab.viewStack,
-    activeTabId,
-    handleBack,
-  ]);
-
   return (
     <div className="flex h-full overflow-hidden">
       <SpecSidebar
@@ -880,7 +933,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
                 <div className="flex-1 flex flex-col overflow-auto">
                   {currentTab.queryStates.map((qs, idx) => (
                     <QueryBlock
-                      key={idx}
+                      key={`${activeSpecItem?.id || "root"}-${idx}`}
                       index={idx}
                       queryState={qs}
                       projectId={projectId}
@@ -995,7 +1048,24 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
                           }),
                         );
                       }}
-                      onRunQuery={(index: number) => runQuery(undefined, index)}
+                      onRunQuery={async (index: number) => {
+                        const success = await runQuery(undefined, index);
+
+                        // Check if the query config requires returning to parent
+                        const queryConfig = activeSpecItem?.queries?.[index];
+                        const shouldReturn =
+                          queryConfig?.returnToParent ||
+                          activeSpecItem?.returnToParent;
+
+                        if (
+                          success &&
+                          shouldReturn &&
+                          currentTab.viewStack &&
+                          currentTab.viewStack.length > 0
+                        ) {
+                          handleBack();
+                        }
+                      }}
                       onSqlChange={(index: number, newSql: string) => {
                         setTabs((prev) =>
                           prev.map((t) => {
@@ -1084,6 +1154,47 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
                   ))}
                 </div>
               )}
+
+              {/* Add Query Button for User Creatable Groups */}
+              {(() => {
+                const group = defaultSidebarSpec.groups.find(
+                  (g) => g.id === currentTab.groupId,
+                );
+                return (
+                  group?.itemsFromState &&
+                  group.userCreatable && (
+                    <Button
+                      variant="ghost"
+                      className="w-full rounded-none"
+                      onClick={() => {
+                        setTabs((prev) =>
+                          prev.map((t) => {
+                            if (t.id !== activeTabId || !t.queryStates)
+                              return t;
+
+                            const newQueryState: QueryState = {
+                              sql: "",
+                              results: [],
+                              originalResults: [],
+                              displayColumns: [],
+                              queryMetadata: null,
+                              error: null,
+                              resultsConfig: "table",
+                            };
+
+                            return {
+                              ...t,
+                              queryStates: [...t.queryStates, newQueryState],
+                            };
+                          }),
+                        );
+                      }}
+                    >
+                      <Plus strokeWidth={1} size={16} />
+                    </Button>
+                  )
+                );
+              })()}
             </>
           );
         })()}

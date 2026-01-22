@@ -1,8 +1,5 @@
-import * as api from "@/api";
 import type { FormConfig, FormField } from "@/specs/types";
-import { Loader2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
-import { Button } from "../ui/button";
+import { useCallback } from "react";
 import { Field, FieldGroup, FieldLabel } from "../ui/field";
 import { Input } from "../ui/input";
 import {
@@ -16,75 +13,22 @@ import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 
 interface SqlFormAreaProps {
-  projectId: string;
-  sql: string;
   formConfig: FormConfig;
-  loadQuery?: string;
-  params: Record<string, string>;
   formValues: Record<string, unknown>;
   onFormValuesChange: (values: Record<string, unknown>) => void;
   onSubmit: () => void;
-  onCancel?: () => void;
-  isSubmitting?: boolean;
-  isProcessingWithAI?: boolean;
 }
 
 /**
  * Renders a form for mutation items - error display is handled by parent QueryBlock
+ * Data loading for edit forms is handled by parent QueryBlock
  */
 export function SqlFormArea({
-  projectId,
   formConfig,
-  loadQuery,
-  params,
   formValues,
   onFormValuesChange,
   onSubmit,
-  onCancel,
-  isSubmitting = false,
-  isProcessingWithAI = false,
 }: SqlFormAreaProps) {
-  const [isLoading, setIsLoading] = useState(false);
-
-  // Load existing data if loadQuery is defined
-  useEffect(() => {
-    if (!loadQuery) return;
-
-    async function loadData() {
-      setIsLoading(true);
-
-      try {
-        // Interpolate params into loadQuery
-        const sql = loadQuery!.replace(/:(w+)/g, (_, key) => {
-          const value = params[key];
-          if (value === null || value === undefined) return "NULL";
-          return `'${String(value).replace(/'/g, "''")}'`;
-        });
-
-        const result = await api.runQuery(projectId, sql, true);
-
-        if (Array.isArray(result) && result.length > 0) {
-          const row = result[0] as Record<string, unknown>;
-          const loaded: Record<string, unknown> = {};
-          for (const field of formConfig.fields) {
-            if (row[field.name] !== undefined) {
-              loaded[field.name] = row[field.name];
-            }
-          }
-          onFormValuesChange({ ...formValues, ...loaded });
-        }
-      } catch (err) {
-        console.error("Failed to load form data:", err);
-      } finally {
-        setIsLoading(false);
-      }
-    }
-
-    loadData();
-    // Only run on mount or when loadQuery/params change
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadQuery, projectId, JSON.stringify(params)]);
-
   const updateField = useCallback(
     (name: string, value: unknown) => {
       onFormValuesChange({ ...formValues, [name]: value });
@@ -168,18 +112,10 @@ export function SqlFormArea({
     onSubmit();
   };
 
-  if (isLoading) {
-    return (
-      <div className="flex-1 flex items-center justify-center">
-        <Loader2 className="size-6 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
   return (
     <form
       onSubmit={handleSubmit}
-      className="flex-1 flex flex-col overflow-hidden"
+      className="flex-1 flex flex-col overflow-hidden pb-12"
     >
       <div className="flex-1 overflow-y-auto p-4">
         <FieldGroup className="gap-4">
@@ -193,18 +129,6 @@ export function SqlFormArea({
             </Field>
           ))}
         </FieldGroup>
-      </div>
-
-      <div className="shrink-0 px-4 py-3 border-t bg-muted/50 flex items-center justify-end gap-2">
-        {onCancel && (
-          <Button type="button" variant="outline" onClick={onCancel}>
-            Cancel
-          </Button>
-        )}
-        <Button type="submit" disabled={isSubmitting || isProcessingWithAI}>
-          {isSubmitting && <Loader2 className="mr-2 size-4 animate-spin" />}
-          Run
-        </Button>
       </div>
     </form>
   );
