@@ -16,6 +16,7 @@ export function SqlQueryArea({
       <div className="relative h-full">
         <Textarea
           value={sql}
+          autoFocus={sql === ""}
           onChange={(e) => setSql(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Enter SQL or describe what you want in plain English..."

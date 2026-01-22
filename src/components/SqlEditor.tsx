@@ -70,7 +70,11 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
   const [activeTabId, setActiveTabId] = useState<string>("");
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
   const [editingTabName, setEditingTabName] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
+  const [loadingQueries, setLoadingQueries] = useState<Record<number, boolean>>(
+    {},
+  );
+  // Compute global loading state for legacy use or overall status
+  const isLoading = Object.values(loadingQueries).some(Boolean);
   const [isProcessingWithAI, setIsProcessingWithAI] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -83,7 +87,13 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
     // Reset state for new project immediately
     setEditingTabId(null);
     setEditingTabName("");
-    setIsLoading(true);
+    setLoadingQueries({ [-1]: true }); // Use -1 for "main" loading or similar, or just set true for all?
+    // Actually, distinct loading states for "loading config" vs "loading query" might be better,
+    // but sticking to refactoring existing pattern:
+    // When loading state, we don't know query indices yet maybe?
+    // But this effect loads TABS. So maybe we keep a separate "isInitializing" or just "isLoadingTabs".
+    // The original `isLoading` was used for both.
+    // Let's use a special key -1 for general tab loading.
 
     const loadState = async () => {
       console.error(
@@ -177,7 +187,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
         setTabs([newTab]);
         setActiveTabId(newTab.id);
       } finally {
-        setIsLoading(false);
+        setLoadingQueries({});
         isInitialized.current = true;
       }
     };
@@ -473,7 +483,9 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
         );
       };
 
-      setIsLoading(true);
+      // Use -1 for legacy single query (undefined index)
+      const loadingKey = queryIndex === undefined ? -1 : queryIndex;
+      setLoadingQueries((prev) => ({ ...prev, [loadingKey]: true }));
       updateState({ error: null });
 
       let queryToRun = actualSql;
@@ -490,7 +502,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
             validationError,
           );
           setIsProcessingWithAI(true);
-          setIsLoading(false); // Stop regular loading, show AI indicator instead
+          setLoadingQueries((prev) => ({ ...prev, [loadingKey]: false })); // Stop regular loading, show AI indicator instead
 
           try {
             // Use full schema introspection for AI context
@@ -500,7 +512,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
             queryToRun = convertedSql;
             updateState({ sql: convertedSql });
             setIsProcessingWithAI(false);
-            setIsLoading(true); // Resume loading for query execution
+            setLoadingQueries((prev) => ({ ...prev, [loadingKey]: true })); // Resume loading for query execution
           } catch (aiError) {
             // AI conversion failed - show original validation error
             const errorMessage =
@@ -626,7 +638,11 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
         return false;
       } finally {
         if (timeoutId) clearTimeout(timeoutId);
-        setIsLoading(false);
+        setLoadingQueries((prev) => {
+          const newState = { ...prev };
+          delete newState[loadingKey];
+          return newState;
+        });
         setIsProcessingWithAI(false);
       }
     },
@@ -642,24 +658,21 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
 
     const shouldAutoRun = activeSpecItem?.autoRun || currentTab?.isTableTab;
 
-    if (shouldAutoRun && !isLoading && !error) {
+    if (shouldAutoRun && !error) {
       if (currentTab?.queryStates) {
         // Run all queries that haven't been run or need update
-        // We run them sequentially
+        // We run them sequentially (or in parallel now!)
         currentTab.queryStates.forEach((qs, idx) => {
-          // Check if results are empty - rudimentary check for "needs run"
-          // Ideally we'd have a specific "hasRun" flag or similar
-          if (qs.results.length === 0 && !qs.error) {
+          // Check if results are empty and not currently loading
+          if (qs.results.length === 0 && !qs.error && !loadingQueries[idx]) {
             runQuery(undefined, idx);
           }
         });
       } else {
         // Legacy single query
-        // Avoid infinite loops by checking if we have results?
-        // But existing logic relied on !error and !isLoading + dependency array trickery
-        // The previous code had a specific check:
-        // (activeSpecItem?.autoRun || currentTab?.isTableTab) && !isLoading && !error
-        runQuery();
+        if (!isLoading) {
+          runQuery();
+        }
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runQuery is called, not read; including it causes infinite loops
@@ -670,7 +683,11 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
     currentTab?.isTableTab,
     // We add queryStates length to detect when it's initialized
     currentTab?.queryStates?.length,
-    // runQuery is stable
+    // Add loadingQueries to dependency to ensure we don't re-fire while loading?
+    // Actually no, we want the effect to run when tab changes, but we check loadingQueries inside.
+    // If loadingQueries changes, we technically don't need to re-run if nothing else changed.
+    // But we need to make sure we have the latest loadingQueries in scope.
+    loadingQueries,
   ]);
 
   const saveChanges = async () => {
@@ -939,8 +956,30 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
                       projectId={projectId}
                       activeParams={activeParams}
                       isProcessingWithAI={isProcessingWithAI}
-                      isLoading={isLoading}
+                      isLoading={!!loadingQueries[idx]}
                       formValues={currentTab.formValues || {}}
+                      // Only allow removal if it's a user-creatable group (like scripts)
+                      canRemove={(() => {
+                        const group = defaultSidebarSpec.groups.find(
+                          (g) => g.id === currentTab.groupId,
+                        );
+                        return !!(group?.itemsFromState && group.userCreatable);
+                      })()}
+                      onRemove={() => {
+                        setTabs((prev) =>
+                          prev.map((t) => {
+                            if (t.id !== activeTabId || !t.queryStates)
+                              return t;
+
+                            // Remove the query state at the current index
+                            const newStates = t.queryStates.filter(
+                              (_, i) => i !== idx,
+                            );
+
+                            return { ...t, queryStates: newStates };
+                          }),
+                        );
+                      }}
                       onFixQuery={(queryIndex, errorMsg) => {
                         // Fix query for specific index
                         const queryState = currentTab.queryStates?.[queryIndex];

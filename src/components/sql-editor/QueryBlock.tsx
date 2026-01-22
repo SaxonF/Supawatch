@@ -23,6 +23,8 @@ interface QueryBlockProps {
   onFixQuery?: (index: number, error?: string) => void;
   formValues: Record<string, unknown>;
   onFormValuesChange: (values: Record<string, unknown>) => void;
+  canRemove?: boolean;
+  onRemove?: () => void;
 }
 
 export function QueryBlock({
@@ -39,6 +41,8 @@ export function QueryBlock({
   onFixQuery,
   formValues,
   onFormValuesChange,
+  canRemove,
+  onRemove,
 }: QueryBlockProps) {
   const [mode, setMode] = useState<"form" | "sql">(
     qs.parameters?.length ? "form" : "sql",
@@ -133,6 +137,8 @@ export function QueryBlock({
             onRun={() => onRunQuery(index)}
             isLoading={isLoading}
             isProcessingWithAI={isProcessingWithAI}
+            canRemove={canRemove}
+            onRemove={onRemove}
           >
             <div className="overflow-auto min-h-[150px] h-full">
               {mode === "form" && qs.parameters ? (

@@ -1,4 +1,4 @@
-import { Database, FileText, Play, Sparkles } from "lucide-react";
+import { Database, FileText, Play, Sparkles, X } from "lucide-react";
 import { Button } from "../ui/button";
 
 interface QueryInputProps {
@@ -8,6 +8,8 @@ interface QueryInputProps {
   onRun: () => void;
   isLoading: boolean;
   isProcessingWithAI?: boolean;
+  canRemove?: boolean;
+  onRemove?: () => void;
   children: React.ReactNode;
 }
 
@@ -18,6 +20,8 @@ export function QueryInput({
   onRun,
   isLoading,
   isProcessingWithAI,
+  canRemove,
+  onRemove,
   children,
 }: QueryInputProps) {
   return (
@@ -27,7 +31,20 @@ export function QueryInput({
         {children}
 
         {/* Floating Action Buttons */}
-        <div className="absolute bottom-4 right-4 flex items-center gap-3 z-10">
+        <div className="absolute bottom-4 right-4 flex items-center gap-2 z-10">
+          {/* Remove Button */}
+          {canRemove && (
+            <Button
+              onClick={onRemove}
+              disabled={isLoading}
+              size="icon-sm"
+              title="Remove Query"
+              variant="outline"
+            >
+              <X size={16} strokeWidth={1} />
+            </Button>
+          )}
+
           {/* Toggle Buttons (only if params exist) */}
           {showToggle && (
             <div className="rounded rounded-full flex items-center gap-2">
