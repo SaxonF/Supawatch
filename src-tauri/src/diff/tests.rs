@@ -616,6 +616,33 @@ fn test_policy_comparison_normalized() {
         "Policies with different commands should differ");
 }
 
+#[test]
+fn test_policy_comparison_with_subquery() {
+    // Reproduces the exact issue: PostgreSQL rewrites policy expressions with subqueries,
+    // adding table prefixes to column names and parentheses around WHERE conditions.
+    // LOCAL: character_id IN (SELECT id FROM "public"."characters" WHERE user_id = auth.uid())
+    // REMOTE: (character_id IN ( SELECT characters.id FROM characters WHERE (characters.user_id = auth.uid())))
+    let local = PolicyInfo {
+        name: "Users can view own character slots".to_string(),
+        cmd: "SELECT".to_string(),
+        roles: vec!["authenticated".to_string()],
+        qual: Some("character_id IN (SELECT id FROM \"public\".\"characters\" WHERE user_id = auth.uid())".to_string()),
+        with_check: None,
+    };
+
+    let remote = PolicyInfo {
+        name: "Users can view own character slots".to_string(),
+        cmd: "SELECT".to_string(),
+        roles: vec!["authenticated".to_string()],
+        qual: Some("(character_id IN ( SELECT characters.id\n   FROM characters\n  WHERE (characters.user_id = auth.uid())))".to_string()),
+        with_check: None,
+    };
+
+    // These should NOT differ - they are semantically equivalent
+    assert!(!tables::policies_differ(&local, &remote), 
+        "Policies with equivalent subquery expressions should not differ despite PostgreSQL's rewriting");
+}
+
 // ============================================================================
 // Tests for Default Object Exclusion (Prevent dropping Supabase system objects)
 // ============================================================================
@@ -2356,4 +2383,147 @@ fn test_view_definition_strips_create_view_prefix() {
         "CREATE VIEW prefix should be stripped during normalization.\nWith CREATE: {}\nJust SELECT: {}",
         normalized_with_create, normalized_just_select
     );
+}
+
+#[test]
+fn test_view_diff_normalization_coalesce_cast() {
+    let local_def = "SELECT i.id, COALESCE(SUM(s.quantity), 0) AS total_quantity_sold FROM items i";
+    let remote_def = "SELECT i.id, COALESCE(SUM(s.quantity), (0)::bigint) AS total_quantity_sold FROM items i";
+
+    let local = ViewInfo {
+        schema: "public".into(),
+        name: "test_view".into(),
+        definition: local_def.to_string(),
+        is_materialized: false,
+        columns: vec![],
+        indexes: vec![],
+        comment: None,
+        with_options: vec![],
+        check_option: None,
+    };
+
+    let remote = ViewInfo {
+        schema: "public".into(),
+        name: "test_view".into(),
+        definition: remote_def.to_string(),
+        is_materialized: false,
+        columns: vec![],
+        indexes: vec![],
+        comment: None,
+        with_options: vec![],
+        check_option: None,
+    };
+
+    assert!(!super::objects::views_differ(&local, &remote), "Views should be considered identical despite type casting");
+}
+
+#[test]
+fn test_view_diff_normalization_interval() {
+    let local_def = "SELECT * FROM items WHERE created_at > now() - interval '7 days'";
+    // Based on user report: remote has (now() - '7 days'::interval) which got mangled to '7 days'erval
+    let remote_def = "SELECT * FROM items WHERE created_at > (now() - '7 days'::interval)";
+
+    let local = ViewInfo {
+        schema: "public".into(),
+        name: "interval_view".into(),
+        definition: local_def.to_string(),
+        is_materialized: false,
+        columns: vec![],
+        indexes: vec![],
+        comment: None,
+        with_options: vec![],
+        check_option: None,
+    };
+
+    let remote = ViewInfo {
+        schema: "public".into(),
+        name: "interval_view".into(),
+        definition: remote_def.to_string(),
+        is_materialized: false,
+        columns: vec![],
+        indexes: vec![],
+        comment: None,
+        with_options: vec![],
+        check_option: None,
+    };
+
+    assert!(!super::objects::views_differ(&local, &remote), "Views should be considered identical despite interval syntax differences");
+}
+
+#[test]
+fn test_view_diff_normalization_complex_parens() {
+    // Local: standard format
+    // Remote: pg_get_viewdef craziness with extra parens in ON and FILTER
+    let local_def = "SELECT count(s.id) FILTER (WHERE s.created_at > now() - interval '7 days') AS sales_last_7_days FROM items i LEFT JOIN item_sales s ON i.id = s.item_id";
+    
+    // Remote has:
+    // 1. FILTER (WHERE (s.created_at > (now() - '7 days'::interval)))
+    // 2. ON ((i.id = s.item_id))
+    let remote_def = "SELECT count(s.id) FILTER (WHERE (s.created_at > (now() - '7 days'::interval))) AS sales_last_7_days FROM items i LEFT JOIN item_sales s ON ((i.id = s.item_id))";
+
+    let local = ViewInfo {
+        schema: "public".into(),
+        name: "complex_view".into(),
+        definition: local_def.to_string(),
+        is_materialized: false,
+        columns: vec![],
+        indexes: vec![],
+        comment: None,
+        with_options: vec![],
+        check_option: None,
+    };
+
+    let remote = ViewInfo {
+        schema: "public".into(),
+        name: "complex_view".into(),
+        definition: remote_def.to_string(),
+        is_materialized: false,
+        columns: vec![],
+        indexes: vec![],
+        comment: None,
+        with_options: vec![],
+        check_option: None,
+    };
+
+    assert!(!super::objects::views_differ(&local, &remote), "Views should be considered identical despite complex nested parens in JOIN/FILTER");
+}
+
+#[test]
+fn test_view_diff_normalization_join_on_group_by() {
+    // Reproduces the exact issue from bug report:
+    // LOCAL: "on i.id = s.item_id group by"
+    // REMOTE: "((i.id = s.item_id)))group by" (extra parens, no space before group by)
+    let local_def = r#"SELECT i.id AS item_id, i.name AS item_name, i.rarity, COUNT(s.id) AS total_sales, COALESCE(SUM(s.quantity), 0) AS total_quantity_sold, COALESCE(ROUND(AVG(s.price_per_unit)), 0) AS avg_price, COALESCE(MIN(s.price_per_unit), 0) AS min_price, COALESCE(MAX(s.price_per_unit), 0) AS max_price, COALESCE(ROUND(AVG(s.price_per_unit) FILTER (WHERE s.created_at > NOW() - INTERVAL '7 days')), 0) AS avg_price_last_7_days, COALESCE(COUNT(s.id) FILTER (WHERE s.created_at > NOW() - INTERVAL '7 days'), 0) AS sales_last_7_days FROM items i LEFT JOIN item_sales s ON i.id = s.item_id GROUP BY i.id, i.name, i.rarity"#;
+    
+    // Remote with pg_get_viewdef peculiarities:
+    // 1. Extra parens around JOIN: FROM((items i left join item_sales s...
+    // 2. Extra parens around ON condition: ON((i.id = s.item_id))
+    // 3. No space before GROUP BY: )))group by
+    let remote_def = r#"SELECT i.id AS item_id, i.name AS item_name, i.rarity, COUNT(s.id) AS total_sales, COALESCE(SUM(s.quantity), (0)::bigint) AS total_quantity_sold, COALESCE(ROUND(AVG(s.price_per_unit)), (0)::bigint) AS avg_price, COALESCE(MIN(s.price_per_unit), (0)::bigint) AS min_price, COALESCE(MAX(s.price_per_unit), (0)::bigint) AS max_price, COALESCE(ROUND(AVG(s.price_per_unit) FILTER (WHERE (s.created_at > (now() - '7 days'::interval)))), (0)::bigint) AS avg_price_last_7_days, COALESCE(COUNT(s.id) FILTER (WHERE (s.created_at > (now() - '7 days'::interval))), 0) AS sales_last_7_days FROM((items i LEFT JOIN item_sales s ON((i.id = s.item_id))))GROUP BY i.id, i.name, i.rarity"#;
+
+    let local = ViewInfo {
+        schema: "public".into(),
+        name: "item_price_stats".into(),
+        definition: local_def.to_string(),
+        is_materialized: false,
+        columns: vec![],
+        indexes: vec![],
+        comment: None,
+        with_options: vec![],
+        check_option: None,
+    };
+
+    let remote = ViewInfo {
+        schema: "public".into(),
+        name: "item_price_stats".into(),
+        definition: remote_def.to_string(),
+        is_materialized: false,
+        columns: vec![],
+        indexes: vec![],
+        comment: None,
+        with_options: vec![],
+        check_option: None,
+    };
+
+    assert!(!super::objects::views_differ(&local, &remote), "Views should be identical despite pg_get_viewdef's extra parens around JOIN/ON and missing space before GROUP BY");
 }

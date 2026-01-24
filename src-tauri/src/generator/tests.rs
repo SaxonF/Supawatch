@@ -1413,3 +1413,6 @@ fn test_generate_drop_identity() {
     let statements = generate_alter_table("\"public\".\"items\"", &table_diff, &table);
     assert!(statements.iter().any(|s| s.contains("DROP IDENTITY")));
 }
+
+
+

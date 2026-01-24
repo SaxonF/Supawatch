@@ -165,15 +165,33 @@ pub fn extract_update_of_columns(trigger_def: &str) -> Option<Vec<String>> {
 }
 
 /// Extract expressions from index definition.
+/// Handles cases like: CREATE INDEX idx ON table (col, lower(name)) WHERE condition
 pub fn extract_index_expressions(index_def: &str) -> Vec<String> {
     let mut expressions = vec![];
 
     if let Some(on_idx) = index_def.to_uppercase().find(" ON ") {
         let after_on = &index_def[on_idx + 4..];
         if let Some(paren_start) = after_on.find('(') {
+            // Find the matching closing paren by tracking depth
+            // This avoids capturing content from WHERE clauses
             let in_parens = &after_on[paren_start + 1..];
-            if let Some(paren_end) = in_parens.rfind(')') {
-                let cols_str = &in_parens[..paren_end];
+            let mut depth = 1;
+            let mut paren_end = None;
+            for (i, c) in in_parens.char_indices() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            paren_end = Some(i);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(end) = paren_end {
+                let cols_str = &in_parens[..end];
                 for part in cols_str.split(',') {
                     let trimmed = part.trim();
                     if trimmed.contains('(') {

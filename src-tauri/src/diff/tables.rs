@@ -250,6 +250,9 @@ pub fn compute_table_diff(remote: &TableInfo, local: &TableInfo) -> TableDiff {
 pub fn policies_differ(local: &PolicyInfo, remote: &PolicyInfo) -> bool {
     // Command must match
     if local.cmd.to_uppercase() != remote.cmd.to_uppercase() {
+        eprintln!("=== POLICY DIFF DEBUG for {} ===", local.name);
+        eprintln!("CMD DIFFERS: local={} remote={}", local.cmd, remote.cmd);
+        eprintln!("=== END DEBUG ===");
         return true;
     }
     
@@ -259,15 +262,36 @@ pub fn policies_differ(local: &PolicyInfo, remote: &PolicyInfo) -> bool {
     local_roles.sort();
     remote_roles.sort();
     if local_roles != remote_roles {
+        eprintln!("=== POLICY DIFF DEBUG for {} ===", local.name);
+        eprintln!("ROLES DIFFER: local={:?} remote={:?}", local_roles, remote_roles);
+        eprintln!("=== END DEBUG ===");
         return true;
     }
     
     // Normalize and compare expressions
-    if utils::normalize_option(&local.qual) != utils::normalize_option(&remote.qual) {
+    let local_qual_normalized = utils::normalize_option(&local.qual);
+    let remote_qual_normalized = utils::normalize_option(&remote.qual);
+    if local_qual_normalized != remote_qual_normalized {
+        eprintln!("=== POLICY DIFF DEBUG for {} ===", local.name);
+        eprintln!("QUAL DIFFERS:");
+        eprintln!("  LOCAL raw: {:?}", local.qual);
+        eprintln!("  REMOTE raw: {:?}", remote.qual);
+        eprintln!("  LOCAL normalized: {:?}", local_qual_normalized);
+        eprintln!("  REMOTE normalized: {:?}", remote_qual_normalized);
+        eprintln!("=== END DEBUG ===");
         return true;
     }
     
-    if utils::normalize_option(&local.with_check) != utils::normalize_option(&remote.with_check) {
+    let local_with_check_normalized = utils::normalize_option(&local.with_check);
+    let remote_with_check_normalized = utils::normalize_option(&remote.with_check);
+    if local_with_check_normalized != remote_with_check_normalized {
+        eprintln!("=== POLICY DIFF DEBUG for {} ===", local.name);
+        eprintln!("WITH_CHECK DIFFERS:");
+        eprintln!("  LOCAL raw: {:?}", local.with_check);
+        eprintln!("  REMOTE raw: {:?}", remote.with_check);
+        eprintln!("  LOCAL normalized: {:?}", local_with_check_normalized);
+        eprintln!("  REMOTE normalized: {:?}", remote_with_check_normalized);
+        eprintln!("=== END DEBUG ===");
         return true;
     }
     
@@ -283,12 +307,49 @@ pub fn triggers_differ(local: &TriggerInfo, remote: &TriggerInfo) -> bool {
 }
 
 pub fn indexes_differ(local: &IndexInfo, remote: &IndexInfo) -> bool {
-    local.columns != remote.columns
-        || local.is_unique != remote.is_unique
-        || local.is_primary != remote.is_primary
-        || local.index_method.to_lowercase() != remote.index_method.to_lowercase()
-        || utils::normalize_option(&local.where_clause) != utils::normalize_option(&remote.where_clause)
-        || local.expressions != remote.expressions
+    if local.columns != remote.columns {
+        eprintln!("=== INDEX DIFF DEBUG for {} ===", local.index_name);
+        eprintln!("COLUMNS DIFFER: local={:?} remote={:?}", local.columns, remote.columns);
+        eprintln!("=== END DEBUG ===");
+        return true;
+    }
+    if local.is_unique != remote.is_unique {
+        eprintln!("=== INDEX DIFF DEBUG for {} ===", local.index_name);
+        eprintln!("IS_UNIQUE DIFFERS: local={} remote={}", local.is_unique, remote.is_unique);
+        eprintln!("=== END DEBUG ===");
+        return true;
+    }
+    if local.is_primary != remote.is_primary {
+        eprintln!("=== INDEX DIFF DEBUG for {} ===", local.index_name);
+        eprintln!("IS_PRIMARY DIFFERS: local={} remote={}", local.is_primary, remote.is_primary);
+        eprintln!("=== END DEBUG ===");
+        return true;
+    }
+    if local.index_method.to_lowercase() != remote.index_method.to_lowercase() {
+        eprintln!("=== INDEX DIFF DEBUG for {} ===", local.index_name);
+        eprintln!("METHOD DIFFERS: local={} remote={}", local.index_method, remote.index_method);
+        eprintln!("=== END DEBUG ===");
+        return true;
+    }
+    let local_where_normalized = utils::normalize_option(&local.where_clause);
+    let remote_where_normalized = utils::normalize_option(&remote.where_clause);
+    if local_where_normalized != remote_where_normalized {
+        eprintln!("=== INDEX DIFF DEBUG for {} ===", local.index_name);
+        eprintln!("WHERE_CLAUSE DIFFERS:");
+        eprintln!("  LOCAL raw: {:?}", local.where_clause);
+        eprintln!("  REMOTE raw: {:?}", remote.where_clause);
+        eprintln!("  LOCAL normalized: {:?}", local_where_normalized);
+        eprintln!("  REMOTE normalized: {:?}", remote_where_normalized);
+        eprintln!("=== END DEBUG ===");
+        return true;
+    }
+    if local.expressions != remote.expressions {
+        eprintln!("=== INDEX DIFF DEBUG for {} ===", local.index_name);
+        eprintln!("EXPRESSIONS DIFFER: local={:?} remote={:?}", local.expressions, remote.expressions);
+        eprintln!("=== END DEBUG ===");
+        return true;
+    }
+    false
 }
 
 pub fn foreign_keys_differ(local: &ForeignKeyInfo, remote: &ForeignKeyInfo) -> bool {
