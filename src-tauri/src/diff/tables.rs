@@ -299,11 +299,80 @@ pub fn policies_differ(local: &PolicyInfo, remote: &PolicyInfo) -> bool {
 }
 
 pub fn triggers_differ(local: &TriggerInfo, remote: &TriggerInfo) -> bool {
-    local.events != remote.events
-        || local.timing != remote.timing
-        || local.orientation != remote.orientation
-        || local.function_name != remote.function_name
-        || utils::normalize_option(&local.when_clause) != utils::normalize_option(&remote.when_clause)
+    let mut differs = false;
+
+    if local.events != remote.events {
+        eprintln!("=== TRIGGER DIFF DEBUG for {} ===", local.name);
+        eprintln!(
+            "EVENTS DIFFER: local={:?} remote={:?}",
+            local.events, remote.events
+        );
+        eprintln!("=== END DEBUG ===");
+        differs = true;
+    }
+
+    if local.timing != remote.timing {
+        eprintln!("=== TRIGGER DIFF DEBUG for {} ===", local.name);
+        eprintln!(
+            "TIMING DIFFERS: local={} remote={}",
+            local.timing, remote.timing
+        );
+        eprintln!("=== END DEBUG ===");
+        differs = true;
+    }
+
+    if local.orientation != remote.orientation {
+        eprintln!("=== TRIGGER DIFF DEBUG for {} ===", local.name);
+        eprintln!(
+            "ORIENTATION DIFFERS: local={} remote={}",
+            local.orientation, remote.orientation
+        );
+        eprintln!("=== END DEBUG ===");
+        differs = true;
+    }
+
+    // Normalize both function names: if they don't have a schema, assume "public"
+    let local_func_normalized = if local.function_name.contains('.') {
+        std::borrow::Cow::Borrowed(local.function_name.as_str())
+    } else {
+        std::borrow::Cow::Owned(format!("public.{}", local.function_name))
+    };
+
+    let remote_func_normalized = if remote.function_name.contains('.') {
+        std::borrow::Cow::Borrowed(remote.function_name.as_str())
+    } else {
+        std::borrow::Cow::Owned(format!("public.{}", remote.function_name))
+    };
+
+    if local_func_normalized != remote_func_normalized {
+        eprintln!("=== TRIGGER DIFF DEBUG for {} ===", local.name);
+        eprintln!(
+            "FUNCTION NAME DIFFERS: local={} remote={}",
+            local.function_name, remote.function_name
+        );
+        eprintln!(
+            "NORMALIZED: local={} remote={}",
+            local_func_normalized, remote_func_normalized
+        );
+        eprintln!("=== END DEBUG ===");
+        differs = true;
+    }
+
+    let local_when = utils::normalize_option(&local.when_clause);
+    let remote_when = utils::normalize_option(&remote.when_clause);
+
+    if local_when != remote_when {
+        eprintln!("=== TRIGGER DIFF DEBUG for {} ===", local.name);
+        eprintln!("WHEN CLAUSE DIFFERS:");
+        eprintln!("  LOCAL raw: {:?}", local.when_clause);
+        eprintln!("  REMOTE raw: {:?}", remote.when_clause);
+        eprintln!("  LOCAL normalized: {:?}", local_when);
+        eprintln!("  REMOTE normalized: {:?}", remote_when);
+        eprintln!("=== END DEBUG ===");
+        differs = true;
+    }
+
+    differs
 }
 
 pub fn indexes_differ(local: &IndexInfo, remote: &IndexInfo) -> bool {

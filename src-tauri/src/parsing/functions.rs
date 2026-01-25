@@ -7,6 +7,7 @@ pub fn handle_create_function(
     functions: &mut HashMap<String, FunctionInfo>,
     stmt: CreateFunction,
     security_definer: bool,
+    config_params: Vec<(String, String)>,
 ) {
     let CreateFunction {
         name,
@@ -78,9 +79,12 @@ pub fn handle_create_function(
             volatility,
             is_strict,
             security_definer,
+            config_params,
         },
     );
 }
+
+
 
 
 #[cfg(test)]
@@ -99,7 +103,7 @@ mod tests {
         match stmt {
             sqlparser::ast::Statement::CreateFunction(stmt) => {
                 let mut functions = HashMap::new();
-                handle_create_function(&mut functions, stmt, false);
+                handle_create_function(&mut functions, stmt, false, vec![]);
 
                 let func = functions.values().next().unwrap();
                 let arg = &func.args[0];
@@ -109,3 +113,4 @@ mod tests {
         }
     }
 }
+

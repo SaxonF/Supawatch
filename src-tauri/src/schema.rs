@@ -121,6 +121,7 @@ pub struct FunctionInfo {
     pub volatility: Option<String>, // VOLATILE, STABLE, IMMUTABLE
     pub is_strict: bool,            // STRICT / RETURNS NULL ON NULL INPUT
     pub security_definer: bool,     // SECURITY DEFINER
+    pub config_params: Vec<(String, String)>, // SET param = value (e.g., search_path = '')
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -251,6 +252,7 @@ impl Default for FunctionInfo {
             volatility: None,
             is_strict: false,
             security_definer: false,
+            config_params: vec![],
         }
     }
 }

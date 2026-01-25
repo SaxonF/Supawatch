@@ -164,7 +164,7 @@ fn clean_statement(stmt: Statement) -> Statement {
 fn normalize_via_ast(sql: &str) -> Option<String> {
     let dialect = PostgreSqlDialect {};
     // Parse
-    let mut ast = Parser::parse_sql(&dialect, sql).ok()?;
+    let ast = Parser::parse_sql(&dialect, sql).ok()?;
     
     // We expect a single statement
     if ast.len() != 1 { return None; }

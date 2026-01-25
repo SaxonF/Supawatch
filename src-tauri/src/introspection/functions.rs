@@ -1,11 +1,27 @@
 //! Function introspection.
 
-use crate::schema::{FunctionArg, FunctionInfo};
+use crate::schema::FunctionInfo;
 use crate::supabase_api::SupabaseApi;
 use serde::Deserialize;
 use std::collections::HashMap;
 
 use super::helpers::parse_function_args;
+
+/// Parse config params from PostgreSQL proconfig array format
+/// e.g., ["search_path=''", "statement_timeout=5000"]
+fn parse_config_params(config: Option<Vec<String>>) -> Vec<(String, String)> {
+    config.unwrap_or_default()
+        .into_iter()
+        .filter_map(|s| {
+            let parts: Vec<&str> = s.splitn(2, '=').collect();
+            if parts.len() == 2 {
+                Some((parts[0].to_string(), parts[1].to_string()))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
 
 /// Fetch all functions from the database.
 pub async fn get_functions(
@@ -26,7 +42,8 @@ pub async fn get_functions(
             WHEN 'v' THEN 'VOLATILE'
           END as volatility,
           p.proisstrict as is_strict,
-          p.prosecdef as security_definer
+          p.prosecdef as security_definer,
+          p.proconfig as config_params
         FROM pg_proc p
         JOIN pg_language l ON p.prolang = l.oid
         JOIN pg_namespace n ON p.pronamespace = n.oid
@@ -47,6 +64,7 @@ pub async fn get_functions(
         volatility: Option<String>,
         is_strict: bool,
         security_definer: bool,
+        config_params: Option<Vec<String>>,
     }
 
     let result = api
@@ -76,9 +94,11 @@ pub async fn get_functions(
                 volatility: row.volatility,
                 is_strict: row.is_strict,
                 security_definer: row.security_definer,
+                config_params: parse_config_params(row.config_params),
             },
         );
     }
 
     Ok(functions)
 }
+

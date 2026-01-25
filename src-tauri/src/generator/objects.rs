@@ -93,6 +93,10 @@ pub fn generate_create_function(func: &FunctionInfo) -> String {
         sql.push_str("SECURITY DEFINER ");
     }
 
+    for (param, value) in &func.config_params {
+        sql.push_str(&format!("SET {} = '{}' ", param, value));
+    }
+
     sql.push_str(&format!("AS $${}$$;", func.definition));
 
     sql

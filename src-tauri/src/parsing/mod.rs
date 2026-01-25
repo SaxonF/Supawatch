@@ -14,10 +14,10 @@ mod types;
 mod views;
 
 pub fn parse_schema_sql(sql: &str) -> Result<DbSchema, String> {
-    // SECURITY DEFINER workaround:
-    // sqlparser-rs doesn't support SECURITY DEFINER yet, so we manually extract it
-    // and remove it from the SQL before parsing.
-    let (cleaned_sql, security_definer_funcs) = preprocess_security_definer(sql);
+    // Function options workaround:
+    // sqlparser-rs doesn't support SECURITY DEFINER or SET clauses yet, so we manually extract them
+    // and remove them from the SQL before parsing.
+    let (cleaned_sql, func_options) = preprocess_function_options(sql);
 
     let dialect = PostgreSqlDialect {};
     let ast = Parser::parse_sql(&dialect, &cleaned_sql).map_err(|e| e.to_string())?;
@@ -47,12 +47,20 @@ pub fn parse_schema_sql(sql: &str) -> Result<DbSchema, String> {
             Statement::CreateFunction(stmt) => {
                 let (schema, name) = helpers::parse_object_name(&stmt.name);
                 // Check multiple formats for the function name as it appeared in SQL
-                let is_sec_def = security_definer_funcs.contains(&format!("\"{}\".\"{}\"", schema, name)) ||
-                                 security_definer_funcs.contains(&format!("{}.{}", schema, name)) ||
-                                 security_definer_funcs.contains(&name);
+                let func_key_formats = [
+                    format!("\"{}\".\"{}\"", schema, name),
+                    format!("{}.{}", schema, name),
+                    name.clone(),
+                ];
                 
-                functions::handle_create_function(&mut functions, stmt, is_sec_def);
+                let options = func_key_formats.iter()
+                    .find_map(|key| func_options.get(key))
+                    .map(|o| (o.security_definer, o.config_params.clone()))
+                    .unwrap_or((false, vec![]));
+                
+                functions::handle_create_function(&mut functions, stmt, options.0, options.1);
             }
+
             Statement::CreateRole(stmt) => {
                 roles::handle_create_role(&mut roles, stmt);
             }
@@ -126,41 +134,73 @@ pub fn parse_schema_sql(sql: &str) -> Result<DbSchema, String> {
     })
 }
 
-fn preprocess_security_definer(sql: &str) -> (String, std::collections::HashSet<String>) {
+/// Result of preprocessing function options from SQL
+/// Contains the cleaned SQL and maps of function names to their extracted options
+struct FunctionOptions {
+    security_definer: bool,
+    config_params: Vec<(String, String)>,
+}
+
+fn preprocess_function_options(sql: &str) -> (String, std::collections::HashMap<String, FunctionOptions>) {
     let mut cleaned_sql = sql.to_string();
-    let mut sec_def_funcs = std::collections::HashSet::new();
+    let mut func_options: std::collections::HashMap<String, FunctionOptions> = std::collections::HashMap::new();
     
-    // Simple case-insensitive match for SECURITY DEFINER
-    // We assume it's correctly placed in a CREATE FUNCTION statement
-    let key = "SECURITY DEFINER";
-    
-    // We iterate backwards to find matches and replace them, to preserve indices
-    // Actually simple replace is easier for cleaning, but we need to extract names first.
-    
-    // We scan the original SQL for names
     let sql_upper = sql.to_uppercase();
+    
+    // Find all functions and their positions
+    let mut func_positions: Vec<(usize, String)> = vec![];
     let mut start_search = 0;
     
-    while let Some(idx) = sql_upper[start_search..].find(key) {
-        let abs_idx = start_search + idx;
-        
-        // Find preceding "FUNCTION"
-        if let Some(func_idx) = sql_upper[..abs_idx].rfind("FUNCTION") {
-             // Find the opening parenthesis after FUNCTION to isolate name
-             if let Some(paren_idx) = sql[func_idx..abs_idx].find('(') {
-                 let raw_name = sql[func_idx + 8 .. func_idx + paren_idx].trim();
-                 sec_def_funcs.insert(raw_name.to_string());
-             }
+    while let Some(func_idx) = sql_upper[start_search..].find("FUNCTION") {
+        let abs_idx = start_search + func_idx;
+        // Find the opening parenthesis after FUNCTION to isolate name
+        if let Some(paren_idx) = sql[abs_idx..].find('(') {
+            let raw_name = sql[abs_idx + 8..abs_idx + paren_idx].trim().to_string();
+            func_positions.push((abs_idx, raw_name));
         }
-        
-        start_search = abs_idx + key.len();
+        start_search = abs_idx + 8;
     }
     
-    // Now remove the clauses
+    // For each function, look for SECURITY DEFINER and SET clauses
+    for (func_pos, func_name) in &func_positions {
+        let mut options = FunctionOptions {
+            security_definer: false,
+            config_params: vec![],
+        };
+        
+        // Find the end of this function definition (the $$ or semicolon that ends it)
+        // Look for the next function or end of string
+        let search_end = sql.len();
+        let func_section = &sql[*func_pos..search_end];
+        let func_section_upper = func_section.to_uppercase();
+        
+        // Check for SECURITY DEFINER
+        if func_section_upper.contains("SECURITY DEFINER") {
+            options.security_definer = true;
+        }
+        
+        // Look for SET clauses
+        // Pattern: SET param_name = 'value' or SET param_name TO value
+        let set_regex = regex::Regex::new(r"(?i)\bSET\s+(\w+)\s*=\s*'([^']*)'").unwrap();
+        for cap in set_regex.captures_iter(func_section) {
+            let param_name = cap.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
+            let param_value = cap.get(2).map(|m| m.as_str().to_string()).unwrap_or_default();
+            options.config_params.push((param_name, param_value));
+        }
+        
+        func_options.insert(func_name.clone(), options);
+    }
+    
+    // Remove SECURITY DEFINER from SQL
     cleaned_sql = cleaned_sql.replace("SECURITY DEFINER", "");
     
-    (cleaned_sql, sec_def_funcs)
+    // Remove SET clauses - match SET param = 'value' pattern
+    let set_clause_regex = regex::Regex::new(r"(?i)\bSET\s+\w+\s*=\s*'[^']*'\s*").unwrap();
+    cleaned_sql = set_clause_regex.replace_all(&cleaned_sql, "").to_string();
+    
+    (cleaned_sql, func_options)
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -559,6 +599,29 @@ CREATE FUNCTION get_current_user_id() RETURNS uuid
         let func = schema.functions.get("\"public\".\"get_current_user_id\"()")
             .expect("Function not found");
         assert!(func.security_definer);
+    }
+
+    #[test]
+    fn test_parse_function_with_set_search_path() {
+        let sql = r#"
+CREATE FUNCTION public.broadcast_position() RETURNS trigger
+    LANGUAGE plpgsql
+    SECURITY DEFINER
+    SET search_path = ''
+    AS $$
+BEGIN
+    RETURN NEW;
+END;
+$$;
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+
+        let func = schema.functions.get("\"public\".\"broadcast_position\"()")
+            .expect("Function not found");
+        assert!(func.security_definer, "security_definer should be true");
+        assert_eq!(func.config_params.len(), 1, "Should have one config param");
+        assert_eq!(func.config_params[0].0, "search_path", "Config param name should be search_path");
+        assert_eq!(func.config_params[0].1, "", "Config param value should be empty string");
     }
 
     #[test]

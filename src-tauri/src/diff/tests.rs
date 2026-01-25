@@ -1012,6 +1012,7 @@ fn test_create_function_is_not_destructive() {
             volatility: None,
             is_strict: false,
             security_definer: false,
+            config_params: vec![],
         },
     );
 
@@ -1358,6 +1359,7 @@ fn test_function_update() {
             volatility: None,
             is_strict: false,
             security_definer: false,
+            config_params: vec![],
         },
     );
 
@@ -1373,6 +1375,7 @@ fn test_function_update() {
             volatility: None,
             is_strict: false,
             security_definer: false,
+            config_params: vec![],
         },
     );
 
@@ -2191,6 +2194,7 @@ fn test_function_drop() {
             volatility: None,
             is_strict: false,
             security_definer: false,
+            config_params: vec![],
         },
     );
 
@@ -2281,6 +2285,7 @@ end;"#;
             volatility: None,
             is_strict: false,
             security_definer: false,
+            config_params: vec![],
         },
     );
 
@@ -2301,6 +2306,7 @@ end;"#;
             volatility: None,
             is_strict: false,
             security_definer: false,
+            config_params: vec![],
         },
     );
 
