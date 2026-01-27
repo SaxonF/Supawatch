@@ -82,3 +82,8 @@ export interface PullDiffResponse {
   migration_sql: string;
   edge_functions: EdgeFunctionDiff[];
 }
+
+export interface ProjectKeys {
+  anon_key: string;
+  service_role_key: string;
+}

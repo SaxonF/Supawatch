@@ -4,7 +4,10 @@
       "id": "tables",
       "name": "Tables",
       "icon": "table",
-      "itemsQuery": "SELECT schemaname AS schema, tablename AS name FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",
+      "itemsSource": {
+        "type": "sql",
+        "value": "SELECT schemaname AS schema, tablename AS name FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename"
+      },
       "itemTemplate": {
         "id": ":schema.:name",
         "icon": "table",
@@ -13,7 +16,10 @@
         "autoRun": true,
         "queries": [
           {
-            "sql": "SELECT * FROM \":schema\".\":name\" LIMIT 100",
+            "source": {
+              "type": "sql",
+              "value": "SELECT * FROM \":schema\".\":name\" LIMIT 100"
+            },
             "results": "table"
           }
         ]
@@ -32,7 +38,10 @@
           "autoRun": true,
           "queries": [
             {
-              "sql": "SELECT jobid, jobname, schedule, command, active FROM cron.job ORDER BY jobname",
+              "source": {
+                "type": "sql",
+                "value": "SELECT jobid, jobname, schedule, command, active FROM cron.job ORDER BY jobname"
+              },
               "results": "table",
               "rowActions": [
                 {
@@ -60,7 +69,10 @@
               "visible": false,
               "queries": [
                 {
-                  "sql": "SELECT cron.schedule(':jobname', ':schedule', ':command')",
+                  "source": {
+                    "type": "sql",
+                    "value": "SELECT cron.schedule(':jobname', ':schedule', ':command')"
+                  },
                   "returnToParent": true,
                   "results": null,
                   "parameters": [
@@ -95,8 +107,14 @@
               "visible": false,
               "queries": [
                 {
-                  "sql": "UPDATE cron.job SET jobname = :jobname, schedule = :schedule, command = :command, active = :active WHERE jobid = :jobid",
-                  "loadQuery": "SELECT * FROM cron.job WHERE jobid = :jobid",
+                  "source": {
+                    "type": "sql",
+                    "value": "UPDATE cron.job SET jobname = :jobname, schedule = :schedule, command = :command, active = :active WHERE jobid = :jobid"
+                  },
+                  "loader": {
+                    "type": "sql",
+                    "value": "SELECT * FROM cron.job WHERE jobid = :jobid"
+                  },
                   "returnToParent": true,
                   "results": null,
                   "parameters": [
@@ -129,8 +147,14 @@
               "visible": false,
               "queries": [
                 {
-                  "sql": "SELECT cron.unschedule(:jobid)",
-                  "loadQuery": "SELECT * FROM cron.job WHERE jobid = :jobid",
+                  "source": {
+                    "type": "sql",
+                    "value": "SELECT cron.unschedule(:jobid)"
+                  },
+                  "loader": {
+                    "type": "sql",
+                    "value": "SELECT * FROM cron.job WHERE jobid = :jobid"
+                  },
                   "returnToParent": true,
                   "results": null,
                   "parameters": [
@@ -154,7 +178,10 @@
           "autoRun": true,
           "queries": [
             {
-              "sql": "SELECT d.date::date as date, count(u.id) as count FROM generate_series(date_trunc('week', current_date - interval '3 months'), date_trunc('week', current_date), '1 week'::interval) as d(date) LEFT JOIN auth.users u ON date_trunc('week', u.created_at)::date = d.date::date GROUP BY 1 ORDER BY 1",
+              "source": {
+                "type": "sql",
+                "value": "SELECT d.date::date as date, count(u.id) as count FROM generate_series(date_trunc('week', current_date - interval '3 months'), date_trunc('week', current_date), '1 week'::interval) as d(date) LEFT JOIN auth.users u ON date_trunc('week', u.created_at)::date = d.date::date GROUP BY 1 ORDER BY 1"
+              },
               "results": "chart",
               "chart": {
                 "xAxis": {
@@ -170,7 +197,171 @@
               }
             },
             {
-              "sql": "SELECT id, email, created_at, last_sign_in_at FROM auth.users ORDER BY created_at DESC LIMIT 50",
+              "source": {
+                "type": "sql",
+                "value": "SELECT id, email, created_at, last_sign_in_at FROM auth.users ORDER BY created_at DESC LIMIT 50"
+              },
+              "results": "table"
+            }
+          ]
+        },
+        {
+          "id": "resend",
+          "name": "Resend Contacts",
+          "icon": "mail",
+          "visible": true,
+          "autoRun": true,
+          "queries": [
+            {
+              "source": {
+                "type": "edge_function",
+                "name": "resend/contacts",
+                "value": "{\n  \"method\": \"GET\"\n}"
+              },
+              "results": "table",
+              "rowActions": [
+                {
+                  "label": "Edit",
+                  "itemId": "edit-contact",
+                  "params": { "id": "id" }
+                },
+                {
+                  "label": "Delete",
+                  "itemId": "delete-contact",
+                  "params": { "id": "id" },
+                  "variant": "destructive"
+                }
+              ]
+            }
+          ],
+          "primaryAction": {
+            "label": "Add Contact",
+            "itemId": "create-contact"
+          },
+          "children": [
+            {
+              "id": "create-contact",
+              "name": "Add Contact",
+              "visible": false,
+              "queries": [
+                {
+                  "source": {
+                    "type": "edge_function",
+                    "name": "resend/contacts",
+                    "value": "{\n  \"method\": \"POST\",\n  \"body\": {\n    \"email\": \":email\",\n    \"first_name\": \":first_name\",\n    \"last_name\": \":last_name\"\n  }\n}"
+                  },
+                  "returnToParent": true,
+                  "results": null,
+                  "parameters": [
+                    {
+                      "name": "email",
+                      "label": "Email",
+                      "type": "text",
+                      "required": true
+                    },
+                    {
+                      "name": "first_name",
+                      "label": "First Name",
+                      "type": "text",
+                      "required": true
+                    },
+                    {
+                      "name": "last_name",
+                      "label": "Last Name",
+                      "type": "text",
+                      "required": true
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "edit-contact",
+              "name": "Edit Contact",
+              "visible": false,
+              "autoRun": true,
+              "queries": [
+                {
+                  "source": {
+                    "type": "edge_function",
+                    "name": "resend/contacts/:id",
+                    "value": "{\n  \"method\": \"PATCH\",\n  \"body\": {\n    \"firstName\": \":first_name\",\n    \"lastName\": \":last_name\",\n    \"unsubscribed\": :unsubscribed\n  }\n}"
+                  },
+                  "loader": {
+                    "type": "edge_function",
+                    "name": "resend/contacts/:id",
+                    "value": "{\n  \"method\": \"GET\"\n}"
+                  },
+                  "returnToParent": true,
+                  "results": null,
+                  "parameters": [
+                    {
+                      "name": "first_name",
+                      "label": "First Name",
+                      "type": "text",
+                      "required": true
+                    },
+                    {
+                      "name": "last_name",
+                      "label": "Last Name",
+                      "type": "text",
+                      "required": true
+                    },
+                    {
+                      "name": "unsubscribed",
+                      "label": "Unsubscribed",
+                      "type": "boolean",
+                      "required": true
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "delete-contact",
+              "name": "Delete Contact",
+              "visible": false,
+              "queries": [
+                {
+                  "source": {
+                    "type": "edge_function",
+                    "name": "resend/contacts/:id",
+                    "value": "{\n  \"method\": \"DELETE\"\n}"
+                  },
+                  "loader": {
+                    "type": "edge_function",
+                    "name": "resend/contacts/:id",
+                    "value": "{\n  \"method\": \"GET\"\n}"
+                  },
+                  "returnToParent": true,
+                  "results": null,
+                  "parameters": [
+                    {
+                      "name": "id",
+                      "label": "Contact ID",
+                      "type": "text",
+                      "required": true,
+                      "hidden": true
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "resend-templates",
+          "name": "Resend Templates",
+          "icon": "layout-template",
+          "visible": true,
+          "autoRun": true,
+          "queries": [
+            {
+              "source": {
+                "type": "edge_function",
+                "name": "resend/templates",
+                "value": "{\n  \"method\": \"GET\"\n}"
+              },
               "results": "table"
             }
           ]
@@ -190,7 +381,10 @@
         "visible": true,
         "queries": [
           {
-            "sql": "",
+            "source": {
+              "type": "sql",
+              "value": ""
+            },
             "results": "table"
           }
         ]

@@ -180,3 +180,9 @@ pub struct RemoteProject {
     pub region: String,
     pub created_at: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectKeys {
+    pub anon_key: String,
+    pub service_role_key: String,
+}

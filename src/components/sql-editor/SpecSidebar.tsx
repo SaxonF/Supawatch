@@ -98,15 +98,30 @@ export function SpecSidebar({
     [projectId],
   );
 
-  // Fetch dynamic items for a group with itemsQuery
+  // Fetch dynamic items for a group
   const fetchDynamicItems = useCallback(
     async (group: Group) => {
-      if (!group.itemsQuery || !group.itemTemplate) return;
+      // Check for itemsSource or legacy itemsQuery
+      const source = group.itemsSource;
+      // We ignore itemsQuery if itemsSource is present, but for now we assume migration.
+      // If neither is present, return.
+      if ((!source && !group.itemsQuery) || !group.itemTemplate) return;
 
       setLoadingGroups((prev) => new Set(prev).add(group.id));
 
       try {
-        const result = await api.runQuery(projectId, group.itemsQuery, true);
+        let result: unknown;
+
+        if (source) {
+          if (source.type === "edge_function") {
+            result = await api.runEdgeFunction(projectId, source.value, {});
+          } else {
+            result = await api.runQuery(projectId, source.value, true);
+          }
+        } else if (group.itemsQuery) {
+          // Legacy fallback
+          result = await api.runQuery(projectId, group.itemsQuery, true);
+        }
 
         if (Array.isArray(result)) {
           const items: DynamicItem[] = result.map(
@@ -151,7 +166,7 @@ export function SpecSidebar({
   // Load dynamic items on mount
   useEffect(() => {
     for (const group of defaultSidebarSpec.groups) {
-      if (group.itemsQuery) {
+      if (group.itemsSource || group.itemsQuery) {
         fetchDynamicItems(group);
       }
     }
@@ -259,7 +274,7 @@ export function SpecSidebar({
   const renderGroup = (group: Group) => {
     const isCollapsed = collapsedGroups.has(group.id);
     const isLoading = loadingGroups.has(group.id);
-    const hasDynamicItems = !!group.itemsQuery;
+    const hasDynamicItems = !!(group.itemsSource || group.itemsQuery);
     const hasUserCreatable = !!group.userCreatable;
     const isStateDriven = group.itemsFromState === "tabs";
 
@@ -273,7 +288,7 @@ export function SpecSidebar({
         .filter((i) => i.visible !== false)
         .map((item) => ({ item, params: {} }));
     } else if (
-      group.itemsQuery &&
+      (group.itemsSource || group.itemsQuery) &&
       group.itemTemplate &&
       dynamicItems[group.id]
     ) {

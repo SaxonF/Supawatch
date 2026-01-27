@@ -87,11 +87,15 @@ export function SqlFormArea({
               <SelectValue placeholder={field.placeholder || "Select..."} />
             </SelectTrigger>
             <SelectContent>
-              {field.options?.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value}>
-                  {opt.label}
-                </SelectItem>
-              ))}
+              {field.options?.map((opt) => {
+                const label = typeof opt === "string" ? opt : opt.label;
+                const value = typeof opt === "string" ? opt : opt.value;
+                return (
+                  <SelectItem key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                );
+              })}
             </SelectContent>
           </Select>
         );

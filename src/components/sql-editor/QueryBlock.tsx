@@ -8,6 +8,7 @@ import { SqlFormArea } from "./SqlFormArea";
 import { SqlQueryArea } from "./SqlQueryArea";
 import { SqlResultsArea } from "./SqlResultsArea";
 import { QueryState } from "./types";
+import { interpolateTemplate } from "./utils";
 
 interface QueryBlockProps {
   queryState: QueryState;
@@ -49,25 +50,96 @@ export function QueryBlock({
   );
   const [isLoadingData, setIsLoadingData] = useState(false);
 
-  // Load existing data if loadQuery is defined (for edit forms)
+  // Load existing data if loader is defined (for edit forms)
   useEffect(() => {
-    if (!qs.loadQuery || !qs.parameters?.length) return;
+    if (!qs.loader || !qs.parameters?.length) return;
 
     async function loadData() {
       setIsLoadingData(true);
 
       try {
-        // Interpolate params into loadQuery
-        const sql = qs.loadQuery!.replace(/:(\w+)/g, (_, key) => {
-          const value = activeParams[key];
-          if (value === null || value === undefined) return "NULL";
-          return `'${String(value).replace(/'/g, "''")}'`;
-        });
+        let result: unknown;
+        const loader = qs.loader!;
 
-        const result = await api.runQuery(projectId, sql, true);
+        // Prepare args/sql
+        const args = { ...activeParams };
+
+        if (loader.type === "sql") {
+          const sql = loader.value.replace(/:(\w+)/g, (_, key) => {
+            const value = args[key];
+            if (value === null || value === undefined) return "NULL";
+            return `'${String(value).replace(/'/g, "''")}'`;
+          });
+          result = await api.runQuery(projectId, sql, true);
+        } else if (loader.type === "edge_function") {
+          let functionName = interpolateTemplate(
+            loader.name || "",
+            activeParams,
+          );
+          let functionArgs = args as Record<string, unknown>;
+
+          // Attempt to parse as JSON configuration
+          const trimmedValue = loader.value.trim();
+          if (trimmedValue.startsWith("{")) {
+            try {
+              // We interpolate parameters into the JSON string first
+              // Note: args contains activeParams.
+              // We need a string map for interpolation.
+              const stringParams: Record<string, string> = {};
+              for (const [k, v] of Object.entries(args)) {
+                stringParams[k] = String(v);
+              }
+
+              // interpolateTemplate needs to be imported or copied?
+              // It's not imported in QueryBlock.tsx usually?
+              // Check imports.
+              // It logic: replace :key with value.
+
+              const interpolated = trimmedValue.replace(
+                /:(\w+)/g,
+                (match, key) => {
+                  return stringParams[key] ?? match;
+                },
+              );
+
+              const config = JSON.parse(interpolated);
+
+              if (config.body) {
+                // If body is present, merge it with existing args
+                functionArgs = { ...functionArgs, ...config.body };
+              }
+
+              if (config.method) {
+                (functionArgs as any).method = config.method;
+              }
+            } catch (e) {
+              console.error("Failed to parse edge function JSON loader", e);
+            }
+          }
+
+          result = await api.runEdgeFunction(
+            projectId,
+            functionName,
+            functionArgs,
+          );
+        }
+
+        console.log("loader result:", result);
+
+        let row: Record<string, unknown> | undefined;
 
         if (Array.isArray(result) && result.length > 0) {
-          const row = result[0] as Record<string, unknown>;
+          row = result[0] as Record<string, unknown>;
+        } else if (
+          result &&
+          typeof result === "object" &&
+          !Array.isArray(result)
+        ) {
+          // Handle single object response (common for edge functions returning specific resource)
+          row = result as Record<string, unknown>;
+        }
+
+        if (row) {
           const loaded: Record<string, unknown> = {};
           for (const field of qs.parameters!) {
             if (row[field.name] !== undefined) {
@@ -84,9 +156,14 @@ export function QueryBlock({
     }
 
     loadData();
-    // Only run on mount or when loadQuery/params change
+    // Only run on mount or when loader/params change
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [qs.loadQuery, projectId, JSON.stringify(activeParams)]);
+  }, [
+    qs.loader?.value,
+    qs.loader?.type,
+    projectId,
+    JSON.stringify(activeParams),
+  ]);
 
   // Error display component - shown when there's an error
   const errorDisplay = qs.error && (
@@ -150,7 +227,7 @@ export function QueryBlock({
                 />
               ) : (
                 <SqlQueryArea
-                  sql={qs.sql}
+                  sql={qs.source?.value ?? ((qs as any).sql || "")}
                   setSql={(newSql) => onSqlChange(index, newSql)}
                   handleKeyDown={(e) => {
                     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -158,6 +235,8 @@ export function QueryBlock({
                       onRunQuery(index);
                     }
                   }}
+                  // If we want to indicate the source type, we might add a badge or label in SqlQueryArea
+                  // For now treating edge function name as "SQL" text for editing purposes is acceptable default
                 />
               )}
             </div>

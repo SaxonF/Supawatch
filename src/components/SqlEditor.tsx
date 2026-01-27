@@ -81,6 +81,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
 
   // Track if state has been initialized from store to prevent overwriting with default state
   const isInitialized = useRef(false);
+  const autoRunCache = useRef<Set<string>>(new Set());
 
   // Load state and fetch tables when project changes
   useEffect(() => {
@@ -452,18 +453,44 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
     async (queryOverride?: unknown, queryIndex?: number) => {
       // Handle potential event object from onClick
       const isOverride = typeof queryOverride === "string";
+      console.log("Debug: runQuery initiated", { queryOverride, queryIndex });
 
-      // Determine which SQL to run
-      let currentSql = sql;
+      // Determine which Source to run
+      // Legacy sql tab support (source: { type: 'sql', value: sql })
+      let currentSource: {
+        type: "sql" | "edge_function";
+        name?: string;
+        value: string;
+      } = {
+        type: "sql",
+        value: sql || "",
+      };
+
       if (queryIndex !== undefined && currentTab.queryStates?.[queryIndex]) {
-        currentSql = currentTab.queryStates[queryIndex].sql;
+        const qs = currentTab.queryStates[queryIndex];
+        // Fallback for potentially malformed state
+        currentSource = qs.source || {
+          type: "sql",
+          value: (qs as any).sql || "",
+        };
       }
 
-      const actualSql = isOverride ? (queryOverride as string) : currentSql;
-
-      if (!actualSql.trim()) return false;
+      // If override provided, assume it's SQL for now (legacy behavior support)
+      // or we could support overriding the value of the current source type.
+      const actualSource = isOverride
+        ? {
+            type: currentSource?.type || "sql",
+            name: currentSource?.name || "",
+            value: queryOverride as string,
+          }
+        : currentSource;
 
       // Helper to update state for specific query or main tab
+      // MOVED: logging before return
+      if (!actualSource || !actualSource.value || !actualSource.value.trim()) {
+        return false;
+      }
+
       const updateState = (updates: Partial<Tab> | Partial<QueryState>) => {
         setTabs((prevTabs) =>
           prevTabs.map((tab) => {
@@ -488,75 +515,164 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
       setLoadingQueries((prev) => ({ ...prev, [loadingKey]: true }));
       updateState({ error: null });
 
-      let queryToRun = actualSql;
+      let sourceToRun = actualSource;
       let timeoutId: NodeJS.Timeout | null = null;
 
       try {
-        // First, validate the SQL syntax
-        try {
-          await api.validateSql(actualSql);
-        } catch (validationError) {
-          // SQL is invalid - try to convert with AI
-          console.log(
-            "SQL validation failed, trying AI conversion:",
-            validationError,
-          );
-          setIsProcessingWithAI(true);
-          setLoadingQueries((prev) => ({ ...prev, [loadingKey]: false })); // Stop regular loading, show AI indicator instead
+        let result: unknown;
 
+        if (sourceToRun.type === "sql") {
+          // SQL Execution Path
+
+          // First, validate the SQL syntax
           try {
-            // Use full schema introspection for AI context
-            const convertedSql = await api.convertWithAi(projectId, actualSql);
+            await api.validateSql(sourceToRun.value);
+          } catch (validationError) {
+            // SQL is invalid - try to convert with AI
+            console.log(
+              "SQL validation failed, trying AI conversion:",
+              validationError,
+            );
+            setIsProcessingWithAI(true);
+            setLoadingQueries((prev) => ({ ...prev, [loadingKey]: false }));
 
-            // Update the SQL in the editor with the converted version
-            queryToRun = convertedSql;
-            updateState({ sql: convertedSql });
-            setIsProcessingWithAI(false);
-            setLoadingQueries((prev) => ({ ...prev, [loadingKey]: true })); // Resume loading for query execution
-          } catch (aiError) {
-            // AI conversion failed - show original validation error
-            const errorMessage =
-              validationError instanceof Error
-                ? validationError.message
-                : String(validationError);
-            const aiErrorMessage =
-              aiError instanceof Error ? aiError.message : String(aiError);
+            try {
+              // Use full schema introspection for AI context
+              const convertedSql = await api.convertWithAi(
+                projectId,
+                sourceToRun.value,
+              );
 
-            updateState({
-              error: `Invalid SQL: ${errorMessage}. AI conversion failed: ${aiErrorMessage}`,
-              results: [],
-              originalResults: [],
-              displayColumns: [],
-              queryMetadata: null,
-            });
-            setIsProcessingWithAI(false);
-            return false;
+              // Update the Source in the editor with the converted version
+              sourceToRun = { ...sourceToRun, value: convertedSql };
+              updateState({ source: sourceToRun });
+              setIsProcessingWithAI(false);
+              setLoadingQueries((prev) => ({ ...prev, [loadingKey]: true }));
+            } catch (aiError) {
+              // AI conversion failed
+              const errorMessage =
+                validationError instanceof Error
+                  ? validationError.message
+                  : String(validationError);
+              const aiErrorMessage =
+                aiError instanceof Error ? aiError.message : String(aiError);
+
+              updateState({
+                error: `Invalid SQL: ${errorMessage}. AI conversion failed: ${aiErrorMessage}`,
+                results: [],
+                originalResults: [],
+                displayColumns: [],
+                queryMetadata: null,
+              });
+              setIsProcessingWithAI(false);
+              return false;
+            }
           }
+
+          // Run the (possibly converted) query with a timeout
+          const queryPromise = api.runQuery(
+            projectId,
+            sourceToRun.value,
+            false,
+          );
+          const timeoutPromise = new Promise((_, reject) => {
+            timeoutId = setTimeout(() => {
+              reject(new Error("Query timed out after 10 seconds"));
+            }, 10000);
+          });
+
+          result = (await Promise.race([queryPromise, timeoutPromise])) as any;
+        } else if (sourceToRun.type === "edge_function") {
+          console.log("Edge function execution path", sourceToRun);
+          // Edge Function Execution Path
+          // We pass current form values (params) as args
+          // Resolve current params
+          const activeParams = currentTab.specItem
+            ? resolveActiveItem(currentTab.specItem, currentTab.viewStack)
+                .params
+            : {};
+
+          // Also include form values from the tab state
+          const formValues = currentTab.formValues || {};
+          let args = { ...activeParams, ...formValues };
+
+          // Create a combined map of all parameters for interpolation
+          // We prioritize formValues over activeParams for shared keys
+          const interpolationParams: Record<string, string> = {};
+          for (const [k, v] of Object.entries(args)) {
+            interpolationParams[k] = String(v ?? "");
+          }
+
+          // Use name property if available (legacy fallback removed)
+          let functionName = interpolateTemplate(
+            sourceToRun.name || "",
+            interpolationParams,
+          );
+
+          // Attempt to parse as JSON configuration (User Requested)
+          // Format: { "method": "name", "body": { ... } }
+          const trimmedValue = sourceToRun.value.trim();
+
+          if (trimmedValue.startsWith("{")) {
+            try {
+              // Interpolate param values into the JSON string template
+              const interpolated = interpolateTemplate(
+                trimmedValue,
+                interpolationParams,
+              );
+              const config = JSON.parse(interpolated);
+
+              console.log("config", config);
+
+              if (config) {
+                // Merge body with existing args/formValues
+                args = { ...args, ...config };
+              }
+            } catch (e: any) {
+              throw new Error(`Invalid Edge Function JSON: ${e.message}`);
+            }
+          }
+
+          result = await api.runEdgeFunction(projectId, functionName, args);
         }
 
-        // Run the (possibly converted) query with a timeout
-        const queryPromise = api.runQuery(projectId, queryToRun, false);
-        const timeoutPromise = new Promise((_, reject) => {
-          timeoutId = setTimeout(() => {
-            reject(new Error("Query timed out after 10 seconds"));
-          }, 10000); // 30 second timeout
-        });
+        // Normalize Edge Function result to array if it's a single object
+        if (
+          sourceToRun.type === "edge_function" &&
+          result &&
+          !Array.isArray(result) &&
+          typeof result === "object"
+        ) {
+          result = [result];
+        }
 
-        const result = (await Promise.race([
-          queryPromise,
-          timeoutPromise,
-        ])) as any;
-
+        // Process Result (Common for both SQL and Edge Functions)
         if (Array.isArray(result) && result.length > 0) {
           const resultCols = Object.keys(result[0]);
 
-          // Parse query structure
-          const tables = parseTables(queryToRun);
-          const hasNonEditable = hasNonEditableConstructs(queryToRun);
-          const columns = parseColumns(queryToRun, resultCols, tables);
+          let tables: any[] = [];
+          let columns: any[] = [];
+          let hasNonEditable = true; // Default to non-editable for edge functions or unknown sources
 
-          // Find primary keys for each table
-          findPrimaryKeys(columns, tables);
+          if (sourceToRun.type === "sql") {
+            // Parse query structure for SQL
+            tables = parseTables(sourceToRun.value);
+            hasNonEditable = hasNonEditableConstructs(sourceToRun.value);
+            columns = parseColumns(sourceToRun.value, resultCols, tables);
+            findPrimaryKeys(columns, tables);
+          } else {
+            // For Edge Functions, we can create simple column info
+            // Potentially we can infer editability if the edge function returns metadata, but for now strict read-only
+            columns = resultCols.map((col) => ({
+              resultName: col,
+              tableName: null,
+              fieldName: col,
+              isComputed: false,
+              isPrimaryKey: false,
+            }));
+            // Edge functions are not directly editable via table cell edits (yet)
+            hasNonEditable = true;
+          }
 
           // Determine if query is editable
           const isEditable =
@@ -575,6 +691,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
             (row: Record<string, unknown>) =>
               columns.map((colInfo) => {
                 const value = row[colInfo.resultName];
+                // For SQL we check table/PK. For Edge Function (tableName=null) it's always readonly
                 const table = tables.find((t) => t.name === colInfo.tableName);
                 const hasTablePk = table?.primaryKeyColumn !== null;
 
@@ -599,9 +716,13 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
             error: null,
           };
 
-          if (currentTab?.name === "Untitled" && queryIndex === undefined) {
-            // Only auto-rename on main query
-            const primaryTable = extractPrimaryTableName(queryToRun);
+          if (
+            currentTab?.name === "Untitled" &&
+            queryIndex === undefined &&
+            sourceToRun.type === "sql"
+          ) {
+            // Only auto-rename on main query if SQL
+            const primaryTable = extractPrimaryTableName(sourceToRun.value);
             if (primaryTable) {
               tabUpdates.name = primaryTable;
             }
@@ -646,7 +767,16 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
         setIsProcessingWithAI(false);
       }
     },
-    [sql, projectId, activeTabId, currentTab?.name, currentTab?.queryStates],
+    [
+      sql,
+      projectId,
+      activeTabId,
+      currentTab?.name,
+      currentTab?.queryStates,
+      currentTab?.specItem,
+      currentTab?.viewStack,
+      currentTab?.formValues,
+    ],
   );
 
   // Auto-run query when a table tab is activated and hasn't been run yet
@@ -663,8 +793,16 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
         // Run all queries that haven't been run or need update
         // We run them sequentially (or in parallel now!)
         currentTab.queryStates.forEach((qs, idx) => {
-          // Check if results are empty and not currently loading
-          if (qs.results.length === 0 && !qs.error && !loadingQueries[idx]) {
+          const runKey = `${currentTab.id}:${idx}`;
+          // Check if results are empty and not currently loading, and hasn't been auto-run yet
+          // We use a ref (tracked externally or locally) - let's use a local Set in component
+          if (
+            qs.results.length === 0 &&
+            !qs.error &&
+            !loadingQueries[idx] &&
+            !autoRunCache.current.has(runKey)
+          ) {
+            autoRunCache.current.add(runKey);
             runQuery(undefined, idx);
           }
         });
@@ -983,10 +1121,18 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
                       onFixQuery={(queryIndex, errorMsg) => {
                         // Fix query for specific index
                         const queryState = currentTab.queryStates?.[queryIndex];
-                        if (!queryState?.sql.trim()) return;
+                        if (
+                          !queryState?.source?.value.trim() ||
+                          queryState.source.type !== "sql"
+                        )
+                          return;
                         setIsProcessingWithAI(true);
                         api
-                          .convertWithAi(projectId, queryState.sql, errorMsg)
+                          .convertWithAi(
+                            projectId,
+                            queryState.source.value,
+                            errorMsg,
+                          )
                           .then((convertedSql) => {
                             setTabs((prev) =>
                               prev.map((t) => {
@@ -995,7 +1141,10 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
                                 const newStates = [...t.queryStates];
                                 newStates[queryIndex] = {
                                   ...newStates[queryIndex],
-                                  sql: convertedSql,
+                                  source: {
+                                    ...newStates[queryIndex].source,
+                                    value: convertedSql,
+                                  },
                                   error: null,
                                 };
                                 return { ...t, queryStates: newStates };
@@ -1057,7 +1206,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
                             // Use the ACTIVE item's queries as template
                             const rawQueries = activeItem.queries || [];
 
-                            // We only want to update SQL/loadQuery, preserving other state like results
+                            // We only want to update Source/Loader, preserving other state like results
                             const updatedStates = t.queryStates!.map(
                               (existingQs, qIdx) => {
                                 const rawQ = rawQueries[qIdx];
@@ -1065,15 +1214,25 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
 
                                 return {
                                   ...existingQs,
-                                  sql: interpolateTemplate(
-                                    rawQ.sql,
-                                    mergedParams,
-                                  ),
-                                  loadQuery: rawQ.loadQuery
-                                    ? interpolateTemplate(
-                                        rawQ.loadQuery,
-                                        mergedParams,
-                                      )
+
+                                  source: {
+                                    type: rawQ.source?.type || "sql",
+                                    name: rawQ.source?.name,
+                                    value: interpolateTemplate(
+                                      rawQ.source?.value ||
+                                        (rawQ as any).sql ||
+                                        "",
+                                      mergedParams,
+                                    ),
+                                  },
+                                  loader: rawQ.loader
+                                    ? {
+                                        type: rawQ.loader.type,
+                                        value: interpolateTemplate(
+                                          rawQ.loader.value,
+                                          mergedParams,
+                                        ),
+                                      }
                                     : undefined,
                                 };
                               },
@@ -1111,9 +1270,17 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
                             if (t.id !== activeTabId || !t.queryStates)
                               return t;
                             const newStates = [...t.queryStates];
+                            // Update the source value
+                            const currentSource = newStates[index].source || {
+                              type: "sql",
+                              value: "",
+                            };
                             newStates[index] = {
                               ...newStates[index],
-                              sql: newSql,
+                              source: {
+                                ...currentSource,
+                                value: newSql,
+                              },
                             };
                             return { ...t, queryStates: newStates };
                           }),
@@ -1212,7 +1379,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
                               return t;
 
                             const newQueryState: QueryState = {
-                              sql: "",
+                              source: { type: "sql", value: "" },
                               results: [],
                               originalResults: [],
                               displayColumns: [],

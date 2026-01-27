@@ -2,10 +2,11 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
-use crate::models::{LogEntry, LogSource, Project, RemoteProject};
+use crate::models::{LogEntry, LogSource, Project, RemoteProject, ProjectKeys};
 use crate::state::AppState;
 use crate::supabase_api::Organization;
 use crate::sync;
+
 
 #[tauri::command]
 pub async fn list_remote_projects(
@@ -469,4 +470,40 @@ pub async fn link_supabase_project(
     app_handle.emit("log", &log).ok();
 
     Ok(result)
+}
+
+#[tauri::command]
+pub async fn get_project_keys(app_handle: AppHandle, project_id: String) -> Result<ProjectKeys, String> {
+    let state = app_handle.state::<Arc<AppState>>();
+    let uuid = Uuid::parse_str(&project_id).map_err(|e| e.to_string())?;
+
+    let project = state.get_project(uuid).await.map_err(|e| e.to_string())?;
+
+    // Must be linked to a remote project
+    let project_ref = project.supabase_project_ref
+        .ok_or("Project is not linked to a Supabase project".to_string())?;
+
+    let api = state.get_api_client().await.map_err(|e| e.to_string())?;
+    
+    // Use cached keys if possible? No, for now fetch fresh to ensure validity
+    // or maybe we should cache them in project struct?
+    // Requirement says "retrieve API keys via management api".
+    // Let's fetch them fresh.
+    
+    let keys = api.get_api_keys(&project_ref).await.map_err(|e| e.to_string())?;
+
+    let anon_key = keys.iter()
+        .find(|k| k.key_type == "publishable" || k.name == "anon")
+        .map(|k| k.api_key.clone())
+        .ok_or("No anon/publishable key found".to_string())?;
+
+    let service_role_key = keys.iter()
+        .find(|k| k.key_type == "secret" || k.name == "service_role")
+        .map(|k| k.api_key.clone())
+        .ok_or("No service_role key found".to_string())?;
+
+    Ok(ProjectKeys {
+        anon_key,
+        service_role_key,
+    })
 }

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { LogEntry, Project, RemoteProject } from "./types";
+import type { LogEntry, Project, ProjectKeys, RemoteProject } from "./types";
 
 // Access Token API
 export async function setAccessToken(token: string): Promise<void> {
@@ -79,6 +79,10 @@ export async function deleteProject(id: string): Promise<void> {
   return invoke("delete_project", { id });
 }
 
+export async function getProjectKeys(projectId: string): Promise<ProjectKeys> {
+  return invoke("get_project_keys", { projectId });
+}
+
 export async function revealInFinder(path: string): Promise<void> {
   return invoke("reveal_in_finder", { path });
 }
@@ -142,6 +146,51 @@ export async function convertWithAi(
     input,
     errorMessage,
   });
+}
+
+export async function runEdgeFunction(
+  projectId: string,
+  functionName: string,
+  args: Record<string, unknown>,
+): Promise<unknown> {
+  console.log("args:", args);
+  // Get project ref to construct URL
+  const project = await getProject(projectId);
+  if (!project.supabase_project_ref) {
+    throw new Error("Project is not linked to a Supabase project");
+  }
+
+  // Get anon key
+  const keys = await getProjectKeys(projectId);
+
+  const url = `https://${project.supabase_project_ref}.supabase.co/functions/v1/${functionName}`;
+
+  const { method = "POST", ...bodyArgs } = args;
+
+  console.log("runEdgeFunction", url, method, bodyArgs, keys.anon_key);
+
+  const response = await fetch(url, {
+    method: method as string,
+    headers: {
+      Authorization: `Bearer ${keys.anon_key}`,
+      "Content-Type": "application/json",
+    },
+    body:
+      method === "GET" || method === "HEAD"
+        ? undefined
+        : JSON.stringify(bodyArgs),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Edge Function failed: ${response.status} ${text}`);
+  }
+
+  const results = await response.json();
+
+  console.log("response", results);
+
+  return results;
 }
 
 export async function deployEdgeFunction(

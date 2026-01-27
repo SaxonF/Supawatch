@@ -1,5 +1,11 @@
 // Spec-driven sidebar types
 
+export interface DataSource {
+  type: "sql" | "edge_function";
+  value: string;
+  name?: string; // Optional name for edge functions (separating identifier from body/config)
+}
+
 export interface SidebarSpec {
   groups: Group[];
 }
@@ -11,7 +17,8 @@ export interface Group {
 
   // How items are populated (choose one)
   items?: Item[]; // Manual items
-  itemsQuery?: string; // Dynamic: SQL to get items
+  itemsSource?: DataSource; // Dynamic: Source to get items
+  itemsQuery?: string; // DEPRECATED: Use itemsSource
   itemTemplate?: Item; // Template for dynamic items (uses :column params)
   itemsFromState?: "tabs"; // From runtime state
 
@@ -26,7 +33,7 @@ export interface Item {
 
   // Unified queries support
   queries?: {
-    sql: string;
+    source: DataSource; // Main execution source
 
     // Results configuration
     results?: "table" | "chart" | null; // Default 'table'
@@ -34,7 +41,7 @@ export interface Item {
 
     // Input configuration
     parameters?: FormField[]; // Example: if present, show form
-    loadQuery?: string; // Query to pre-fill parameters/form values
+    loader?: DataSource; // Source to pre-fill parameters/form values
 
     // Actions & Navigation
     rowActions?: RowAction[];
@@ -75,7 +82,7 @@ export interface FormField {
   required?: boolean;
   defaultValue?: string | number | boolean;
   placeholder?: string;
-  options?: SelectOption[];
+  options?: (SelectOption | string)[];
   optionsQuery?: string;
 }
 

@@ -1,4 +1,4 @@
-import type { ChartSpec, Item, ViewState } from "@/specs/types";
+import type { ChartSpec, DataSource, Item, ViewState } from "@/specs/types";
 import { type CellBase, type Matrix } from "react-spreadsheet";
 
 export interface CellData extends CellBase {
@@ -47,7 +47,7 @@ export interface TableRef {
 }
 
 export interface QueryState {
-  sql: string;
+  source: DataSource;
   results: SpreadsheetData;
   originalResults: SpreadsheetData;
   displayColumns: string[];
@@ -59,7 +59,7 @@ export interface QueryState {
   rowActions?: any[];
   resultsConfig?: "table" | "chart" | null;
   parameters?: any[]; // FormField[]
-  loadQuery?: string;
+  loader?: DataSource;
   returnToParent?: boolean;
 }
 
@@ -68,7 +68,8 @@ export interface Tab {
   name: string;
 
   // Single query state (legacy/simple)
-  sql: string;
+  sql: string; // Keeping for now as UI state catch-all, but might need update
+
   results: SpreadsheetData;
   originalResults: SpreadsheetData;
   displayColumns: string[];

@@ -1,4 +1,4 @@
-import { ColumnInfo, QueryState, Tab, TableInfo } from "./types";
+import { ColumnInfo, DataSource, QueryState, Tab, TableInfo } from "./types";
 
 // Schema exclusion list matching backend introspection
 export const EXCLUDED_SCHEMAS = [
@@ -55,7 +55,7 @@ export function createNewTab(): Tab {
     isTableTab: false,
     queryStates: [
       {
-        sql: "SELECT * FROM ",
+        source: { type: "sql", value: "SELECT * FROM " },
         results: [],
         originalResults: [],
         displayColumns: [],
@@ -87,14 +87,14 @@ export function createSpecTab(
   item: {
     id: string;
     name: string;
-    sql?: string;
+    // sql DEPRECATED in favor of queries
     queries?: {
-      sql: string;
+      source: DataSource;
       chart?: any;
       rowActions?: any[];
       results?: any;
       parameters?: any[];
-      loadQuery?: string;
+      loader?: DataSource;
       returnToParent?: boolean;
     }[];
   },
@@ -141,34 +141,58 @@ export function createSpecTab(
 
 export function generateQueryStates(
   queries: {
-    sql: string;
+    source: DataSource;
     chart?: any;
     rowActions?: any[];
     results?: any;
     parameters?: any[];
-    loadQuery?: string;
+    loader?: DataSource;
     returnToParent?: boolean;
   }[],
   params: Record<string, string>,
 ): QueryState[] {
-  return queries.map((q) => ({
-    sql: interpolateTemplate(q.sql, params),
-    results: [],
-    originalResults: [],
-    displayColumns: [],
-    queryMetadata: null,
-    error: null,
-    chart: q.chart,
-    rowActions: q.rowActions,
+  return queries.map((q) => {
+    // Interpolate source value
+    // Handle legacy 'sql' property for backward compatibility or safety
+    const rawSource =
+      q.source ||
+      ((q as any).sql ? { type: "sql", value: (q as any).sql } : null);
 
-    // Unified config
-    resultsConfig: q.results,
-    parameters: q.parameters,
-    loadQuery: q.loadQuery
-      ? interpolateTemplate(q.loadQuery, params)
-      : undefined,
-    returnToParent: q.returnToParent,
-  }));
+    // Safely handle missing source
+    const source: DataSource = rawSource
+      ? {
+          type: rawSource.type,
+          name: rawSource.name,
+          value: interpolateTemplate(rawSource.value, params),
+        }
+      : { type: "sql", value: "" };
+
+    // Interpolate loader value if present
+    const loader: DataSource | undefined = q.loader
+      ? {
+          type: q.loader.type,
+          name: q.loader.name,
+          value: interpolateTemplate(q.loader.value, params),
+        }
+      : undefined;
+
+    return {
+      source,
+      results: [],
+      originalResults: [],
+      displayColumns: [],
+      queryMetadata: null,
+      error: null,
+      chart: q.chart,
+      rowActions: q.rowActions,
+
+      // Unified config
+      resultsConfig: q.results,
+      parameters: q.parameters,
+      loader,
+      returnToParent: q.returnToParent,
+    };
+  });
 }
 
 // Extract table name, handling quoted identifiers and schema.table format
@@ -511,7 +535,32 @@ export function persistTabs(projectId: string, tabs: Tab[]) {
 export function loadPersistedTabs(projectId: string): Tab[] | null {
   try {
     const json = localStorage.getItem(`supawatch:tabs:${projectId}`);
-    return json ? JSON.parse(json) : null;
+    if (!json) return null;
+
+    const tabs = JSON.parse(json) as Tab[];
+
+    // VALIDATION: Ensure all queryStates have the new 'source' property.
+    // If any tab has legacy state (missing source) OR outdated edge_function without name, we clear storage.
+    const isValid = tabs.every(
+      (tab) =>
+        !tab.queryStates ||
+        tab.queryStates.every(
+          (qs: any) =>
+            qs.source &&
+            (qs.source.type !== "edge_function" || !!qs.source.name),
+        ),
+    );
+
+    if (!isValid) {
+      console.warn(
+        "Detected legacy storage state (missing source or edge_function name). Clearing to start fresh.",
+      );
+      localStorage.removeItem(`supawatch:tabs:${projectId}`);
+      localStorage.removeItem(`supawatch:activeTab:${projectId}`);
+      return null;
+    }
+
+    return tabs;
   } catch (e) {
     console.error("Failed to load persisted tabs:", e);
     return null;
