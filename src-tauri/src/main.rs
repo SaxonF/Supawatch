@@ -19,12 +19,33 @@ mod watcher;
 use std::sync::Arc;
 
 use state::AppState;
-use tauri::Manager;
+use tauri::{
+    menu::{Menu, MenuItemBuilder, SubmenuBuilder},
+    Emitter, Manager,
+};
 
 fn main() {
     let app_state = Arc::new(AppState::new());
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    // Single instance plugin (desktop only) - must be registered first
+    // This ensures deep links are forwarded to the existing instance
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // When a new instance is opened with arguments (including deep links),
+            // the deep-link plugin handles forwarding the URL to on_open_url
+            println!("New app instance opened with args: {:?}", argv);
+
+            // Focus the main window
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_focus();
+            }
+        }));
+    }
+
+    builder
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             // Init commands
@@ -91,11 +112,76 @@ fn main() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
             let app_handle = app.app_handle();
 
+            // Create application menu
+            let import_template = MenuItemBuilder::new("Import Template...")
+                .id("import-template")
+                .accelerator("CmdOrCtrl+Shift+I")
+                .build(app)?;
+
+            let file_menu = SubmenuBuilder::new(app, "File")
+                .item(&import_template)
+                .separator()
+                .close_window()
+                .build()?;
+
+            let edit_menu = SubmenuBuilder::new(app, "Edit")
+                .undo()
+                .redo()
+                .separator()
+                .cut()
+                .copy()
+                .paste()
+                .select_all()
+                .build()?;
+
+            let menu = Menu::with_items(app, &[&file_menu, &edit_menu])?;
+
+            app.set_menu(menu)?;
+
+            // Handle menu events
+            app.on_menu_event(move |app_handle, event| {
+                if event.id().as_ref() == "import-template" {
+                    let _ = app_handle.emit("menu-import-template", ());
+                }
+            });
+
             // Create tray icon for sync status indicator
             tray::create(app_handle)?;
+
+            // Register deep link scheme at runtime for development (Linux/Windows)
+            #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                if let Err(e) = app.deep_link().register_all() {
+                    eprintln!("Failed to register deep link schemes: {}", e);
+                }
+            }
+
+            // Handle deep link URLs - emit to frontend for processing
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let handle = app_handle.clone();
+
+                // Check if app was started via deep link
+                if let Ok(Some(urls)) = app.deep_link().get_current() {
+                    for url in urls {
+                        println!("App started with deep link: {}", url);
+                        let _ = handle.emit("deep-link-received", url.to_string());
+                    }
+                }
+
+                // Listen for deep links while app is running
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        println!("Deep link received: {}", url);
+                        let _ = handle.emit("deep-link-received", url.to_string());
+                    }
+                });
+            }
 
             // Restart watchers for projects that were being watched
             let app_handle_clone = app_handle.clone();

@@ -52,6 +52,10 @@ eszip = "0.106.0"
 futures = "0.3.31"
 async-recursion = "1.1.1"
 tauri-plugin-store = "2"
+tauri-plugin-deep-link = "2"
+
+[target."cfg(any(target_os = \"macos\", windows, target_os = \"linux\"))".dependencies]
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem

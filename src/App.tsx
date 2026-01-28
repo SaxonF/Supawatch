@@ -1,11 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask, message } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useState } from "react";
 
 import * as api from "./api";
 import { CreateProjectForm } from "./components/CreateProjectForm";
 import { DiffSidebar } from "./components/DiffSidebar";
+import { ImportTemplateDialog } from "./components/ImportTemplateDialog";
 import { ProjectHeader } from "./components/ProjectHeader";
 import { ProjectLogs } from "./components/ProjectLogs";
 import { PullSidebar } from "./components/PullSidebar";
@@ -13,59 +14,10 @@ import { SeedSidebar } from "./components/SeedSidebar";
 import { Settings } from "./components/Settings";
 import { Sidebar } from "./components/Sidebar";
 import { SqlEditor } from "./components/SqlEditor";
-import type { Group, Item } from "./specs/types";
 import type { FileChange, Project } from "./types";
+import { parseDeepLinkUrl } from "./utils/deeplink";
 
 import "./App.css";
-
-/**
- * Parse and handle deeplink URLs for adding items/groups to admin.json
- * URL format:
- *   supawatch://add-item?projectId=xxx&groupId=admin&item={...encoded JSON...}
- *   supawatch://add-group?projectId=xxx&group={...encoded JSON...}
- */
-async function handleDeeplink(url: string): Promise<void> {
-  try {
-    const parsed = new URL(url);
-    const action = parsed.hostname; // e.g., "add-item" or "add-group"
-    const params = parsed.searchParams;
-
-    const projectId = params.get("projectId");
-    if (!projectId) {
-      console.error("Deeplink missing projectId");
-      return;
-    }
-
-    if (action === "add-item") {
-      const groupId = params.get("groupId");
-      const itemJson = params.get("item");
-
-      if (!groupId || !itemJson) {
-        console.error("Deeplink add-item missing groupId or item");
-        return;
-      }
-
-      const item: Item = JSON.parse(decodeURIComponent(itemJson));
-      await api.addSidebarItem(projectId, groupId, item);
-      console.log("Added sidebar item via deeplink:", item.id);
-    } else if (action === "add-group") {
-      const groupJson = params.get("group");
-
-      if (!groupJson) {
-        console.error("Deeplink add-group missing group");
-        return;
-      }
-
-      const group: Group = JSON.parse(decodeURIComponent(groupJson));
-      await api.addSidebarGroup(projectId, group);
-      console.log("Added sidebar group via deeplink:", group.id);
-    } else {
-      console.log("Unknown deeplink action:", action);
-    }
-  } catch (err) {
-    console.error("Failed to handle deeplink:", err);
-  }
-}
 
 function App() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -80,6 +32,10 @@ function App() {
   const [showSeedSidebar, setShowSeedSidebar] = useState(false);
   const [showPullSidebar, setShowPullSidebar] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  // Import template dialog state
+  const [showImportDialog, setShowImportDialog] = useState(false);
+  const [importDialogUrl, setImportDialogUrl] = useState("");
 
   const selectedProject =
     projects.find((p) => p.id === selectedProjectId) || null;
@@ -128,8 +84,25 @@ function App() {
     setShowPullSidebar(!showPullSidebar);
   };
 
+  // Handle deep link by opening import dialog with URL pre-filled
+  const handleDeepLink = useCallback((url: string) => {
+    console.log("Processing deep link:", url);
+
+    const parsed = parseDeepLinkUrl(url);
+    if (!parsed) {
+      message("Invalid deep link format. Expected: supawatch://import?url=...", {
+        title: "Deep Link Error",
+        kind: "error",
+      });
+      return;
+    }
+
+    // Open the import dialog with the URL pre-filled
+    setImportDialogUrl(parsed.templateUrl);
+    setShowImportDialog(true);
+  }, []);
+
   useEffect(() => {
-    // ... same ...
     const initialize = async () => {
       invoke("init");
 
@@ -154,7 +127,6 @@ function App() {
       project_id: string;
       summary: string;
     }>("schema-push-confirmation-needed", async (event) => {
-      // ... same ...
       const confirmed = await ask(
         `Destructive changes detected during auto-push!\n\n${event.payload.summary}\n\nDo you want to force push these changes?`,
         {
@@ -171,7 +143,7 @@ function App() {
           console.log("Forced push successful");
         } catch (err) {
           console.error("Failed to push project (forced):", err);
-          await ask(`Failed to push project: ${err}`, {
+          await message(`Failed to push project: ${err}`, {
             title: "Push Failed",
             kind: "error",
           });
@@ -179,17 +151,24 @@ function App() {
       }
     });
 
-    // Listen for deeplink events (for adding items/groups to admin.json)
-    // This will be triggered when the app is opened via a supawatch:// URL
-    const unlistenDeeplink = listen<{ url: string }>("deeplink", (event) => {
-      console.log("Deeplink received:", event.payload.url);
-      handleDeeplink(event.payload.url);
+    // Listen for deep link events from Rust backend
+    // This is triggered when the app is opened via a supawatch:// URL
+    const unlistenDeeplink = listen<string>("deep-link-received", (event) => {
+      console.log("Deep link received:", event.payload);
+      handleDeepLink(event.payload);
+    });
+
+    // Listen for menu events
+    const unlistenMenuImport = listen("menu-import-template", () => {
+      setImportDialogUrl("");
+      setShowImportDialog(true);
     });
 
     return () => {
       unlistenFileChange.then((fn) => fn());
       unlistenConfirmation.then((fn) => fn());
       unlistenDeeplink.then((fn) => fn());
+      unlistenMenuImport.then((fn) => fn());
     };
   }, []);
 
@@ -374,6 +353,15 @@ function App() {
             </div>
           </div>
         )}
+
+        {/* Import Template Dialog */}
+        <ImportTemplateDialog
+          open={showImportDialog}
+          onOpenChange={setShowImportDialog}
+          initialUrl={importDialogUrl}
+          projects={projects}
+          selectedProjectId={selectedProjectId}
+        />
       </div>
     </div>
   );

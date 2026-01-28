@@ -23,6 +23,7 @@
     "shell:allow-spawn",
     "shell:allow-execute",
     "shell:allow-open",
-    "store:default"
+    "store:default",
+    "deep-link:default"
   ]
 }

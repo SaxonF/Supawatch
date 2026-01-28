@@ -20,7 +20,13 @@
   "productName": "Supawatch",
   "version": "0.1.0",
   "identifier": "com.supawatch.app",
-  "plugins": {},
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["supawatch"]
+      }
+    }
+  },
   "app": {
     "windows": [
       {

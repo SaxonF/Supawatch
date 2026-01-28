@@ -136,7 +136,7 @@ export function Sidebar({
         )}
       </div>
 
-      {/* Add Project Button */}
+      {/* Footer Actions */}
       <div className="shrink-0 p-3 border-t border-sidebar-border">
         <Button
           variant="outline"
