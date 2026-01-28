@@ -130,6 +130,7 @@ pub enum FileChangeType {
     Schema,
     EdgeFunction,
     Migration,
+    AdminConfig,
     Other,
 }
 

@@ -365,6 +365,293 @@
               "results": "table"
             }
           ]
+        },
+        {
+          "id": "functions",
+          "name": "Functions",
+          "icon": "function-square",
+          "visible": true,
+          "autoRun": true,
+          "queries": [
+            {
+              "source": {
+                "type": "sql",
+                "value": "SELECT p.proname AS name, n.nspname AS schema, pg_get_function_result(p.oid) AS return_type, pg_get_function_arguments(p.oid) AS arguments, CASE p.prokind WHEN 'f' THEN 'function' WHEN 'p' THEN 'procedure' WHEN 'a' THEN 'aggregate' WHEN 'w' THEN 'window' END AS kind FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = ':schema' ORDER BY p.proname"
+              },
+              "results": "table",
+              "parameters": [
+                {
+                  "name": "schema",
+                  "label": "Schema",
+                  "type": "text",
+                  "required": true,
+                  "default": "public"
+                }
+              ],
+              "rowActions": [
+                {
+                  "label": "View",
+                  "itemId": "view",
+                  "params": { "name": "name", "schema": "schema" }
+                },
+                {
+                  "label": "Delete",
+                  "itemId": "delete",
+                  "params": { "name": "name", "schema": "schema", "arguments": "arguments" },
+                  "variant": "destructive"
+                }
+              ]
+            }
+          ],
+          "primaryAction": {
+            "label": "Create Function",
+            "itemId": "create"
+          },
+          "children": [
+            {
+              "id": "create",
+              "name": "Create Function",
+              "visible": false,
+              "queries": [
+                {
+                  "source": {
+                    "type": "sql",
+                    "value": "CREATE OR REPLACE FUNCTION \":schema\".\":name\"(:arguments) RETURNS :return_type LANGUAGE :language SECURITY :security AS $$ :body $$"
+                  },
+                  "returnToParent": true,
+                  "results": null,
+                  "parameters": [
+                    {
+                      "name": "schema",
+                      "label": "Schema",
+                      "type": "text",
+                      "required": true,
+                      "default": "public"
+                    },
+                    {
+                      "name": "name",
+                      "label": "Function Name",
+                      "type": "text",
+                      "required": true,
+                      "placeholder": "my_function"
+                    },
+                    {
+                      "name": "arguments",
+                      "label": "Arguments",
+                      "type": "text",
+                      "required": false,
+                      "placeholder": "arg1 text, arg2 integer"
+                    },
+                    {
+                      "name": "return_type",
+                      "label": "Return Type",
+                      "type": "select",
+                      "required": true,
+                      "default": "void",
+                      "options": [
+                        { "value": "void", "label": "void" },
+                        { "value": "text", "label": "text" },
+                        { "value": "integer", "label": "integer" },
+                        { "value": "bigint", "label": "bigint" },
+                        { "value": "boolean", "label": "boolean" },
+                        { "value": "json", "label": "json" },
+                        { "value": "jsonb", "label": "jsonb" },
+                        { "value": "uuid", "label": "uuid" },
+                        { "value": "timestamp", "label": "timestamp" },
+                        { "value": "timestamptz", "label": "timestamptz" },
+                        { "value": "trigger", "label": "trigger" },
+                        { "value": "record", "label": "record" },
+                        { "value": "SETOF record", "label": "SETOF record" }
+                      ]
+                    },
+                    {
+                      "name": "language",
+                      "label": "Language",
+                      "type": "select",
+                      "required": true,
+                      "default": "plpgsql",
+                      "options": [
+                        { "value": "plpgsql", "label": "PL/pgSQL" },
+                        { "value": "sql", "label": "SQL" }
+                      ]
+                    },
+                    {
+                      "name": "security",
+                      "label": "Security",
+                      "type": "select",
+                      "required": true,
+                      "default": "INVOKER",
+                      "options": [
+                        { "value": "INVOKER", "label": "Invoker" },
+                        { "value": "DEFINER", "label": "Definer" }
+                      ]
+                    },
+                    {
+                      "name": "body",
+                      "label": "Function Body",
+                      "type": "textarea",
+                      "required": true,
+                      "placeholder": "BEGIN\n  -- Your code here\n  RETURN;\nEND;"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "view",
+              "name": "View Function",
+              "visible": false,
+              "autoRun": true,
+              "queries": [
+                {
+                  "source": {
+                    "type": "sql",
+                    "value": "SELECT p.proname AS name, n.nspname AS schema, pg_get_function_result(p.oid) AS return_type, pg_get_function_arguments(p.oid) AS arguments, CASE p.prokind WHEN 'f' THEN 'function' WHEN 'p' THEN 'procedure' WHEN 'a' THEN 'aggregate' WHEN 'w' THEN 'window' END AS kind, l.lanname AS language, CASE WHEN p.prosecdef THEN 'SECURITY DEFINER' ELSE 'SECURITY INVOKER' END AS security, pg_get_functiondef(p.oid) AS definition FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid JOIN pg_language l ON p.prolang = l.oid WHERE n.nspname = ':schema' AND p.proname = ':name'"
+                  },
+                  "results": "table"
+                }
+              ]
+            },
+            {
+              "id": "delete",
+              "name": "Delete Function",
+              "visible": false,
+              "queries": [
+                {
+                  "source": {
+                    "type": "sql",
+                    "value": "DROP FUNCTION \":schema\".\":name\"(:arguments)"
+                  },
+                  "loader": {
+                    "type": "sql",
+                    "value": "SELECT ':schema' AS schema, ':name' AS name, ':arguments' AS arguments"
+                  },
+                  "returnToParent": true,
+                  "results": null,
+                  "parameters": [
+                    {
+                      "name": "schema",
+                      "label": "Schema",
+                      "type": "text",
+                      "required": true,
+                      "hidden": true
+                    },
+                    {
+                      "name": "name",
+                      "label": "Function Name",
+                      "type": "text",
+                      "required": true,
+                      "hidden": true
+                    },
+                    {
+                      "name": "arguments",
+                      "label": "Arguments",
+                      "type": "text",
+                      "required": true,
+                      "hidden": true
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "triggers",
+          "name": "Triggers",
+          "icon": "zap",
+          "visible": true,
+          "autoRun": true,
+          "queries": [
+            {
+              "source": {
+                "type": "sql",
+                "value": "SELECT t.tgname AS name, n.nspname AS schema, c.relname AS table_name, CASE t.tgtype & 1 WHEN 1 THEN 'ROW' ELSE 'STATEMENT' END AS level, CASE WHEN t.tgtype & 2 > 0 THEN 'BEFORE' WHEN t.tgtype & 64 > 0 THEN 'INSTEAD OF' ELSE 'AFTER' END AS timing, ARRAY_TO_STRING(ARRAY[ CASE WHEN t.tgtype & 4 > 0 THEN 'INSERT' END, CASE WHEN t.tgtype & 8 > 0 THEN 'DELETE' END, CASE WHEN t.tgtype & 16 > 0 THEN 'UPDATE' END, CASE WHEN t.tgtype & 32 > 0 THEN 'TRUNCATE' END ], ' OR ') AS events, p.proname AS function_name, t.tgenabled AS enabled FROM pg_trigger t JOIN pg_class c ON t.tgrelid = c.oid JOIN pg_namespace n ON c.relnamespace = n.oid JOIN pg_proc p ON t.tgfoid = p.oid WHERE NOT t.tgisinternal AND n.nspname = ':schema' ORDER BY t.tgname"
+              },
+              "results": "table",
+              "parameters": [
+                {
+                  "name": "schema",
+                  "label": "Schema",
+                  "type": "text",
+                  "required": true,
+                  "default": "public"
+                }
+              ],
+              "rowActions": [
+                {
+                  "label": "View",
+                  "itemId": "view",
+                  "params": { "name": "name", "schema": "schema", "table_name": "table_name" }
+                },
+                {
+                  "label": "Delete",
+                  "itemId": "delete",
+                  "params": { "name": "name", "schema": "schema", "table_name": "table_name" },
+                  "variant": "destructive"
+                }
+              ]
+            }
+          ],
+          "children": [
+            {
+              "id": "view",
+              "name": "View Trigger",
+              "visible": false,
+              "autoRun": true,
+              "queries": [
+                {
+                  "source": {
+                    "type": "sql",
+                    "value": "SELECT t.tgname AS name, n.nspname AS schema, c.relname AS table_name, CASE t.tgtype & 1 WHEN 1 THEN 'ROW' ELSE 'STATEMENT' END AS level, CASE WHEN t.tgtype & 2 > 0 THEN 'BEFORE' WHEN t.tgtype & 64 > 0 THEN 'INSTEAD OF' ELSE 'AFTER' END AS timing, ARRAY_TO_STRING(ARRAY[ CASE WHEN t.tgtype & 4 > 0 THEN 'INSERT' END, CASE WHEN t.tgtype & 8 > 0 THEN 'DELETE' END, CASE WHEN t.tgtype & 16 > 0 THEN 'UPDATE' END, CASE WHEN t.tgtype & 32 > 0 THEN 'TRUNCATE' END ], ' OR ') AS events, pn.nspname AS function_schema, p.proname AS function_name, CASE t.tgenabled WHEN 'O' THEN 'ENABLED' WHEN 'D' THEN 'DISABLED' WHEN 'R' THEN 'REPLICA' WHEN 'A' THEN 'ALWAYS' END AS status, pg_get_triggerdef(t.oid) AS definition FROM pg_trigger t JOIN pg_class c ON t.tgrelid = c.oid JOIN pg_namespace n ON c.relnamespace = n.oid JOIN pg_proc p ON t.tgfoid = p.oid JOIN pg_namespace pn ON p.pronamespace = pn.oid WHERE NOT t.tgisinternal AND n.nspname = ':schema' AND t.tgname = ':name'"
+                  },
+                  "results": "table"
+                }
+              ]
+            },
+            {
+              "id": "delete",
+              "name": "Delete Trigger",
+              "visible": false,
+              "queries": [
+                {
+                  "source": {
+                    "type": "sql",
+                    "value": "DROP TRIGGER \":name\" ON \":schema\".\":table_name\""
+                  },
+                  "loader": {
+                    "type": "sql",
+                    "value": "SELECT ':schema' AS schema, ':name' AS name, ':table_name' AS table_name"
+                  },
+                  "returnToParent": true,
+                  "results": null,
+                  "parameters": [
+                    {
+                      "name": "schema",
+                      "label": "Schema",
+                      "type": "text",
+                      "required": true,
+                      "hidden": true
+                    },
+                    {
+                      "name": "name",
+                      "label": "Trigger Name",
+                      "type": "text",
+                      "required": true,
+                      "hidden": true
+                    },
+                    {
+                      "name": "table_name",
+                      "label": "Table Name",
+                      "type": "text",
+                      "required": true,
+                      "hidden": true
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
         }
       ]
     },

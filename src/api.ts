@@ -299,3 +299,36 @@ export async function runSeeds(projectId: string): Promise<string> {
 export async function getSeedContent(projectId: string): Promise<string> {
   return invoke("get_seed_content", { projectId });
 }
+
+// Admin Config API
+export async function hasAdminConfig(projectId: string): Promise<boolean> {
+  return invoke("has_admin_config", { projectId });
+}
+
+export async function getSidebarSpec(
+  projectId: string,
+): Promise<import("./specs/types").SidebarSpec> {
+  return invoke("get_sidebar_spec", { projectId });
+}
+
+export async function writeSidebarSpec(
+  projectId: string,
+  spec: import("./specs/types").SidebarSpec,
+): Promise<void> {
+  return invoke("write_sidebar_spec", { projectId, spec });
+}
+
+export async function addSidebarItem(
+  projectId: string,
+  groupId: string,
+  item: import("./specs/types").Item,
+): Promise<void> {
+  return invoke("add_sidebar_item", { projectId, groupId, item });
+}
+
+export async function addSidebarGroup(
+  projectId: string,
+  group: import("./specs/types").Group,
+): Promise<void> {
+  return invoke("add_sidebar_group", { projectId, group });
+}

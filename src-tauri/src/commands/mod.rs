@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod app;
 pub mod auth;
 pub mod logs;
@@ -7,6 +8,7 @@ pub mod sync;
 pub mod templates;
 pub mod watcher;
 
+pub use admin::*;
 pub use app::*;
 pub use auth::*;
 pub use logs::*;

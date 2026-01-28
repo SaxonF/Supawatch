@@ -1,7 +1,8 @@
 import { Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../api";
-import { defaultSidebarSpec } from "../specs";
+import { useSidebarSpec } from "../hooks/useSidebarSpec";
+import { DEFAULT_SIDEBAR_SPEC, SidebarSpec } from "../specs";
 import * as store from "../utils/store";
 import { QueryBlock } from "./sql-editor/QueryBlock";
 import { SpecSidebar } from "./sql-editor/SpecSidebar";
@@ -33,15 +34,16 @@ import {
 import { Button } from "./ui/button";
 
 /**
- * Look up the original spec item from defaultSidebarSpec by groupId and itemId.
+ * Look up the original spec item from the sidebar spec by groupId and itemId.
  * This ensures we always get the original SQL templates with proper quoting,
  * rather than using potentially corrupted persisted tab state.
  */
 function getOriginalSpecItem(
+  sidebarSpec: SidebarSpec,
   groupId: string,
   itemId: string,
 ): { id: string; queries?: any[]; children?: any[] } | null {
-  const group = defaultSidebarSpec.groups.find((g) => g.id === groupId);
+  const group = sidebarSpec.groups.find((g) => g.id === groupId);
   if (!group) return null;
 
   // Check static items
@@ -65,6 +67,15 @@ function getOriginalSpecItem(
 }
 
 export function SqlEditor({ projectId }: SqlEditorProps) {
+  // Load sidebar spec from admin.json or use default
+  const {
+    sidebarSpec,
+    hasAdminFile,
+    isLoading: isSpecLoading,
+    saveToFile,
+  } = useSidebarSpec(projectId);
+  const currentSpec = sidebarSpec || DEFAULT_SIDEBAR_SPEC;
+
   const [tabs, setTabs] = useState<Tab[]>([createNewTab()]);
 
   const [activeTabId, setActiveTabId] = useState<string>("");
@@ -932,9 +943,9 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
       prev.map((t) => {
         if (t.id !== activeTabId) return t;
 
-        // Get the ORIGINAL spec item from defaultSidebarSpec
+        // Get the ORIGINAL spec item from the sidebar spec
         const originalRootItem = t.groupId
-          ? getOriginalSpecItem(t.groupId, t.specItem?.id || "")
+          ? getOriginalSpecItem(currentSpec, t.groupId, t.specItem?.id || "")
           : null;
         const rootItem = originalRootItem || t.specItem;
         if (!rootItem) return t;
@@ -969,6 +980,9 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
     <div className="flex h-full overflow-hidden">
       <SpecSidebar
         projectId={projectId}
+        sidebarSpec={currentSpec}
+        hasAdminFile={hasAdminFile}
+        onSaveToFile={saveToFile}
         tabs={tabs}
         activeTabId={activeTabId}
         onTabSelect={setActiveTabId}
@@ -1039,9 +1053,10 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
                             prev.map((t) => {
                               if (t.id !== activeTabId) return t;
 
-                              // Get the ORIGINAL spec item from defaultSidebarSpec
+                              // Get the ORIGINAL spec item from the sidebar spec
                               const originalRootItem = t.groupId
                                 ? getOriginalSpecItem(
+                                    currentSpec,
                                     t.groupId,
                                     t.specItem?.id || "",
                                   )
@@ -1098,7 +1113,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
                       formValues={currentTab.formValues || {}}
                       // Only allow removal if it's a user-creatable group (like scripts)
                       canRemove={(() => {
-                        const group = defaultSidebarSpec.groups.find(
+                        const group = currentSpec.groups.find(
                           (g) => g.id === currentTab.groupId,
                         );
                         return !!(group?.itemsFromState && group.userCreatable);
@@ -1179,10 +1194,11 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
                           prev.map((t) => {
                             if (t.id !== activeTabId) return t;
 
-                            // Get the ORIGINAL spec item from defaultSidebarSpec (not persisted state)
+                            // Get the ORIGINAL spec item from the sidebar spec (not persisted state)
                             // to ensure SQL templates have proper quoting like ':param'
                             const originalRootItem = t.groupId
                               ? getOriginalSpecItem(
+                                  currentSpec,
                                   t.groupId,
                                   t.specItem?.id || "",
                                 )
@@ -1305,9 +1321,10 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
                           prev.map((t) => {
                             if (t.id !== activeTabId) return t;
 
-                            // Get the ORIGINAL spec item from defaultSidebarSpec
+                            // Get the ORIGINAL spec item from the sidebar spec
                             const originalRootItem = t.groupId
                               ? getOriginalSpecItem(
+                                  currentSpec,
                                   t.groupId,
                                   t.specItem?.id || "",
                                 )
@@ -1363,7 +1380,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
 
               {/* Add Query Button for User Creatable Groups */}
               {(() => {
-                const group = defaultSidebarSpec.groups.find(
+                const group = currentSpec.groups.find(
                   (g) => g.id === currentTab.groupId,
                 );
                 return (

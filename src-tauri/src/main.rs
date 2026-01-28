@@ -66,6 +66,12 @@ fn main() {
             // Log commands
             commands::get_logs,
             commands::clear_logs,
+            // Admin config commands
+            commands::has_admin_config,
+            commands::get_sidebar_spec,
+            commands::write_sidebar_spec,
+            commands::add_sidebar_item,
+            commands::add_sidebar_group,
             // Supabase API commands
             commands::run_query,
             commands::deploy_edge_function,

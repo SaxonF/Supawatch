@@ -363,6 +363,28 @@ pub fn find_schema_path(project_local_path: &Path) -> Option<std::path::PathBuf>
     schema_paths.into_iter().find(|p| p.exists())
 }
 
+/// Find the admin config file path, checking multiple standard locations.
+/// Returns the path to admin.json if it exists.
+pub fn find_admin_config_path(project_local_path: &Path) -> Option<std::path::PathBuf> {
+    let config_paths = [
+        project_local_path.join("supabase/admin.json"),
+        project_local_path.join("admin.json"),
+    ];
+
+    config_paths.into_iter().find(|p| p.exists())
+}
+
+/// Get the default path where admin.json should be written.
+/// Prefers supabase/admin.json if the supabase folder exists.
+pub fn get_admin_config_write_path(project_local_path: &Path) -> std::path::PathBuf {
+    let supabase_dir = project_local_path.join("supabase");
+    if supabase_dir.exists() {
+        supabase_dir.join("admin.json")
+    } else {
+        project_local_path.join("admin.json")
+    }
+}
+
 // ============================================================================
 // Schema Operations
 // ============================================================================

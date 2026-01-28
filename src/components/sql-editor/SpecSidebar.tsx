@@ -1,7 +1,14 @@
 import * as api from "@/api";
 import { cn } from "@/lib/utils";
-import { defaultSidebarSpec, Group, Item } from "@/specs";
-import { ChevronDown, ChevronRight, Plus, RefreshCw, X } from "lucide-react";
+import { Group, Item, SidebarSpec } from "@/specs";
+import {
+  ChevronDown,
+  ChevronRight,
+  Plus,
+  RefreshCw,
+  Save,
+  X,
+} from "lucide-react";
 import { DynamicIcon } from "lucide-react/dynamic";
 import { useCallback, useEffect, useState } from "react";
 import * as store from "../../utils/store";
@@ -10,6 +17,9 @@ import { Tab } from "./types";
 
 interface SpecSidebarProps {
   projectId: string;
+  sidebarSpec: SidebarSpec;
+  hasAdminFile: boolean;
+  onSaveToFile: () => Promise<void>;
   tabs: Tab[];
   activeTabId: string;
   onTabSelect: (tabId: string) => void;
@@ -39,6 +49,9 @@ interface DynamicItem {
 
 export function SpecSidebar({
   projectId,
+  sidebarSpec,
+  hasAdminFile,
+  onSaveToFile,
   tabs,
   activeTabId,
   onTabSelect,
@@ -52,6 +65,7 @@ export function SpecSidebar({
   finishEditingTab,
   handleTabKeyDown,
 }: SpecSidebarProps) {
+  const [isSaving, setIsSaving] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
     new Set(),
   );
@@ -165,12 +179,12 @@ export function SpecSidebar({
 
   // Load dynamic items on mount
   useEffect(() => {
-    for (const group of defaultSidebarSpec.groups) {
+    for (const group of sidebarSpec.groups) {
       if (group.itemsSource || group.itemsQuery) {
         fetchDynamicItems(group);
       }
     }
-  }, [fetchDynamicItems, projectId]); // Re-run when project changes
+  }, [fetchDynamicItems, projectId, sidebarSpec]); // Re-run when project or spec changes
 
   // Handle item click - find or create tab
   const handleItemClick = useCallback(
@@ -409,11 +423,38 @@ export function SpecSidebar({
     );
   };
 
+  const handleSaveToFile = async () => {
+    setIsSaving(true);
+    try {
+      await onSaveToFile();
+    } catch (e) {
+      console.error("Failed to save to file:", e);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <div className="w-48 shrink-0 flex flex-col border-r bg">
       <div className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {defaultSidebarSpec.groups.map(renderGroup)}
+        {sidebarSpec.groups.map(renderGroup)}
       </div>
+
+      {/* Save to file button - shown when no admin.json exists */}
+      {!hasAdminFile && (
+        <div className="shrink-0 border-t p-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full text-xs"
+            onClick={handleSaveToFile}
+            disabled={isSaving}
+          >
+            <Save size={12} className="mr-1.5" />
+            {isSaving ? "Saving..." : "Save to admin.json"}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

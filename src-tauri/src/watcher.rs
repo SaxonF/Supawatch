@@ -138,6 +138,14 @@ fn handle_file_event(
                 get_relative_path(&path_str, base_path)
             ),
         )),
+        FileChangeType::AdminConfig => Some(LogEntry::info(
+            Some(project_id),
+            LogSource::System,
+            format!(
+                "Admin config changed: {}",
+                get_relative_path(&path_str, base_path)
+            ),
+        )),
         FileChangeType::Other => None,
     };
 
@@ -181,6 +189,15 @@ fn handle_file_event(
                 eprintln!("Edge function auto-deploy failed: {}", e);
             }
         });
+    }
+
+    // Notify frontend of admin config changes
+    if change_type == FileChangeType::AdminConfig {
+        #[derive(serde::Serialize, Clone)]
+        struct AdminConfigChangedPayload {
+            project_id: Uuid,
+        }
+        app_handle.emit("admin_config_changed", AdminConfigChangedPayload { project_id }).ok();
     }
 }
 
@@ -560,6 +577,11 @@ fn extract_function_slug(relative_path: &str) -> String {
 fn classify_file_change(path: &str, base_path: &str) -> FileChangeType {
     let relative = get_relative_path(path, base_path);
     let relative_lower = relative.to_lowercase();
+
+    // Check for admin config file (supabase/admin.json or admin.json)
+    if relative_lower == "supabase/admin.json" || relative_lower == "admin.json" {
+        return FileChangeType::AdminConfig;
+    }
 
     // Check for schema files (supabase/schema/*.sql, supabase/schemas/*.sql, or schema/*.sql)
     if (relative_lower.contains("/schema") || relative_lower.starts_with("schema"))

@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import * as api from "./api";
 import { CreateProjectForm } from "./components/CreateProjectForm";
@@ -13,9 +13,59 @@ import { SeedSidebar } from "./components/SeedSidebar";
 import { Settings } from "./components/Settings";
 import { Sidebar } from "./components/Sidebar";
 import { SqlEditor } from "./components/SqlEditor";
+import type { Group, Item } from "./specs/types";
 import type { FileChange, Project } from "./types";
 
 import "./App.css";
+
+/**
+ * Parse and handle deeplink URLs for adding items/groups to admin.json
+ * URL format:
+ *   supawatch://add-item?projectId=xxx&groupId=admin&item={...encoded JSON...}
+ *   supawatch://add-group?projectId=xxx&group={...encoded JSON...}
+ */
+async function handleDeeplink(url: string): Promise<void> {
+  try {
+    const parsed = new URL(url);
+    const action = parsed.hostname; // e.g., "add-item" or "add-group"
+    const params = parsed.searchParams;
+
+    const projectId = params.get("projectId");
+    if (!projectId) {
+      console.error("Deeplink missing projectId");
+      return;
+    }
+
+    if (action === "add-item") {
+      const groupId = params.get("groupId");
+      const itemJson = params.get("item");
+
+      if (!groupId || !itemJson) {
+        console.error("Deeplink add-item missing groupId or item");
+        return;
+      }
+
+      const item: Item = JSON.parse(decodeURIComponent(itemJson));
+      await api.addSidebarItem(projectId, groupId, item);
+      console.log("Added sidebar item via deeplink:", item.id);
+    } else if (action === "add-group") {
+      const groupJson = params.get("group");
+
+      if (!groupJson) {
+        console.error("Deeplink add-group missing group");
+        return;
+      }
+
+      const group: Group = JSON.parse(decodeURIComponent(groupJson));
+      await api.addSidebarGroup(projectId, group);
+      console.log("Added sidebar group via deeplink:", group.id);
+    } else {
+      console.log("Unknown deeplink action:", action);
+    }
+  } catch (err) {
+    console.error("Failed to handle deeplink:", err);
+  }
+}
 
 function App() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -129,9 +179,17 @@ function App() {
       }
     });
 
+    // Listen for deeplink events (for adding items/groups to admin.json)
+    // This will be triggered when the app is opened via a supawatch:// URL
+    const unlistenDeeplink = listen<{ url: string }>("deeplink", (event) => {
+      console.log("Deeplink received:", event.payload.url);
+      handleDeeplink(event.payload.url);
+    });
+
     return () => {
       unlistenFileChange.then((fn) => fn());
       unlistenConfirmation.then((fn) => fn());
+      unlistenDeeplink.then((fn) => fn());
     };
   }, []);
 
