@@ -1,6 +1,6 @@
-import { Loader2, Link, AlertCircle, Check, X } from "lucide-react";
-import { useEffect, useState } from "react";
 import { emit } from "@tauri-apps/api/event";
+import { AlertCircle, Check, Link, Loader2, X } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import * as api from "../api";
 import type { Group, Item, SidebarSpec } from "../specs/types";
@@ -139,7 +139,7 @@ export function ImportTemplateDialog({
   const [error, setError] = useState<string | null>(null);
   const [template, setTemplate] = useState<TemplatePayload | null>(null);
   const [targetProjectId, setTargetProjectId] = useState<string>(
-    selectedProjectId || projects[0]?.id || ""
+    selectedProjectId || projects[0]?.id || "",
   );
   const [targetGroupId, setTargetGroupId] = useState<string>("admin");
   const [isImporting, setIsImporting] = useState(false);
@@ -178,7 +178,7 @@ export function ImportTemplateDialog({
 
       if (!response.ok) {
         throw new Error(
-          `Failed to fetch: ${response.status} ${response.statusText}`
+          `Failed to fetch: ${response.status} ${response.statusText}`,
         );
       }
 
@@ -187,7 +187,7 @@ export function ImportTemplateDialog({
 
       if (!detected) {
         throw new Error(
-          "Invalid template format. Expected an Item, Group, or SidebarSpec."
+          "Invalid template format. Expected an Item, Group, or SidebarSpec.",
         );
       }
 
@@ -205,6 +205,50 @@ export function ImportTemplateDialog({
     }
   };
 
+  // Helper for deep merging items
+  const mergeItems = (existingItems: Item[], incomingItems: Item[]): Item[] => {
+    const merged = [...existingItems];
+
+    incomingItems.forEach((incoming) => {
+      const index = merged.findIndex((e) => e.id === incoming.id);
+
+      if (index >= 0) {
+        const existing = merged[index];
+
+        // Merge properties (incoming wins for simple matches)
+        const updated = { ...existing, ...incoming };
+
+        // Deep merge children if both have them
+        if (existing.children && incoming.children) {
+          updated.children = mergeItems(existing.children, incoming.children);
+        } else if (incoming.children) {
+          // If only incoming has children, usage is clear (it overwrites/adds)
+          // But technically ...incoming handled this.
+          // We only need to be careful if existing has children and incoming DOES NOT.
+          // In that case, ...incoming (undefined) won't overwrite existing.children.
+          // Which is likely desired behavior (preserve existing children if template doesn't specify any).
+          updated.children = incoming.children;
+        } else if (existing.children) {
+          updated.children = existing.children;
+        }
+
+        // For queries: if incoming has queries, they replace existing ones (assuming an update).
+        // If incoming omits queries, we keep existing ones.
+        if (incoming.queries) {
+          updated.queries = incoming.queries;
+        } else {
+          updated.queries = existing.queries;
+        }
+
+        merged[index] = updated;
+      } else {
+        merged.push(incoming);
+      }
+    });
+
+    return merged;
+  };
+
   const handleImport = async () => {
     if (!template || !targetProjectId) return;
 
@@ -216,15 +260,40 @@ export function ImportTemplateDialog({
         await api.addSidebarItem(
           targetProjectId,
           targetGroupId,
-          template.data as Item
+          template.data as Item,
         );
       } else if (template.type === "group") {
-        await api.addSidebarGroup(targetProjectId, template.data as Group);
+        const incomingGroup = template.data as Group;
+
+        // Fetch current spec to check for existing group
+        const currentSpec = await api.getSidebarSpec(targetProjectId);
+        const existingGroupIndex = currentSpec.groups.findIndex(
+          (g) => g.id === incomingGroup.id,
+        );
+
+        if (existingGroupIndex >= 0) {
+          const existingGroup = currentSpec.groups[existingGroupIndex];
+          const existingItems = existingGroup.items || [];
+          const incomingItems = incomingGroup.items || [];
+
+          const newItems = mergeItems(existingItems, incomingItems);
+
+          // Update the group, merging items and properties
+          currentSpec.groups[existingGroupIndex] = {
+            ...existingGroup,
+            ...incomingGroup,
+            items: newItems,
+          };
+
+          await api.writeSidebarSpec(targetProjectId, currentSpec);
+        } else {
+          await api.addSidebarGroup(targetProjectId, incomingGroup);
+        }
       } else {
         // For full spec, we replace the entire thing
         await api.writeSidebarSpec(
           targetProjectId,
-          template.data as SidebarSpec
+          template.data as SidebarSpec,
         );
       }
 
@@ -241,7 +310,7 @@ export function ImportTemplateDialog({
     } catch (err) {
       console.error("Failed to import template:", err);
       setError(
-        err instanceof Error ? err.message : "Failed to import template"
+        err instanceof Error ? err.message : "Failed to import template",
       );
     } finally {
       setIsImporting(false);

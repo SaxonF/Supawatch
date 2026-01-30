@@ -1,6 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
 use crate::state::AppState;
