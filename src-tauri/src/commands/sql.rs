@@ -109,7 +109,7 @@ pub async fn convert_with_ai(
         }
     };
 
-    let mut system_prompt = format!(
+    let system_prompt = format!(
         r#"You are a PostgreSQL SQL expert. Convert the user's input into valid PostgreSQL SQL.
 
 Rules:

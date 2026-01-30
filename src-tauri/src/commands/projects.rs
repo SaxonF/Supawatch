@@ -49,7 +49,7 @@ pub async fn create_project(
     generate_typescript: Option<bool>,
     typescript_output_path: Option<String>,
 ) -> Result<Project, String> {
-    let state = app_handle.state::<Arc<AppState>>();
+    let state = app_handle.state::<Arc<AppState>>().inner().clone();
 
     let (project_id, project_ref) = if let Some(refer) = supabase_project_ref {
         // Sync/Link Mode
@@ -177,7 +177,7 @@ pub async fn create_project(
                        &refer,
                        None,
                        std::path::Path::new(&local_path),
-                       state.inner(),
+                       state.as_ref(),
                        &app_handle,
                    )
                    .await;

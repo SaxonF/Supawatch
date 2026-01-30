@@ -124,6 +124,10 @@ pub async fn write_sidebar_spec(
 ) -> Result<(), String> {
     let state = app_handle.state::<Arc<AppState>>();
     let project_id = Uuid::parse_str(&project_id).map_err(|e| e.to_string())?;
+    #[derive(serde::Serialize, Clone)]
+    struct AdminConfigChangedPayload {
+        project_id: Uuid,
+    }
 
     // Get the project to find its local path
     let project = state
@@ -148,6 +152,13 @@ pub async fn write_sidebar_spec(
     tokio::fs::write(&config_path, content)
         .await
         .map_err(|e| format!("Failed to write admin.json: {}", e))?;
+
+    app_handle
+        .emit(
+            "admin_config_changed",
+            AdminConfigChangedPayload { project_id },
+        )
+        .ok();
 
     Ok(())
 }
