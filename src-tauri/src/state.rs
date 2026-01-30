@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use thiserror::Error;
 use tokio::sync::RwLock;
@@ -43,6 +44,9 @@ pub struct AppState {
 
 impl AppState {
     pub fn new() -> Self {
+        const HTTP_TIMEOUT_SECS: u64 = 120;
+        const HTTP_CONNECT_TIMEOUT_SECS: u64 = 15;
+
         let data_dir = Self::get_data_dir();
         let data_path = data_dir.join("data.json");
         let token_path = data_dir.join(TOKEN_FILE_NAME);
@@ -76,13 +80,22 @@ impl AppState {
             println!("[OPENAI] Successfully loaded OpenAI key from file");
         }
 
+        let http_client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
+            .connect_timeout(Duration::from_secs(HTTP_CONNECT_TIMEOUT_SECS))
+            .build()
+            .unwrap_or_else(|e| {
+                eprintln!("[HTTP] Failed to build client with timeouts: {}", e);
+                reqwest::Client::new()
+            });
+
         Self {
             data: RwLock::new(data),
             logs: RwLock::new(Vec::new()),
             watchers: RwLock::new(HashMap::new()),
             openai_key: RwLock::new(openai_key),
             schema_cache: RwLock::new(HashMap::new()),
-            http_client: reqwest::Client::new(),
+            http_client,
             data_path,
             token_path,
             openai_key_path,

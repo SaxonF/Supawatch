@@ -1,6 +1,37 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { LogEntry, Project, ProjectKeys, RemoteProject } from "./types";
 
+const DEFAULT_RUN_QUERY_TIMEOUT_MS = 60_000;
+
+async function invokeWithTimeout<T>(
+  command: string,
+  args: Record<string, unknown>,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const timeoutId = setTimeout(() => {
+      settled = true;
+      reject(new Error(timeoutMessage));
+    }, timeoutMs);
+
+    invoke<T>(command, args)
+      .then((result) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        resolve(result);
+      })
+      .catch((err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        reject(err);
+      });
+  });
+}
+
 // Access Token API
 export async function setAccessToken(token: string): Promise<void> {
   return invoke("set_access_token", { token });
@@ -128,8 +159,14 @@ export async function runQuery(
   projectId: string,
   query: string,
   readOnly?: boolean,
+  timeoutMs: number = DEFAULT_RUN_QUERY_TIMEOUT_MS,
 ): Promise<unknown> {
-  return invoke("run_query", { projectId, query, readOnly });
+  return invokeWithTimeout(
+    "run_query",
+    { projectId, query, readOnly },
+    timeoutMs,
+    `Query timed out after ${Math.ceil(timeoutMs / 1000)} seconds`,
+  );
 }
 
 export async function validateSql(sql: string): Promise<void> {

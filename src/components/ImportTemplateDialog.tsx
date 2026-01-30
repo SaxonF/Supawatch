@@ -1,5 +1,6 @@
 import { Loader2, Link, AlertCircle, Check, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { emit } from "@tauri-apps/api/event";
 
 import * as api from "../api";
 import type { Group, Item, SidebarSpec } from "../specs/types";
@@ -35,46 +36,75 @@ interface ImportTemplateDialogProps {
   selectedProjectId: string | null;
 }
 
+type UnknownRecord = Record<string, unknown>;
+
+const isRecord = (value: unknown): value is UnknownRecord =>
+  typeof value === "object" && value !== null;
+
+const hasString = (record: UnknownRecord, key: string): boolean =>
+  typeof record[key] === "string";
+
+const isSidebarSpec = (value: unknown): value is SidebarSpec =>
+  isRecord(value) && Array.isArray(value.groups);
+
+const isGroup = (value: unknown): value is Group =>
+  isRecord(value) &&
+  hasString(value, "id") &&
+  hasString(value, "name") &&
+  (Array.isArray(value.items) ||
+    isRecord(value.itemsSource) ||
+    typeof value.itemsQuery === "string" ||
+    isRecord(value.itemTemplate) ||
+    value.itemsFromState === "tabs");
+
+const isItem = (value: unknown): value is Item =>
+  isRecord(value) &&
+  hasString(value, "id") &&
+  hasString(value, "name") &&
+  Array.isArray(value.queries);
+
 /**
  * Detect the type of template from the JSON structure
  */
 function detectTemplateType(json: unknown): TemplatePayload | null {
-  if (!json || typeof json !== "object") {
+  if (!isRecord(json)) {
     return null;
   }
 
-  const obj = json as Record<string, unknown>;
+  const obj = json;
 
   // Check if it's a full SidebarSpec (has groups array at root)
-  if (Array.isArray(obj.groups)) {
-    return { type: "spec", data: obj as SidebarSpec };
+  if (isSidebarSpec(obj)) {
+    return { type: "spec", data: obj };
   }
 
   // Check if it's a Group (has id and either items, itemsSource, or itemTemplate)
-  if (
-    obj.id &&
-    (Array.isArray(obj.items) || obj.itemsSource || obj.itemTemplate)
-  ) {
-    return { type: "group", data: obj as Group };
+  if (isGroup(obj)) {
+    return { type: "group", data: obj };
   }
 
   // Check if it's an Item (has id and queries)
-  if (obj.id && Array.isArray(obj.queries)) {
-    return { type: "item", data: obj as Item };
+  if (isItem(obj)) {
+    return { type: "item", data: obj };
   }
 
   // Check for wrapper format: { type: "item", groupId: "admin", item: {...} }
-  if (obj.type === "item" && obj.item && obj.groupId) {
+  if (
+    obj.type === "item" &&
+    typeof obj.groupId === "string" &&
+    isRecord(obj.item) &&
+    isItem(obj.item)
+  ) {
     return {
       type: "item",
-      groupId: obj.groupId as string,
-      data: obj.item as Item,
+      groupId: obj.groupId,
+      data: obj.item,
     };
   }
 
   // Check for wrapper format: { type: "group", group: {...} }
-  if (obj.type === "group" && obj.group) {
-    return { type: "group", data: obj.group as Group };
+  if (obj.type === "group" && isRecord(obj.group) && isGroup(obj.group)) {
+    return { type: "group", data: obj.group };
   }
 
   return null;
@@ -197,6 +227,10 @@ export function ImportTemplateDialog({
           template.data as SidebarSpec
         );
       }
+
+      await emit("admin_config_changed", {
+        project_id: targetProjectId,
+      });
 
       setImportSuccess(true);
 

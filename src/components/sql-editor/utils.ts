@@ -1,4 +1,5 @@
-import { ColumnInfo, DataSource, QueryState, Tab, TableInfo } from "./types";
+import type { DataSource } from "@/specs/types";
+import type { ColumnInfo, QueryState, Tab, TableInfo } from "./types";
 
 // Schema exclusion list matching backend introspection
 export const EXCLUDED_SCHEMAS = [

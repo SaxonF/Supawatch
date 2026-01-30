@@ -130,11 +130,11 @@ export function SpecSidebar({
           if (source.type === "edge_function") {
             result = await api.runEdgeFunction(projectId, source.value, {});
           } else {
-            result = await api.runQuery(projectId, source.value, true);
+            result = await api.runQuery(projectId, source.value, true, 10000);
           }
         } else if (group.itemsQuery) {
           // Legacy fallback
-          result = await api.runQuery(projectId, group.itemsQuery, true);
+          result = await api.runQuery(projectId, group.itemsQuery, true, 10000);
         }
 
         if (Array.isArray(result)) {

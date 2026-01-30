@@ -16,10 +16,10 @@ name = "supawatch"
 path = "src/main.rs"
 
 [build-dependencies]
-tauri-build = { version = "2.2.0", features = [] }
+tauri-build = { version = "~2.4.1", features = [] }
 
 [dependencies]
-tauri = { version = "2.5.1", features = [
+tauri = { version = "~2.8.0", features = [
   "tray-icon",
   "image-png",
 ] }
@@ -27,9 +27,9 @@ image = "0.24"
 serde = { version = "1.0.226", features = ["derive"] }
 serde_json = "1.0.140"
 
-tauri-plugin-shell = "2.2.1"
-tauri-plugin-dialog = "2"
-tauri-plugin-fs = "2"
+tauri-plugin-shell = "~2.3.3"
+tauri-plugin-dialog = "~2.3.2"
+tauri-plugin-fs = "~2.4.1"
 
 # File watching
 notify = "8"
@@ -51,8 +51,8 @@ sqlparser = { version = "0.60.0", features = ["visitor"] }
 eszip = "0.106.0"
 futures = "0.3.31"
 async-recursion = "1.1.1"
-tauri-plugin-store = "2"
-tauri-plugin-deep-link = "2"
+tauri-plugin-store = "~2.3.0"
+tauri-plugin-deep-link = "2.4.1"
 
 [target."cfg(any(target_os = \"macos\", windows, target_os = \"linux\"))".dependencies]
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }

@@ -273,92 +273,7 @@ pub async fn create_project(
         }
     };
 
-    // Populate .env.local from .env.example if applicable
-    if let (Some(_), Some(ref refer)) = (&project_id, &project_ref) {
-        // We have a remote project, try to get keys and update .env.local
-        let project_path = std::path::Path::new(&local_path);
-        let example_path = project_path.join(".env.example");
-        let env_path = project_path.join(".env.local");
-
-        // Use async check for file existence
-        if tokio::fs::metadata(&example_path).await.is_ok() {
-             let log = LogEntry::info(
-                None,
-                LogSource::System,
-                "Creating .env.local from .env.example...".to_string(),
-            );
-            state.add_log(log.clone()).await;
-            app_handle.emit("log", &log).ok();
-
-            if let Ok(api) = state.get_api_client().await {
-                match api.ensure_api_keys(refer).await {
-                    Ok(publishable_key) => {
-                        let supabase_url = format!("https://{}.supabase.co", refer);
-                        
-                        // Read from .env.example
-                        match tokio::fs::read_to_string(&example_path).await {
-                            Ok(content) => {
-                                let mut new_lines = Vec::new();
-                                for line in content.lines() {
-                                    if let Some((key, _)) = line.split_once('=') {
-                                        let trimmed_key = key.trim();
-                                        if trimmed_key.ends_with("SUPABASE_URL") {
-                                            new_lines.push(format!("{}={}", trimmed_key, supabase_url));
-                                        } else if trimmed_key.ends_with("SUPABASE_PUBLISHABLE_KEY") 
-                                               || trimmed_key.ends_with("SUPABASE_ANON_KEY") 
-                                               || trimmed_key.ends_with("SUPABASE_PUBLISHABLE_DEFAULT_KEY") {
-                                            new_lines.push(format!("{}={}", trimmed_key, publishable_key));
-                                        } else {
-                                            new_lines.push(line.to_string());
-                                        }
-                                    } else {
-                                        new_lines.push(line.to_string());
-                                    }
-                                }
-                                let new_content = new_lines.join("\n");
-                                // Write to .env.local
-                                if let Err(e) = tokio::fs::write(&env_path, new_content).await {
-                                     let log = LogEntry::error(
-                                        None,
-                                        LogSource::System,
-                                        format!("Failed to write .env.local: {}", e),
-                                    );
-                                    state.add_log(log.clone()).await;
-                                    app_handle.emit("log", &log).ok();
-                                } else {
-                                    let log = LogEntry::success(
-                                        None,
-                                        LogSource::System,
-                                        "Created .env.local with Supabase keys".to_string(),
-                                    );
-                                    state.add_log(log.clone()).await;
-                                    app_handle.emit("log", &log).ok();
-                                }
-                            },
-                            Err(e) => {
-                                let log = LogEntry::error(
-                                    None,
-                                    LogSource::System,
-                                    format!("Failed to read .env.example: {}", e),
-                                );
-                                state.add_log(log.clone()).await;
-                                app_handle.emit("log", &log).ok();
-                            }
-                        }
-                    },
-                    Err(e) => {
-                        let log = LogEntry::error(
-                            None,
-                            LogSource::System,
-                            format!("Failed to retrieve API keys: {}", e),
-                        );
-                        state.add_log(log.clone()).await;
-                        app_handle.emit("log", &log).ok();
-                    }
-                }
-            }
-        }
-    }
+    let project_ref_for_env = project_ref.clone();
 
     let mut project = if let (Some(pid), Some(pref)) = (project_id, project_ref) {
         Project::with_remote(name, local_path, pid, pref)
@@ -386,6 +301,97 @@ pub async fn create_project(
     );
     state.add_log(log.clone()).await;
     app_handle.emit("log", &log).ok();
+
+    // Populate .env.local from .env.example if applicable (non-blocking)
+    if let Some(refer) = project_ref_for_env {
+        let local_path = result.local_path.clone();
+        let state = state.clone();
+        let app_handle = app_handle.clone();
+        let project_id = Some(result.id);
+
+        tauri::async_runtime::spawn(async move {
+            let project_path = std::path::Path::new(&local_path);
+            let example_path = project_path.join(".env.example");
+            let env_path = project_path.join(".env.local");
+
+            if tokio::fs::metadata(&example_path).await.is_ok() {
+                let log = LogEntry::info(
+                    project_id,
+                    LogSource::System,
+                    "Creating .env.local from .env.example...".to_string(),
+                );
+                state.add_log(log.clone()).await;
+                app_handle.emit("log", &log).ok();
+
+                if let Ok(api) = state.get_api_client().await {
+                    match api.ensure_api_keys(&refer).await {
+                        Ok(publishable_key) => {
+                            let supabase_url = format!("https://{}.supabase.co", refer);
+
+                            match tokio::fs::read_to_string(&example_path).await {
+                                Ok(content) => {
+                                    let mut new_lines = Vec::new();
+                                    for line in content.lines() {
+                                        if let Some((key, _)) = line.split_once('=') {
+                                            let trimmed_key = key.trim();
+                                            if trimmed_key.ends_with("SUPABASE_URL") {
+                                                new_lines.push(format!("{}={}", trimmed_key, supabase_url));
+                                            } else if trimmed_key.ends_with("SUPABASE_PUBLISHABLE_KEY")
+                                                || trimmed_key.ends_with("SUPABASE_ANON_KEY")
+                                                || trimmed_key.ends_with("SUPABASE_PUBLISHABLE_DEFAULT_KEY")
+                                            {
+                                                new_lines.push(format!("{}={}", trimmed_key, publishable_key));
+                                            } else {
+                                                new_lines.push(line.to_string());
+                                            }
+                                        } else {
+                                            new_lines.push(line.to_string());
+                                        }
+                                    }
+                                    let new_content = new_lines.join("\n");
+                                    if let Err(e) = tokio::fs::write(&env_path, new_content).await {
+                                        let log = LogEntry::error(
+                                            project_id,
+                                            LogSource::System,
+                                            format!("Failed to write .env.local: {}", e),
+                                        );
+                                        state.add_log(log.clone()).await;
+                                        app_handle.emit("log", &log).ok();
+                                    } else {
+                                        let log = LogEntry::success(
+                                            project_id,
+                                            LogSource::System,
+                                            "Created .env.local with Supabase keys".to_string(),
+                                        );
+                                        state.add_log(log.clone()).await;
+                                        app_handle.emit("log", &log).ok();
+                                    }
+                                },
+                                Err(e) => {
+                                    let log = LogEntry::error(
+                                        project_id,
+                                        LogSource::System,
+                                        format!("Failed to read .env.example: {}", e),
+                                    );
+                                    state.add_log(log.clone()).await;
+                                    app_handle.emit("log", &log).ok();
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            let log = LogEntry::error(
+                                project_id,
+                                LogSource::System,
+                                format!("Failed to retrieve API keys: {}", e),
+                            );
+                            state.add_log(log.clone()).await;
+                            app_handle.emit("log", &log).ok();
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     Ok(result)
 }

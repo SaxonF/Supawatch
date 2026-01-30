@@ -70,7 +70,7 @@ export function QueryBlock({
             if (value === null || value === undefined) return "NULL";
             return `'${String(value).replace(/'/g, "''")}'`;
           });
-          result = await api.runQuery(projectId, sql, true);
+          result = await api.runQuery(projectId, sql, true, 10000);
         } else if (loader.type === "edge_function") {
           let functionName = interpolateTemplate(
             loader.name || "",

@@ -71,7 +71,6 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
   const {
     sidebarSpec,
     hasAdminFile,
-    isLoading: isSpecLoading,
     saveToFile,
   } = useSidebarSpec(projectId);
   const currentSpec = sidebarSpec || DEFAULT_SIDEBAR_SPEC;
@@ -256,7 +255,6 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
   const sql = currentTab?.sql || "";
   const results = currentTab?.results || [];
   const originalResults = currentTab?.originalResults || [];
-  const displayColumns = currentTab?.displayColumns || [];
   const queryMetadata = currentTab?.queryMetadata || null;
   const error = currentTab?.error || null;
 
@@ -270,14 +268,6 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
       );
     },
     [activeTabId],
-  );
-
-  // Set SQL for current tab
-  const setSql = useCallback(
-    (newSql: string) => {
-      updateCurrentTab({ sql: newSql });
-    },
-    [updateCurrentTab],
   );
 
   // Focus edit input when editing starts
@@ -527,8 +517,6 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
       updateState({ error: null });
 
       let sourceToRun = actualSource;
-      let timeoutId: NodeJS.Timeout | null = null;
-
       try {
         let result: unknown;
 
@@ -580,19 +568,8 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
             }
           }
 
-          // Run the (possibly converted) query with a timeout
-          const queryPromise = api.runQuery(
-            projectId,
-            sourceToRun.value,
-            false,
-          );
-          const timeoutPromise = new Promise((_, reject) => {
-            timeoutId = setTimeout(() => {
-              reject(new Error("Query timed out after 10 seconds"));
-            }, 10000);
-          });
-
-          result = (await Promise.race([queryPromise, timeoutPromise])) as any;
+          // Run the (possibly converted) query with a timeout via API helper
+          result = await api.runQuery(projectId, sourceToRun.value, false, 10000);
         } else if (sourceToRun.type === "edge_function") {
           console.log("Edge function execution path", sourceToRun);
           // Edge Function Execution Path
@@ -769,7 +746,6 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
         });
         return false;
       } finally {
-        if (timeoutId) clearTimeout(timeoutId);
         setLoadingQueries((prev) => {
           const newState = { ...prev };
           delete newState[loadingKey];
@@ -856,7 +832,7 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
             tableChange.changes,
           );
 
-          await api.runQuery(projectId, updateSql, false);
+          await api.runQuery(projectId, updateSql, false, 10000);
         }
       }
 
@@ -911,32 +887,6 @@ export function SqlEditor({ projectId }: SqlEditorProps) {
   }, [activeTabId]);
 
   const hasChanges = changesSummary.totalChanges > 0;
-
-  const handleFixQuery = useCallback(
-    async (errorOverride?: string) => {
-      if (!sql.trim()) return;
-      setIsProcessingWithAI(true);
-      try {
-        const errorToUse =
-          typeof errorOverride === "string" && errorOverride
-            ? errorOverride
-            : error;
-
-        const convertedSql = await api.convertWithAi(
-          projectId,
-          sql,
-          errorToUse || undefined,
-        );
-        updateCurrentTab({ sql: convertedSql, error: null });
-        await runQuery(convertedSql);
-      } catch (err) {
-        updateCurrentTab({ error: `AI Fix failed: ${err}` });
-      } finally {
-        setIsProcessingWithAI(false);
-      }
-    },
-    [projectId, sql, error, updateCurrentTab, runQuery],
-  );
 
   const handleBack = useCallback(() => {
     setTabs((prev) =>
