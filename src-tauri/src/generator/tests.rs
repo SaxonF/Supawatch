@@ -32,6 +32,7 @@ fn test_generate_sql_full() {
             is_strict: false,
             security_definer: false,
             config_params: vec![],
+            grants: vec![],
         }],
         functions_to_drop: vec!["\"old_func\"".to_string()],
         functions_to_update: vec![],
@@ -454,6 +455,7 @@ fn test_generate_function_with_volatility() {
         is_strict: false,
         security_definer: false,
             config_params: vec![],
+            grants: vec![],
     };
 
     let sql = generate_create_function(&func);
@@ -478,6 +480,7 @@ fn test_generate_function_with_strict() {
         is_strict: true,
         security_definer: false,
             config_params: vec![],
+            grants: vec![],
     };
 
     let sql = generate_create_function(&func);
@@ -500,6 +503,7 @@ fn test_generate_function_with_security_definer() {
         is_strict: false,
         security_definer: true,
         config_params: vec![],
+        grants: vec![],
     };
 
     let sql = generate_create_function(&func);
@@ -523,6 +527,7 @@ fn test_generate_function_with_default_args() {
         is_strict: false,
         security_definer: false,
             config_params: vec![],
+            grants: vec![],
     };
 
     let sql = generate_create_function(&func);

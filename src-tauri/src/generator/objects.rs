@@ -1,4 +1,4 @@
-use crate::schema::{FunctionInfo, SequenceInfo, ViewInfo};
+use crate::schema::{FunctionGrant, FunctionInfo, SequenceInfo, ViewInfo};
 
 pub fn ensure_quoted(name: &str) -> String {
     if name.starts_with('"') && name.ends_with('"') {
@@ -126,4 +126,19 @@ pub fn generate_create_view(view: &ViewInfo) -> String {
     }
 
     sql
+}
+
+/// Generate GRANT EXECUTE statements for a function
+pub fn generate_function_grants(func: &FunctionInfo) -> Vec<String> {
+    func.grants.iter().map(|grant| {
+        let arg_types: Vec<String> = func.args.iter().map(|a| a.type_.clone()).collect();
+        format!(
+            "GRANT {} ON FUNCTION \"{}\".\"{}\"{} TO \"{}\";",
+            grant.privilege,
+            func.schema,
+            func.name,
+            format!("({})", arg_types.join(", ")),
+            grant.grantee
+        )
+    }).collect()
 }

@@ -666,7 +666,10 @@ async fn run_seeds_internal(
         }
 
         // Execute the SQL
-        match api.run_query(&project_ref, &sql, false).await {
+        // Prepend search_path to ensure functions/tables in public/extensions are found
+        let run_sql = format!("SET search_path = \"$user\", public, extensions;\n{}", sql);
+
+        match api.run_query(&project_ref, &run_sql, false).await {
             Ok(result) => {
                 if let Some(err) = result.error {
                     let log = LogEntry::error(

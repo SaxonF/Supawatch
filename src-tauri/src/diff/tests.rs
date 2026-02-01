@@ -1013,6 +1013,7 @@ fn test_create_function_is_not_destructive() {
             is_strict: false,
             security_definer: false,
             config_params: vec![],
+            grants: vec![],
         },
     );
 
@@ -1360,6 +1361,7 @@ fn test_function_update() {
             is_strict: false,
             security_definer: false,
             config_params: vec![],
+            grants: vec![],
         },
     );
 
@@ -1376,6 +1378,7 @@ fn test_function_update() {
             is_strict: false,
             security_definer: false,
             config_params: vec![],
+            grants: vec![],
         },
     );
 
@@ -2195,6 +2198,7 @@ fn test_function_drop() {
             is_strict: false,
             security_definer: false,
             config_params: vec![],
+            grants: vec![],
         },
     );
 
@@ -2286,6 +2290,7 @@ end;"#;
             is_strict: false,
             security_definer: false,
             config_params: vec![],
+            grants: vec![],
         },
     );
 
@@ -2307,6 +2312,7 @@ end;"#;
             is_strict: false,
             security_definer: false,
             config_params: vec![],
+            grants: vec![],
         },
     );
 

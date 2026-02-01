@@ -1,7 +1,7 @@
-use crate::schema::DbSchema;
+use crate::schema::{DbSchema, FunctionGrant, FunctionInfo};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
-use sqlparser::ast::Statement;
+use sqlparser::ast::{Statement, Privileges, GrantObjects, Grantee};
 use std::collections::HashMap;
 
 mod constraints;
@@ -117,6 +117,17 @@ pub fn parse_schema_sql(sql: &str) -> Result<DbSchema, String> {
             } => {
                 tables::handle_comment(&mut tables, object_type, object_name, comment);
             }
+            Statement::Grant {
+                privileges,
+                objects,
+                grantees,
+                ..
+            } => {
+                // Handle GRANT EXECUTE ON FUNCTION ... TO ...
+                if let Some(objs) = objects {
+                    handle_grant_on_function(&mut functions, privileges, objs, grantees);
+                }
+            }
             _ => {}
         }
     }
@@ -132,6 +143,93 @@ pub fn parse_schema_sql(sql: &str) -> Result<DbSchema, String> {
         composite_types,
         domains,
     })
+}
+
+/// Handle GRANT EXECUTE ON FUNCTION statements
+/// Adds grants to any matching functions in the functions map
+fn handle_grant_on_function(
+    functions: &mut HashMap<String, FunctionInfo>,
+    privileges: Privileges,
+    objects: GrantObjects,
+    grantees: Vec<Grantee>,
+) {
+    // Check if this is an EXECUTE grant
+    let is_execute = match &privileges {
+        Privileges::All { .. } => false, // ALL doesn't mean just EXECUTE
+        Privileges::Actions(actions) => {
+            actions.iter().any(|a| {
+                // Action::Execute or similar - match on string representation
+                a.to_string().to_uppercase().contains("EXECUTE")
+            })
+        }
+    };
+    
+    if !is_execute {
+        return;
+    }
+    
+    // Extract function names from the grant target
+    let func_names: Vec<String> = match objects {
+        GrantObjects::AllFunctionsInSchema { .. } => vec![], // We can't handle this case easily
+        GrantObjects::AllSequencesInSchema { .. } => vec![],
+        GrantObjects::Sequences(_) | GrantObjects::Tables(_) => vec![], // Not functions
+        _ => {
+            // Try to extract from the string representation for function grants
+            vec![objects.to_string()]
+        }
+    };
+    
+    // Early return if no function names found
+    if func_names.is_empty() {
+        return;
+    }
+    
+    // Extract grantee names - Grantee has name field (Option<GranteeName>) and grantee_type field
+    // 'public' role may use grantee_type instead of name
+    let grantee_names: Vec<String> = grantees.iter()
+        .filter_map(|g| {
+            // First try the name field
+            if let Some(name) = g.name.as_ref() {
+                Some(name.to_string())
+            } else {
+                // Fall back to grantee_type for special roles like 'public'
+                // Use Debug format since GranteesType doesn't implement Display
+                let type_str = format!("{:?}", g.grantee_type).to_lowercase();
+                if !type_str.is_empty() && type_str != "none" {
+                    Some(type_str)
+                } else {
+                    None
+                }
+            }
+        })
+        .collect();
+    
+    // Try to match each function name to a function in our map
+    for func_name_raw in &func_names {
+        // Normalize the function name - it might be "public.my_func(text)" format
+        let func_name = func_name_raw.trim();
+        
+        // Try to find matching function(s) in the map
+        for (sig, func_info) in functions.iter_mut() {
+            // Check if the signature contains this function name
+            let sig_lower = sig.to_lowercase().replace("\"", "");
+            let name_lower = func_name.to_lowercase().replace("\"", "").replace("function ", "");
+            
+            if sig_lower.contains(&name_lower) || name_lower.contains(&func_info.name.to_lowercase()) {
+                // Add grants for each grantee
+                for grantee in &grantee_names {
+                    let grant = FunctionGrant {
+                        grantee: grantee.clone(),
+                        privilege: "EXECUTE".to_string(),
+                    };
+                    // Avoid duplicates
+                    if !func_info.grants.contains(&grant) {
+                        func_info.grants.push(grant);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Result of preprocessing function options from SQL
@@ -162,15 +260,20 @@ fn preprocess_function_options(sql: &str) -> (String, std::collections::HashMap<
     }
     
     // For each function, look for SECURITY DEFINER and SET clauses
-    for (func_pos, func_name) in &func_positions {
+    // We need to limit search to just the current function's definition
+    for (i, (func_pos, func_name)) in func_positions.iter().enumerate() {
         let mut options = FunctionOptions {
             security_definer: false,
             config_params: vec![],
         };
         
-        // Find the end of this function definition (the $$ or semicolon that ends it)
-        // Look for the next function or end of string
-        let search_end = sql.len();
+        // Find the end of this function definition
+        // Either the next function starts, or end of string
+        let search_end = if i + 1 < func_positions.len() {
+            func_positions[i + 1].0  // Position of next function
+        } else {
+            sql.len()
+        };
         let func_section = &sql[*func_pos..search_end];
         let func_section_upper = func_section.to_uppercase();
         
@@ -179,10 +282,10 @@ fn preprocess_function_options(sql: &str) -> (String, std::collections::HashMap<
             options.security_definer = true;
         }
         
-        // Look for SET clauses
+        // Look for SET clauses - only match the first one (there should only be one per function)
         // Pattern: SET param_name = 'value' or SET param_name TO value
         let set_regex = regex::Regex::new(r"(?i)\bSET\s+(\w+)\s*=\s*'([^']*)'").unwrap();
-        for cap in set_regex.captures_iter(func_section) {
+        if let Some(cap) = set_regex.captures(func_section) {
             let param_name = cap.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
             let param_value = cap.get(2).map(|m| m.as_str().to_string()).unwrap_or_default();
             options.config_params.push((param_name, param_value));

@@ -1,6 +1,6 @@
 use crate::defaults;
 use crate::schema::{
-    CompositeTypeInfo, DbSchema, DomainInfo, EnumInfo, ExtensionInfo, ForeignKeyInfo, FunctionInfo,
+    CompositeTypeInfo, DbSchema, DomainInfo, EnumInfo, ExtensionInfo, ForeignKeyInfo, FunctionGrant, FunctionInfo,
     IndexInfo, PolicyInfo, RoleInfo, SequenceInfo, TableInfo, TriggerInfo, ViewInfo,
 };
 use std::collections::HashMap;
@@ -199,10 +199,37 @@ pub fn compute_diff(remote: &DbSchema, local: &DbSchema) -> SchemaDiff {
             let local_return_normalized = local_func.return_type.to_lowercase();
             let remote_return_normalized = remote_func.return_type.to_lowercase();
             
-            if local_def_normalized != remote_def_normalized
-                || local_return_normalized != remote_return_normalized
-                || local_func.language.to_lowercase() != remote_func.language.to_lowercase()
-            {
+            let def_changed = local_def_normalized != remote_def_normalized;
+            let return_changed = local_return_normalized != remote_return_normalized;
+            let lang_changed = local_func.language.to_lowercase() != remote_func.language.to_lowercase();
+            let security_definer_changed = local_func.security_definer != remote_func.security_definer;
+            let config_params_changed = !config_params_match(&local_func.config_params, &remote_func.config_params);
+            // Only compare grants if local schema explicitly defines grants
+            // (skip if local has no grants, since users likely haven't added GRANT statements to their schema files)
+            let grants_changed = !local_func.grants.is_empty() && !grants_match(&local_func.grants, &remote_func.grants);
+            
+            if def_changed || return_changed || lang_changed || security_definer_changed || config_params_changed || grants_changed {
+                eprintln!("=== FUNCTION DIFF DEBUG for {} ===", name);
+                if def_changed {
+                    eprintln!("  Definition changed:");
+                    eprintln!("    Local:  {}", local_def_normalized.chars().take(100).collect::<String>());
+                    eprintln!("    Remote: {}", remote_def_normalized.chars().take(100).collect::<String>());
+                }
+                if return_changed {
+                    eprintln!("  Return type changed: '{}' vs '{}'", local_return_normalized, remote_return_normalized);
+                }
+                if lang_changed {
+                    eprintln!("  Language changed: '{}' vs '{}'", local_func.language, remote_func.language);
+                }
+                if security_definer_changed {
+                    eprintln!("  Security definer changed: {} vs {}", local_func.security_definer, remote_func.security_definer);
+                }
+                if config_params_changed {
+                    eprintln!("  Config params changed: {:?} vs {:?}", local_func.config_params, remote_func.config_params);
+                }
+                if grants_changed {
+                    eprintln!("  Grants changed: {:?} vs {:?}", local_func.grants, remote_func.grants);
+                }
                 diff.functions_to_update.push(local_func.clone());
             }
         }
@@ -387,6 +414,45 @@ impl SchemaDiff {
 
         false
     }
+}
+
+/// Compare two lists of function grants for equality, ignoring order
+fn grants_match(local: &[FunctionGrant], remote: &[FunctionGrant]) -> bool {
+    if local.len() != remote.len() {
+        return false;
+    }
+    
+    // Check that every local grant exists in remote
+    for grant in local {
+        if !remote.iter().any(|r| r.grantee == grant.grantee && r.privilege == grant.privilege) {
+            return false;
+        }
+    }
+    
+    true
+}
+
+/// Normalize a config param value by stripping surrounding quotes
+fn normalize_config_value(value: &str) -> String {
+    value.trim_matches('"').trim_matches('\'').to_string()
+}
+
+/// Compare config params, normalizing values before comparison
+fn config_params_match(local: &[(String, String)], remote: &[(String, String)]) -> bool {
+    if local.len() != remote.len() {
+        return false;
+    }
+    
+    for (local_key, local_val) in local {
+        let local_normalized = normalize_config_value(local_val);
+        if !remote.iter().any(|(rkey, rval)| {
+            rkey == local_key && normalize_config_value(rval) == local_normalized
+        }) {
+            return false;
+        }
+    }
+    
+    true
 }
 
 #[cfg(test)]

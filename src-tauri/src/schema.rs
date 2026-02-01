@@ -122,6 +122,7 @@ pub struct FunctionInfo {
     pub is_strict: bool,            // STRICT / RETURNS NULL ON NULL INPUT
     pub security_definer: bool,     // SECURITY DEFINER
     pub config_params: Vec<(String, String)>, // SET param = value (e.g., search_path = '')
+    pub grants: Vec<FunctionGrant>, // GRANT EXECUTE ON FUNCTION ... TO ...
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -130,6 +131,12 @@ pub struct FunctionArg {
     pub type_: String,
     pub mode: Option<String>, // IN, OUT, INOUT, VARIADIC
     pub default_value: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FunctionGrant {
+    pub grantee: String,   // Role name: "authenticated", "service_role", etc.
+    pub privilege: String, // "EXECUTE" for functions
 }
 
 // ========================
@@ -253,6 +260,7 @@ impl Default for FunctionInfo {
             is_strict: false,
             security_definer: false,
             config_params: vec![],
+            grants: vec![],
         }
     }
 }
