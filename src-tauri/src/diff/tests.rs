@@ -2539,3 +2539,72 @@ fn test_view_diff_normalization_join_on_group_by() {
 
     assert!(!super::objects::views_differ(&local, &remote), "Views should be identical despite pg_get_viewdef's extra parens around JOIN/ON and missing space before GROUP BY");
 }
+#[test]
+fn test_function_param_rename_detection() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    // Remote function: my_func(p_id uuid)
+    remote.functions.insert(
+        "my_func(uuid)".to_string(),
+        FunctionInfo {
+            schema: "public".to_string(),
+            name: "my_func".to_string(),
+            args: vec![FunctionArg {
+                name: "p_id".to_string(),
+                type_: "uuid".to_string(),
+                mode: None,
+                default_value: None,
+            }],
+            return_type: "uuid".to_string(),
+            language: "plpgsql".to_string(),
+            definition: "BEGIN RETURN p_id; END;".to_string(),
+            volatility: Some("VOLATILE".to_string()),
+            is_strict: false,
+            security_definer: false,
+            config_params: vec![],
+            grants: vec![],
+        },
+    );
+
+    // Local function: my_func(p_uuid uuid) - Param name changed from p_id to p_uuid
+    local.functions.insert(
+        "my_func(uuid)".to_string(),
+        FunctionInfo {
+            schema: "public".to_string(),
+            name: "my_func".to_string(),
+            args: vec![FunctionArg {
+                name: "p_uuid".to_string(), // CHANGED NAME
+                type_: "uuid".to_string(),
+                mode: None,
+                default_value: None,
+            }],
+            return_type: "uuid".to_string(),
+            language: "plpgsql".to_string(),
+            definition: "BEGIN RETURN p_uuid; END;".to_string(),
+            volatility: Some("VOLATILE".to_string()),
+            is_strict: false,
+            security_definer: false,
+            config_params: vec![],
+            grants: vec![],
+        },
+    );
+
+    let diff = compute_diff(&remote, &local);
+
+    // Should NOT be an update (because CREATE OR REPLACE fails on param rename)
+    assert!(
+        diff.functions_to_update.is_empty(),
+        "Function with changed param name should NOT be in functions_to_update"
+    );
+
+    // Should be in drop and create
+    assert!(
+        diff.functions_to_drop.contains(&"my_func(uuid)".to_string()),
+        "Function with changed param name should be in functions_to_drop"
+    );
+     assert!(
+        diff.functions_to_create.iter().any(|f| f.name == "my_func" && f.args[0].name == "p_uuid"),
+        "Function with changed param name should be in functions_to_create"
+    );
+}

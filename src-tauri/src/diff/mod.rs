@@ -192,6 +192,20 @@ pub fn compute_diff(remote: &DbSchema, local: &DbSchema) -> SchemaDiff {
             diff.functions_to_create.push(local_func.clone());
         } else {
             let remote_func = remote.functions.get(name).unwrap();
+            
+            // Check if argument names have changed (Postgres doesn't support renaming args with CREATE OR REPLACE)
+            // The key is based on types, so if we are here, types match. We check names.
+            let args_renamed = local_func.args.len() == remote_func.args.len() && 
+                local_func.args.iter().zip(&remote_func.args).any(|(l, r)| l.name != r.name);
+
+            if args_renamed {
+                eprintln!("=== FUNCTION DIFF DEBUG for {} ===", name);
+                eprintln!("  Argument names changed - forcing DROP and CREATE");
+                diff.functions_to_drop.push(name.clone());
+                diff.functions_to_create.push(local_func.clone());
+                continue;
+            }
+
             // Normalize function definitions before comparison to handle formatting differences
             // (dollar quoting, quoted identifiers, whitespace)
             let local_def_normalized = utils::normalize_function_definition(&local_func.definition);
@@ -418,7 +432,31 @@ impl SchemaDiff {
 
 /// Compare two lists of function grants for equality, ignoring order
 fn grants_match(local: &[FunctionGrant], remote: &[FunctionGrant]) -> bool {
-    if local.len() != remote.len() {
+    // Filter implicit system grants from remote before comparison
+    let remote_filtered: Vec<&FunctionGrant> = remote.iter().filter(|r| {
+        let name = r.grantee.as_str();
+        
+        // Always ignore postgres (owner) and system roles
+        if name == "postgres" || name == "supabase_admin" {
+            return false;
+        }
+
+        // For default roles, only include them if they are present in local definition
+        // This implies: if local doesn't mention them, we ignore whatever the remote has (implicit default)
+        if name == "anon" || name == "service_role" || name == "public" {
+            return local.iter().any(|l| l.grantee == name);
+        }
+
+        true
+    }).collect();
+
+    // If local has no grants, and we filtered everything from remote (or remote only had defaults we filtered out), match.
+    if local.is_empty() && remote_filtered.is_empty() {
+        return true;
+    }
+
+    // But if local has valid grants, check counts against the filtered remote list
+    if local.len() != remote_filtered.len() {
         return false;
     }
     
@@ -457,3 +495,7 @@ fn config_params_match(local: &[(String, String)], remote: &[(String, String)]) 
 
 #[cfg(test)]
 mod tests;
+
+
+
+pub mod repro_types;

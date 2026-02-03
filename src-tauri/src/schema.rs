@@ -30,7 +30,7 @@ pub struct DbSchema {
     pub domains: HashMap<String, DomainInfo>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct TableInfo {
     pub schema: String, // Added schema field
     pub table_name: String,
@@ -44,7 +44,7 @@ pub struct TableInfo {
     pub comment: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ColumnInfo {
     pub column_name: String,
     pub data_type: String,

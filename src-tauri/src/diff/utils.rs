@@ -78,6 +78,16 @@ fn clean_expr(expr: Expr) -> Expr {
             
             Expr::Function(func)
         },
+        Expr::InSubquery { expr, subquery, negated } => Expr::InSubquery {
+            expr: Box::new(clean_expr(*expr)),
+            subquery: Box::new(clean_query(*subquery)),
+            negated,
+        },
+        Expr::Subquery(subquery) => Expr::Subquery(Box::new(clean_query(*subquery))),
+        Expr::Exists { subquery, negated } => Expr::Exists {
+            subquery: Box::new(clean_query(*subquery)),
+            negated,
+        },
         // For other cases, return as is (shallow)
         _ => expr,
     }
@@ -90,73 +100,75 @@ fn clean_join_constraint(constraint: sqlparser::ast::JoinConstraint) -> sqlparse
     }
 }
 
+fn clean_query(mut query: sqlparser::ast::Query) -> sqlparser::ast::Query {
+    // Clean projection (SELECT list)
+    if let SetExpr::Select(mut select) = *query.body {
+        select.projection = select.projection.into_iter().map(|item| {
+            match item {
+                SelectItem::UnnamedExpr(expr) => SelectItem::UnnamedExpr(clean_expr(expr)),
+                SelectItem::ExprWithAlias { expr, alias } => SelectItem::ExprWithAlias { expr: clean_expr(expr), alias },
+                _ => item,
+            }
+        }).collect();
+        
+        // Clean WHERE clause
+        if let Some(selection) = select.selection {
+            select.selection = Some(clean_expr(selection));
+        }
+
+        // Clean JOINs in FROM clause
+        // select.from is Vec<TableWithJoins>
+        select.from = select.from.into_iter().map(|mut table| {
+            table.joins = table.joins.into_iter().map(|mut join| {
+                 // JoinOperator in sqlparser usually wraps JoinConstraint for Inner, Left, Right etc.
+                 // But Cross, Implicit, etc. don't have constraints.
+                 match join.join_operator {
+                     sqlparser::ast::JoinOperator::Inner(constraint) => {
+                         join.join_operator = sqlparser::ast::JoinOperator::Inner(clean_join_constraint(constraint));
+                     },
+                     sqlparser::ast::JoinOperator::LeftOuter(constraint) => {
+                         join.join_operator = sqlparser::ast::JoinOperator::LeftOuter(clean_join_constraint(constraint));
+                     },
+                     sqlparser::ast::JoinOperator::RightOuter(constraint) => {
+                         join.join_operator = sqlparser::ast::JoinOperator::RightOuter(clean_join_constraint(constraint));
+                     },
+                     sqlparser::ast::JoinOperator::FullOuter(constraint) => {
+                         join.join_operator = sqlparser::ast::JoinOperator::FullOuter(clean_join_constraint(constraint));
+                     },
+                     // Handle aliases if they exist (Left/Right/Full without Outer)
+                     // Note: Use wildcard if we suspect valid variants but don't know names,
+                     // BUT checking docs for 0.60.0 strongly suggests Left/Right/Full might be distinct from LeftOuter/...
+                     // However, if compilation fails we'll know.
+                     // Given the log said 'Left', and we fell through, 'Left' must be a variant.
+                     // We try to match it by name.
+                     #[cfg(not(feature = "ignore_unresolved_variants"))] // defensive
+                     sqlparser::ast::JoinOperator::Left(constraint) => {
+                         join.join_operator = sqlparser::ast::JoinOperator::Left(clean_join_constraint(constraint));
+                     },
+                     // sqlparser::ast::JoinOperator::Right(constraint) => {
+                     //    join.join_operator = sqlparser::ast::JoinOperator::Right(clean_join_constraint(constraint));
+                     // },
+                     // sqlparser::ast::JoinOperator::Full(constraint) => {
+                     //    join.join_operator = sqlparser::ast::JoinOperator::Full(clean_join_constraint(constraint));
+                     // },
+                     _ => {
+                         // eprintln!("MISSED JOIN OPERATOR: {:?}", join.join_operator);
+                     }
+                 }
+                 join
+            }).collect();
+            table
+        }).collect();
+        
+        // Put back
+        *query.body = SetExpr::Select(select);
+    }
+    query
+}
+
 fn clean_statement(stmt: Statement) -> Statement {
     match stmt {
-        Statement::Query(mut query) => {
-            // Clean projection (SELECT list)
-            if let SetExpr::Select(mut select) = *query.body {
-                select.projection = select.projection.into_iter().map(|item| {
-                    match item {
-                        SelectItem::UnnamedExpr(expr) => SelectItem::UnnamedExpr(clean_expr(expr)),
-                        SelectItem::ExprWithAlias { expr, alias } => SelectItem::ExprWithAlias { expr: clean_expr(expr), alias },
-                        _ => item,
-                    }
-                }).collect();
-                
-                // Clean WHERE clause
-                if let Some(selection) = select.selection {
-                    select.selection = Some(clean_expr(selection));
-                }
-
-                // Clean JOINs in FROM clause
-                // select.from is Vec<TableWithJoins>
-                select.from = select.from.into_iter().map(|mut table| {
-                    table.joins = table.joins.into_iter().map(|mut join| {
-                         // JoinOperator in sqlparser usually wraps JoinConstraint for Inner, Left, Right etc.
-                         // But Cross, Implicit, etc. don't have constraints.
-                         match join.join_operator {
-                             sqlparser::ast::JoinOperator::Inner(constraint) => {
-                                 join.join_operator = sqlparser::ast::JoinOperator::Inner(clean_join_constraint(constraint));
-                             },
-                             sqlparser::ast::JoinOperator::LeftOuter(constraint) => {
-                                 join.join_operator = sqlparser::ast::JoinOperator::LeftOuter(clean_join_constraint(constraint));
-                             },
-                             sqlparser::ast::JoinOperator::RightOuter(constraint) => {
-                                 join.join_operator = sqlparser::ast::JoinOperator::RightOuter(clean_join_constraint(constraint));
-                             },
-                             sqlparser::ast::JoinOperator::FullOuter(constraint) => {
-                                 join.join_operator = sqlparser::ast::JoinOperator::FullOuter(clean_join_constraint(constraint));
-                             },
-                             // Handle aliases if they exist (Left/Right/Full without Outer)
-                             // Note: Use wildcard if we suspect valid variants but don't know names,
-                             // BUT checking docs for 0.60.0 strongly suggests Left/Right/Full might be distinct from LeftOuter/...
-                             // However, if compilation fails we'll know.
-                             // Given the log said 'Left', and we fell through, 'Left' must be a variant.
-                             // We try to match it by name.
-                             #[cfg(not(feature = "ignore_unresolved_variants"))] // defensive
-                             sqlparser::ast::JoinOperator::Left(constraint) => {
-                                 join.join_operator = sqlparser::ast::JoinOperator::Left(clean_join_constraint(constraint));
-                             },
-                             // sqlparser::ast::JoinOperator::Right(constraint) => {
-                             //    join.join_operator = sqlparser::ast::JoinOperator::Right(clean_join_constraint(constraint));
-                             // },
-                             // sqlparser::ast::JoinOperator::Full(constraint) => {
-                             //    join.join_operator = sqlparser::ast::JoinOperator::Full(clean_join_constraint(constraint));
-                             // },
-                             _ => {
-                                 // eprintln!("MISSED JOIN OPERATOR: {:?}", join.join_operator);
-                             }
-                         }
-                         join
-                    }).collect();
-                    table
-                }).collect();
-                
-                // Put back
-                *query.body = SetExpr::Select(select);
-            }
-            Statement::Query(query)
-        }
+        Statement::Query(query) => Statement::Query(Box::new(clean_query(*query))),
         _ => stmt,
     }
 }
@@ -256,6 +268,51 @@ pub fn normalize_sql(sql: &str) -> String {
 /// This function normalizes both to a comparable form by stripping table prefixes.
 pub fn normalize_policy_expression(sql: &str) -> String {
     let normalized = normalize_sql(sql);
+
+    // Policy expressions in PostgreSQL are SQL expressions.
+    // PostgreSQL rewrites them, often adding table prefixes and extra parentheses.
+    // To normalize robustly, we wrap the expression in "SELECT ..." and use sqlparser.
+    
+    // First, try AST-based normalization by wrapping in SELECT
+    let wrapped_sql = format!("SELECT {}", normalized);
+    if let Some(ast_normalized) = normalize_via_ast(&wrapped_sql) {
+        // The result will be "SELECT normalized_expr"
+        // We strip the "SELECT " prefix
+        if ast_normalized.to_uppercase().starts_with("SELECT ") {
+             let expr_only = ast_normalized[7..].trim();
+             
+             // Now apply table prefix stripping on the cleaner AST-normalized version
+             // Match pattern: word.word where first word is a table name
+             // We use a simple heuristic: if we see "tablename." before a word, strip the prefix
+             // This handles cases like "characters.id" -> "id" and "characters.user_id" -> "user_id"
+             use regex::Regex;
+             
+             // Match pattern: word followed by dot followed by word (table.column pattern)
+             // But be careful not to match function calls like auth.uid()
+             // We'll strip "tablename." prefix when it's followed by a lowercase identifier
+             let re: Regex = Regex::new(r"\b([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*)\b").unwrap();
+             
+             // Replace table.column with just column, but preserve function calls
+             let result = re.replace_all(expr_only, |caps: &regex::Captures| {
+                 let prefix = &caps[1];
+                 let suffix = &caps[2];
+                 
+                 // Preserve known function namespaces like auth.uid(), cron.schedule()
+                 let known_namespaces = ["auth", "cron", "extensions", "net", "pg_", "supabase"];
+                 if known_namespaces.iter().any(|ns| prefix.starts_with(ns)) {
+                     // Keep the full reference for known function namespaces
+                     format!("{}.{}", prefix, suffix)
+                 } else {
+                     // Strip the table prefix for column references
+                     suffix.to_string()
+                 }
+             }).to_string();
+             
+             return result;
+        }
+    }
+    
+    // Fallback to original logic if AST parsing fails
     
     // Strip table prefixes from column references
     // Pattern: word.word where first word is a table name
@@ -561,4 +618,37 @@ pub fn normalize_default_option(opt: &Option<String>) -> Option<String> {
 }
 
 
+/// Normalize PostgreSQL data types to their canonical forms for comparison.
+/// Handles aliases like:
+/// - decimal -> numeric
+/// - int, int4 -> integer
+/// - int8 -> bigint
+/// - int2 -> smallint
+/// - bool -> boolean
+/// - float8 -> double precision
+/// - varchar -> character varying
+/// - char -> character
+pub fn normalize_data_type(data_type: &str) -> String {
+    let lower = data_type.to_lowercase();
+    let trimmed = lower.trim();
+    
+    // Check for exact matches first
+    match trimmed {
+        "decimal" => "numeric".to_string(),
+        "int" | "int4" => "integer".to_string(),
+        "int8" => "bigint".to_string(),
+        "int2" => "smallint".to_string(),
+        "bool" => "boolean".to_string(),
+        "float8" | "float" => "double precision".to_string(), // In Postgres 'float' is double per default
+        "real" | "float4" => "real".to_string(),
+        "varchar" => "character varying".to_string(),
+        "char" => "character".to_string(),
+        // Handle array variants (simple recursive check for [] suffix)
+        s if s.ends_with("[]") => {
+            let inner = &s[..s.len() - 2];
+            format!("{}[]", normalize_data_type(inner))
+        },
+        _ => trimmed.to_string(),
+    }
+}
 

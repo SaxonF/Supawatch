@@ -49,8 +49,8 @@ pub fn compute_table_diff(remote: &TableInfo, local: &TableInfo) -> TableDiff {
                 comment_change: None,
             };
 
-            // Type comparison (case-insensitive)
-            if local_col.data_type.to_lowercase() != remote_col.data_type.to_lowercase() {
+            // Type comparison (normalized)
+            if utils::normalize_data_type(&local_col.data_type) != utils::normalize_data_type(&remote_col.data_type) {
                 changes.type_change =
                     Some((remote_col.data_type.clone(), local_col.data_type.clone()));
             }

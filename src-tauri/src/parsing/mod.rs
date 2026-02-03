@@ -190,7 +190,8 @@ fn handle_grant_on_function(
         .filter_map(|g| {
             // First try the name field
             if let Some(name) = g.name.as_ref() {
-                Some(name.to_string())
+                // Strip quotes from the name to match introspection
+                Some(helpers::strip_quotes(&name.to_string()))
             } else {
                 // Fall back to grantee_type for special roles like 'public'
                 // Use Debug format since GranteesType doesn't implement Display
