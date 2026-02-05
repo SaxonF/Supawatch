@@ -142,6 +142,7 @@ async fn pull_project_internal(
 }
 
 // Helper to push edge functions (deploy changed functions)
+// Helper to push edge functions (deploy changed functions)
 async fn push_edge_functions(
     api: &crate::supabase_api::SupabaseApi,
     project_ref: &str,
@@ -149,12 +150,13 @@ async fn push_edge_functions(
     project_local_path: &std::path::Path,
     state: &Arc<AppState>,
     app_handle: &AppHandle,
-) -> Result<(), String> {
+) -> Result<Vec<EdgeFunctionDeploymentResult>, String> {
     let log = LogEntry::info(
         Some(project_id),
         LogSource::EdgeFunction,
         "Checking edge functions for changes...".to_string(),
     );
+    println!("[INFO] Checking edge functions for changes...");
     state.add_log(log.clone()).await;
     app_handle.emit("log", &log).ok();
 
@@ -169,11 +171,13 @@ async fn push_edge_functions(
             LogSource::EdgeFunction,
             "No edge function changes detected.".to_string(),
         );
+        println!("[INFO] No edge function changes detected.");
         state.add_log(log).await;
         // app_handle.emit("log", &log).ok(); // Optional: don't spam if nothing happened
-        return Ok(());
+        return Ok(Vec::new());
     }
 
+    let mut deployment_results = Vec::new();
     let mut deployed_count = 0;
 
     for func in changed_functions {
@@ -191,6 +195,12 @@ async fn push_edge_functions(
                     format!("Failed to read {}: {}", function_slug, e),
                 );
                 state.add_log(log).await;
+                 deployment_results.push(EdgeFunctionDeploymentResult {
+                    name: function_slug.clone(),
+                    status: "error".to_string(),
+                    version: None,
+                    error: Some(format!("Failed to read files: {}", e)),
+                });
                 continue;
             }
         };
@@ -220,9 +230,17 @@ async fn push_edge_functions(
                     LogSource::EdgeFunction,
                     format!("Deployed '{}' (v{})", result.name, result.version),
                 );
+                println!("[INFO] Deployed '{}' (v{})", result.name, result.version);
                 state.add_log(log.clone()).await;
                 app_handle.emit("log", &log).ok();
                 deployed_count += 1;
+                
+                deployment_results.push(EdgeFunctionDeploymentResult {
+                    name: result.name,
+                    status: "success".to_string(),
+                    version: Some(result.version),
+                    error: None,
+                });
             }
             Err(e) => {
                 let log = LogEntry::error(
@@ -230,8 +248,16 @@ async fn push_edge_functions(
                     LogSource::EdgeFunction,
                     format!("Failed to deploy '{}': {}", function_slug, e),
                 );
+                println!("[ERROR] Failed to deploy '{}': {}", function_slug, e);
                 state.add_log(log.clone()).await;
                 app_handle.emit("log", &log).ok();
+                
+                 deployment_results.push(EdgeFunctionDeploymentResult {
+                    name: function_slug.clone(),
+                    status: "error".to_string(),
+                    version: None,
+                    error: Some(e.to_string()),
+                });
             }
         }
     }
@@ -242,11 +268,26 @@ async fn push_edge_functions(
             LogSource::EdgeFunction,
             format!("Deployed {} edge function(s)", deployed_count),
         );
+        println!("[INFO] Deployed {} edge function(s)", deployed_count);
         state.add_log(log.clone()).await;
         app_handle.emit("log", &log).ok();
     }
 
-    Ok(())
+    Ok(deployment_results)
+}
+
+#[derive(serde::Serialize)]
+pub struct EdgeFunctionDeploymentResult {
+    pub name: String,
+    pub status: String, // "success" or "error"
+    pub version: Option<i32>,
+    pub error: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct PushResponse {
+    pub migration_sql: String,
+    pub edge_function_results: Vec<EdgeFunctionDeploymentResult>,
 }
 
 #[tauri::command]
@@ -254,7 +295,7 @@ pub async fn push_project(
     app_handle: AppHandle,
     project_id: String,
     force: Option<bool>,
-) -> Result<String, String> {
+) -> Result<PushResponse, String> {
     update_icon(&app_handle, true);
     let result = push_project_internal(&app_handle, project_id, force).await;
     update_icon(&app_handle, false);
@@ -265,7 +306,7 @@ async fn push_project_internal(
     app_handle: &AppHandle,
     project_id: String,
     force: Option<bool>,
-) -> Result<String, String> {
+) -> Result<PushResponse, String> {
     let state = app_handle.state::<Arc<AppState>>();
     let uuid = Uuid::parse_str(&project_id).map_err(|e| e.to_string())?;
 
@@ -327,9 +368,12 @@ async fn push_project_internal(
         app_handle.emit("log", &log).ok();
         
         // Still deploy edge functions even if no schema changes
-        push_edge_functions(&api, &project_ref, uuid, std::path::Path::new(&project.local_path), state.inner(), app_handle).await?;
+        let edge_function_results = push_edge_functions(&api, &project_ref, uuid, std::path::Path::new(&project.local_path), state.inner(), app_handle).await?;
         
-        return Ok("No changes".to_string());
+        return Ok(PushResponse {
+            migration_sql: "No changes".to_string(),
+            edge_function_results,
+        });
     }
 
     let log = LogEntry::info(
@@ -367,9 +411,12 @@ async fn push_project_internal(
     generate_typescript_for_project(&project, &schema_path, state.inner(), app_handle).await;
 
     // 7. Deploy edge functions if any have changed
-    push_edge_functions(&api, &project_ref, uuid, std::path::Path::new(&project.local_path), state.inner(), app_handle).await?;
+    let edge_function_results = push_edge_functions(&api, &project_ref, uuid, std::path::Path::new(&project.local_path), state.inner(), app_handle).await?;
 
-    Ok(migration_sql.to_string())
+    Ok(PushResponse {
+        migration_sql: migration_sql.to_string(),
+        edge_function_results,
+    })
 }
 
 #[tauri::command]

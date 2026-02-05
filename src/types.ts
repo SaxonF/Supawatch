@@ -87,3 +87,15 @@ export interface ProjectKeys {
   anon_key: string;
   service_role_key: string;
 }
+
+export interface EdgeFunctionDeploymentResult {
+  name: string;
+  status: "success" | "error";
+  version: number | null;
+  error: string | null;
+}
+
+export interface PushResponse {
+  migration_sql: string;
+  edge_function_results: EdgeFunctionDeploymentResult[];
+}

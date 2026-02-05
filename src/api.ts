@@ -255,7 +255,7 @@ export async function pullProject(projectId: string): Promise<void> {
 export async function pushProject(
   projectId: string,
   force?: boolean,
-): Promise<string> {
+): Promise<import("./types").PushResponse> {
   return invoke("push_project", { projectId, force });
 }
 
