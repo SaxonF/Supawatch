@@ -674,6 +674,64 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_bulk_response_generated_column() {
+        let api = SupabaseApi::new("token".to_string(), reqwest::Client::new());
+        let _introspector = Introspector::new(&api, "project".to_string());
+
+        let data = json!({
+            "tables": [{"schema": "public", "name": "measurements"}],
+            "columns": [
+                {
+                    "schema": "public",
+                    "table_name": "measurements",
+                    "column_name": "temp_c",
+                    "data_type": "numeric",
+                    "is_nullable": "YES",
+                    "column_default": null,
+                    "udt_name": "numeric",
+                    "is_identity": "NO",
+                    "generated_status": "",
+                    "is_primary_key": false,
+                    "is_unique": false,
+                    "comment": null
+                },
+                {
+                    "schema": "public",
+                    "table_name": "measurements",
+                    "column_name": "temp_f",
+                    "data_type": "numeric",
+                    "is_nullable": "YES",
+                    "column_default": null,
+                    "udt_name": "numeric",
+                    "is_identity": "NO",
+                    "generated_status": "s",
+                    "generation_expression": "(temp_c * 9.0 / 5.0) + 32.0",
+                    "is_primary_key": false,
+                    "is_unique": false,
+                    "comment": null
+                }
+            ],
+            "foreign_keys": [],
+            "indexes": [],
+            "triggers": [],
+            "policies": [],
+            "rls": [],
+            "check_constraints": [],
+            "table_comments": []
+        });
+
+        let result = tables::parse_bulk_response(&data).unwrap();
+        let table = result.get("\"public\".\"measurements\"").unwrap();
+
+        let temp_c = table.columns.get("temp_c").unwrap();
+        assert!(!temp_c.is_generated);
+
+        let temp_f = table.columns.get("temp_f").unwrap();
+        assert!(temp_f.is_generated);
+        assert_eq!(temp_f.generation_expression, Some("(temp_c * 9.0 / 5.0) + 32.0".to_string()));
+    }
+
+    #[test]
     fn test_parse_bulk_response_gin_index() {
         let data = json!({
             "tables": [{"schema": "public", "name": "documents"}],

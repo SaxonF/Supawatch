@@ -22,7 +22,21 @@ pub fn handle_create_trigger(
     let (t_schema, t_table) = parse_object_name(&table_name);
     let table_key = format!("\"{}\".\"{}\"", t_schema, t_table);
 
-    let ev_strs: Vec<String> = events.iter().map(|e| e.to_string()).collect();
+    let ev_strs: Vec<String> = events.iter().map(|e| {
+        match e {
+            sqlparser::ast::TriggerEvent::Update(cols) => {
+                if cols.is_empty() {
+                    "UPDATE".to_string()
+                } else {
+                    let quoted_cols: Vec<String> = cols.iter()
+                        .map(|id| format!("\"{}\"", strip_quotes(&id.to_string())))
+                        .collect();
+                    format!("UPDATE OF {}", quoted_cols.join(", "))
+                }
+            }
+            _ => e.to_string()
+        }
+    }).collect();
     let timing = period
         .map(|p| p.to_string())
         .unwrap_or("BEFORE".to_string());

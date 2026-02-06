@@ -290,6 +290,8 @@ fn test_generate_alter_table_columns() {
                 collation: None,
                 enum_name: None,
                 is_array: false,
+                is_generated: false,
+                generation_expression: None,
                 comment: None,
             })
         ]),
@@ -314,6 +316,7 @@ fn test_generate_alter_table_columns() {
                     default_change: Some((None, Some("18".into()))),
                     identity_change: None,
                     collation_change: None,
+                    generated_change: None,
                     comment_change: None,
                 },
             }
@@ -345,6 +348,8 @@ fn test_generate_alter_table_columns() {
         is_identity: false,
         identity_generation: None,
         collation: None,
+        is_generated: false,
+        generation_expression: None,
         enum_name: None,
         is_array: false,
         comment: None,
@@ -578,6 +583,8 @@ fn test_generate_identity_column_change() {
                 collation: None,
                 enum_name: None,
                 is_array: false,
+                is_generated: false,
+                generation_expression: None,
                 comment: None,
             })
         ]),
@@ -602,6 +609,7 @@ fn test_generate_identity_column_change() {
                     default_change: None,
                     identity_change: Some((None, Some("ALWAYS".to_string()))),
                     collation_change: None,
+                    generated_change: None,
                     comment_change: None,
                 },
             }
@@ -640,6 +648,8 @@ fn test_generate_collation_change() {
                 is_unique: false,
                 is_identity: false,
                 identity_generation: None,
+                is_generated: false,
+                generation_expression: None,
                 collation: Some("C".to_string()),
                 enum_name: None,
                 is_array: false,
@@ -666,6 +676,7 @@ fn test_generate_collation_change() {
                     nullable_change: None,
                     default_change: None,
                     identity_change: None,
+                    generated_change: None,
                     collation_change: Some((None, Some("C".to_string()))),
                     comment_change: None,
                 },
@@ -1313,6 +1324,8 @@ fn test_generate_drop_default() {
                 collation: None,
                 enum_name: None,
                 is_array: false,
+                is_generated: false,
+                generation_expression: None,
                 comment: None,
             })
         ]),
@@ -1337,6 +1350,7 @@ fn test_generate_drop_default() {
                     default_change: Some((Some("18".into()), None)), // Dropping default
                     identity_change: None,
                     collation_change: None,
+                    generated_change: None,
                     comment_change: None,
                 },
             }
@@ -1378,6 +1392,8 @@ fn test_generate_drop_identity() {
                 collation: None,
                 enum_name: None,
                 is_array: false,
+                is_generated: false,
+                generation_expression: None,
                 comment: None,
             })
         ]),
@@ -1402,6 +1418,7 @@ fn test_generate_drop_identity() {
                     default_change: None,
                     identity_change: Some((Some("ALWAYS".to_string()), None)), // Dropping identity
                     collation_change: None,
+                    generated_change: None,
                     comment_change: None,
                 },
             }
@@ -1426,3 +1443,124 @@ fn test_generate_drop_identity() {
 
 
 
+
+#[test]
+fn test_generate_add_generated_column() {
+    use super::tables::generate_alter_table;
+    
+    let table = TableInfo {
+        schema: "public".into(),
+        table_name: "objects".into(),
+        columns: HashMap::from([
+            ("current_craft_level".into(), ColumnInfo {
+                column_name: "current_craft_level".into(),
+                data_type: "integer".into(),
+                is_nullable: true,
+                column_default: None,
+                udt_name: "int4".into(),
+                is_primary_key: false,
+                is_unique: false,
+                is_identity: false,
+                identity_generation: None,
+                collation: None,
+                enum_name: None,
+                is_array: false,
+                is_generated: true,
+                generation_expression: Some("public.calculate_progression_level(current_craft_experience)".into()),
+                comment: None,
+            })
+        ]),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+    };
+
+    let table_diff = TableDiff {
+        columns_to_add: vec!["current_craft_level".into()],
+        columns_to_drop: vec![],
+        columns_to_modify: vec![],
+        rls_change: None,
+        policies_to_create: vec![],
+        policies_to_drop: vec![],
+        triggers_to_create: vec![],
+        triggers_to_drop: vec![],
+        indexes_to_create: vec![],
+        indexes_to_drop: vec![],
+        check_constraints_to_create: vec![],
+        check_constraints_to_drop: vec![],
+        foreign_keys_to_create: vec![],
+        foreign_keys_to_drop: vec![],
+        comment_change: None,
+    };
+
+    let statements = generate_alter_table("\"public\".\"objects\"", &table_diff, &table);
+    
+    // Should generate proper GENERATED ALWAYS AS ... STORED syntax
+    assert!(statements.iter().any(|s| 
+        s.contains("ADD COLUMN \"current_craft_level\" integer") &&
+        s.contains("GENERATED ALWAYS AS (public.calculate_progression_level(current_craft_experience)) STORED")
+    ), "Generated column should include GENERATED ALWAYS AS expression. Got: {:?}", statements);
+}
+
+#[test]
+fn test_generate_create_table_with_generated_column() {
+    use super::tables::generate_create_table;
+    
+    let table = TableInfo {
+        schema: "public".into(),
+        table_name: "products".into(),
+        columns: HashMap::from([
+            ("price".into(), ColumnInfo {
+                column_name: "price".into(),
+                data_type: "numeric".into(),
+                is_nullable: true,
+                column_default: None,
+                udt_name: "numeric".into(),
+                is_primary_key: false,
+                is_unique: false,
+                is_identity: false,
+                identity_generation: None,
+                collation: None,
+                enum_name: None,
+                is_array: false,
+                is_generated: false,
+                generation_expression: None,
+                comment: None,
+            }),
+            ("total".into(), ColumnInfo {
+                column_name: "total".into(),
+                data_type: "numeric".into(),
+                is_nullable: true,
+                column_default: None,
+                udt_name: "numeric".into(),
+                is_primary_key: false,
+                is_unique: false,
+                is_identity: false,
+                identity_generation: None,
+                collation: None,
+                enum_name: None,
+                is_array: false,
+                is_generated: true,
+                generation_expression: Some("price * qty".into()),
+                comment: None,
+            }),
+        ]),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+    };
+
+    let sql = generate_create_table(&table);
+    
+    // Should include GENERATED ALWAYS AS ... STORED for the 'total' column
+    assert!(sql.contains("GENERATED ALWAYS AS (price * qty) STORED"), 
+        "CREATE TABLE should include generated column expression. Got: {}", sql);
+}

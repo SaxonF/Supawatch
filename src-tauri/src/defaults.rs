@@ -14,6 +14,7 @@ pub const DEFAULT_ROLES: &[&str] = &[
     "postgres",
     "dashboard_user",
     "pgbouncer",
+    "cli_login_postgres",
     // Note: pg_* and supabase* roles are already filtered in queries.rs
 ];
 
@@ -99,6 +100,7 @@ mod tests {
         assert!(is_default_role("anon"));
         assert!(is_default_role("pg_read_all_data"));
         assert!(is_default_role("supabase_admin"));
+        assert!(is_default_role("cli_login_postgres"));
         assert!(!is_default_role("my_custom_role"));
     }
 

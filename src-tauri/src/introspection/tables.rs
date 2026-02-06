@@ -37,7 +37,10 @@ pub const TABLES_BULK_QUERY: &str = r#"
             CASE WHEN a.attidentity != '' THEN 'YES' ELSE 'NO' END as is_identity,
             coll.collname as collation,
             COALESCE(pk.is_primary, false) as is_primary_key,
+
             false as is_unique,
+            a.attgenerated as generated_status,
+            CASE WHEN a.attgenerated = 's' THEN pg_get_expr(d.adbin, d.adrelid) ELSE NULL END as generation_expression,
             col_description(t.oid, a.attnum) as comment
         FROM pg_attribute a
         JOIN pg_class t ON a.attrelid = t.oid
@@ -262,6 +265,8 @@ pub fn parse_bulk_response(data: &serde_json::Value) -> Result<HashMap<String, T
         collation: Option<String>,
         is_primary_key: bool,
         is_unique: bool,
+        generated_status: Option<String>,
+        generation_expression: Option<String>,
         comment: Option<String>,
     }
     let columns: Vec<ColumnRow> = data
@@ -425,6 +430,8 @@ pub fn parse_bulk_response(data: &serde_json::Value) -> Result<HashMap<String, T
                     collation: col.collation,
                     enum_name: None,
                     is_array: final_data_type.ends_with("[]"),
+                    is_generated: col.generated_status.as_deref() == Some("s"),
+                    generation_expression: col.generation_expression,
                     comment: col.comment,
                 },
             );

@@ -301,6 +301,8 @@ pub fn parse_columns(
         let mut column_default = None;
         let mut is_identity = false;
         let mut identity_generation = None;
+        let mut is_generated = false;
+        let mut generation_expression = None;
         let mut collation = None;
 
         for option in &col.options {
@@ -313,13 +315,18 @@ pub fn parse_columns(
                     is_primary_key = true;
                 }
                 ColumnOption::Default(expr) => column_default = Some(expr.to_string()),
-                ColumnOption::Generated { generated_as, .. } => {
-                    is_identity = true;
-                    identity_generation = match generated_as {
-                        sqlparser::ast::GeneratedAs::Always => Some("ALWAYS".to_string()),
-                        sqlparser::ast::GeneratedAs::ByDefault => Some("BY DEFAULT".to_string()),
-                        _ => Some("BY DEFAULT".to_string()),
-                    };
+                ColumnOption::Generated { generated_as, generation_expr, .. } => {
+                    if let Some(expr) = generation_expr {
+                        is_generated = true;
+                        generation_expression = Some(expr.to_string());
+                    } else {
+                        is_identity = true;
+                        identity_generation = match generated_as {
+                            sqlparser::ast::GeneratedAs::Always => Some("ALWAYS".to_string()),
+                            sqlparser::ast::GeneratedAs::ByDefault => Some("BY DEFAULT".to_string()),
+                            _ => Some("BY DEFAULT".to_string()),
+                        };
+                    }
                 }
                 ColumnOption::Collation(c) => collation = Some(c.to_string()),
                 ColumnOption::Check(check_expr) => {
@@ -406,6 +413,8 @@ pub fn parse_columns(
                 udt_name: data_type,
                 enum_name: None,
                 is_array: false,
+                is_generated,
+                generation_expression,
                 comment: None,
             },
         );

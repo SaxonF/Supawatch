@@ -55,6 +55,8 @@ pub struct ColumnInfo {
     pub is_unique: bool,
     pub is_identity: bool,
     pub identity_generation: Option<String>, // ALWAYS or BY DEFAULT
+    pub is_generated: bool,                  // GENERATED ALWAYS AS ... STORED
+    pub generation_expression: Option<String>,
     pub collation: Option<String>,
     pub enum_name: Option<String>,
     pub is_array: bool,

@@ -80,6 +80,8 @@ fn test_add_column() {
         is_unique: true,
         is_identity: false,
         identity_generation: None,
+        is_generated: false,
+        generation_expression: None,
         collation: None,
         enum_name: None,
         is_array: false,
@@ -122,6 +124,8 @@ fn test_drop_column() {
         is_unique: true,
         is_identity: false,
         identity_generation: None,
+        is_generated: false,
+        generation_expression: None,
         collation: None,
         enum_name: None,
         is_array: false,
@@ -177,6 +181,8 @@ fn test_modify_column_type() {
         is_unique: false,
         is_identity: false,
         identity_generation: None,
+        is_generated: false,
+        generation_expression: None,
         collation: None,
         enum_name: None,
         is_array: false,
@@ -194,6 +200,8 @@ fn test_modify_column_type() {
         is_unique: false,
         is_identity: false,
         identity_generation: None,
+        is_generated: false,
+        generation_expression: None,
         collation: None,
         enum_name: None,
         is_array: false,
@@ -239,6 +247,8 @@ fn test_modify_column_nullable() {
         is_unique: false,
         is_identity: false,
         identity_generation: None,
+        is_generated: false,
+        generation_expression: None,
         collation: None,
         enum_name: None,
         is_array: false,
@@ -256,6 +266,8 @@ fn test_modify_column_nullable() {
         is_unique: false,
         is_identity: false,
         identity_generation: None,
+        is_generated: false,
+        generation_expression: None,
         collation: None,
         enum_name: None,
         is_array: false,
@@ -270,6 +282,74 @@ fn test_modify_column_nullable() {
     assert_eq!(table_diff.columns_to_modify.len(), 1);
     let change = &table_diff.columns_to_modify[0];
     assert_eq!(change.changes.nullable_change, Some((true, false)));
+}
+
+#[test]
+fn test_modify_generated_column_expression() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    let mut remote_table = TableInfo {
+        schema: "public".into(),
+        table_name: "products".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+    };
+    
+    remote_table.columns.insert("total".into(), ColumnInfo {
+        column_name: "total".into(),
+        data_type: "numeric".into(),
+        is_nullable: true,
+        column_default: None,
+        udt_name: "numeric".into(),
+        is_primary_key: false,
+        is_unique: false,
+        is_identity: false,
+        identity_generation: None,
+
+        is_generated: true,
+        generation_expression: Some("(price * qty)".into()),
+        collation: None,
+        enum_name: None,
+        is_array: false,
+        comment: None,
+    });
+    
+    let mut local_table = remote_table.clone();
+    local_table.columns.insert("total".into(), ColumnInfo {
+        column_name: "total".into(),
+        data_type: "numeric".into(),
+        is_nullable: true,
+        column_default: None,
+        udt_name: "numeric".into(),
+        is_primary_key: false,
+        is_unique: false,
+        is_identity: false,
+        identity_generation: None,
+
+        is_generated: true,
+        generation_expression: Some("(price + qty)".into()), // Changed expression
+        collation: None,
+        enum_name: None,
+        is_array: false,
+        comment: None,
+    });
+
+    remote.tables.insert("products".into(), remote_table);
+    local.tables.insert("products".into(), local_table);
+
+    let diff = compute_diff(&remote, &local);
+    let table_diff = diff.table_changes.get("products").unwrap();
+    assert_eq!(table_diff.columns_to_modify.len(), 1);
+    let change = &table_diff.columns_to_modify[0];
+    assert_eq!(change.column_name, "total");
+    assert_eq!(change.changes.generated_change, Some((Some("(price * qty)".into()), Some("(price + qty)".into()))));
 }
 
 #[test]
@@ -551,6 +631,8 @@ fn test_destructive_change_detection() {
         is_unique: false,
         is_identity: false,
         identity_generation: None,
+        is_generated: false,
+        generation_expression: None,
         collation: None,
         enum_name: None,
         is_array: false,
@@ -854,6 +936,8 @@ fn test_type_change_is_destructive() {
             is_unique: false,
             is_identity: false,
             identity_generation: None,
+        is_generated: false,
+        generation_expression: None,
             collation: None,
             enum_name: None,
             is_array: false,
@@ -875,6 +959,8 @@ fn test_type_change_is_destructive() {
             is_unique: false,
             is_identity: false,
             identity_generation: None,
+        is_generated: false,
+        generation_expression: None,
             collation: None,
             enum_name: None,
             is_array: false,
@@ -944,6 +1030,8 @@ fn test_add_column_is_not_destructive() {
             is_unique: false,
             is_identity: false,
             identity_generation: None,
+        is_generated: false,
+        generation_expression: None,
             collation: None,
             enum_name: None,
             is_array: false,
@@ -1092,6 +1180,8 @@ fn test_full_schema_diff_does_not_drop_system_objects() {
             is_unique: true,
             is_identity: false,
             identity_generation: None,
+        is_generated: false,
+        generation_expression: None,
             collation: None,
             enum_name: None,
             is_array: false,
@@ -1595,6 +1685,8 @@ fn test_column_default_change() {
         is_unique: false,
         is_identity: false,
         identity_generation: None,
+        is_generated: false,
+        generation_expression: None,
         collation: None,
         enum_name: None,
         is_array: false,
@@ -1612,6 +1704,8 @@ fn test_column_default_change() {
         is_unique: false,
         is_identity: false,
         identity_generation: None,
+        is_generated: false,
+        generation_expression: None,
         collation: None,
         enum_name: None,
         is_array: false,
@@ -1655,6 +1749,8 @@ fn test_identity_column_change() {
         is_unique: true,
         is_identity: false, // Not identity
         identity_generation: None,
+        is_generated: false,
+        generation_expression: None,
         collation: None,
         enum_name: None,
         is_array: false,
@@ -1672,6 +1768,8 @@ fn test_identity_column_change() {
         is_unique: true,
         is_identity: true, // Now identity
         identity_generation: Some("ALWAYS".into()),
+        is_generated: false,
+        generation_expression: None,
         collation: None,
         enum_name: None,
         is_array: false,
@@ -1715,6 +1813,8 @@ fn test_collation_change() {
         is_unique: false,
         is_identity: false,
         identity_generation: None,
+        is_generated: false,
+        generation_expression: None,
         collation: None, // No collation
         enum_name: None,
         is_array: false,
@@ -1732,6 +1832,8 @@ fn test_collation_change() {
         is_unique: false,
         is_identity: false,
         identity_generation: None,
+        is_generated: false,
+        generation_expression: None,
         collation: Some("\"C\"".into()), // Added collation
         enum_name: None,
         is_array: false,
@@ -1775,6 +1877,8 @@ fn test_column_comment_change() {
         is_unique: false,
         is_identity: false,
         identity_generation: None,
+        is_generated: false,
+        generation_expression: None,
         collation: None,
         enum_name: None,
         is_array: false,
@@ -1792,6 +1896,8 @@ fn test_column_comment_change() {
         is_unique: false,
         is_identity: false,
         identity_generation: None,
+        is_generated: false,
+        generation_expression: None,
         collation: None,
         enum_name: None,
         is_array: false,

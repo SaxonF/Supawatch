@@ -68,6 +68,7 @@ pub struct ColumnChangeDetail {
     pub default_change: Option<(Option<String>, Option<String>)>,
     pub identity_change: Option<(Option<String>, Option<String>)>,
     pub collation_change: Option<(Option<String>, Option<String>)>,
+    pub generated_change: Option<(Option<String>, Option<String>)>,
     pub comment_change: Option<(Option<String>, Option<String>)>,
 }
 

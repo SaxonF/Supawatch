@@ -46,6 +46,7 @@ pub fn compute_table_diff(remote: &TableInfo, local: &TableInfo) -> TableDiff {
                 default_change: None,
                 identity_change: None,
                 collation_change: None,
+                generated_change: None,
                 comment_change: None,
             };
 
@@ -61,11 +62,14 @@ pub fn compute_table_diff(remote: &TableInfo, local: &TableInfo) -> TableDiff {
             }
 
             // Default value - normalize for comparison (strips type casts like ::text)
-            if utils::normalize_default_option(&local_col.column_default) != utils::normalize_default_option(&remote_col.column_default) {
-                changes.default_change = Some((
-                    remote_col.column_default.clone(),
-                    local_col.column_default.clone(),
-                ));
+            // Skip comparison for generated columns - they can't have defaults
+            if !local_col.is_generated && !remote_col.is_generated {
+                if utils::normalize_default_option(&local_col.column_default) != utils::normalize_default_option(&remote_col.column_default) {
+                    changes.default_change = Some((
+                        remote_col.column_default.clone(),
+                        local_col.column_default.clone(),
+                    ));
+                }
             }
 
             // Identity Generation
@@ -84,6 +88,30 @@ pub fn compute_table_diff(remote: &TableInfo, local: &TableInfo) -> TableDiff {
                 ));
             }
 
+            // Generated Columns
+            // We use generation_expression as the source of truth.
+            // Helper to get normalized expression for comparison
+            // Remove outer parens if present, as Postgres sometimes adds them
+            fn normalize_gen_expr(expr: &Option<String>) -> Option<String> {
+                expr.as_ref().map(|s| {
+                    let trimmed = s.trim();
+                    if trimmed.starts_with('(') && trimmed.ends_with(')') {
+                         trimmed[1..trimmed.len()-1].trim().to_string()
+                    } else {
+                        trimmed.to_string()
+                    }
+                })
+            }
+
+            if local_col.is_generated != remote_col.is_generated || 
+               normalize_gen_expr(&local_col.generation_expression) != normalize_gen_expr(&remote_col.generation_expression) {
+                   
+                changes.generated_change = Some((
+                    remote_col.generation_expression.clone(),
+                    local_col.generation_expression.clone()
+                ));
+            }
+
             // Comment
             if local_col.comment != remote_col.comment {
                 changes.comment_change =
@@ -95,6 +123,7 @@ pub fn compute_table_diff(remote: &TableInfo, local: &TableInfo) -> TableDiff {
                 || changes.default_change.is_some()
                 || changes.identity_change.is_some()
                 || changes.collation_change.is_some()
+                || changes.generated_change.is_some()
                 || changes.comment_change.is_some()
             {
                 diff.columns_to_modify.push(ColumnModification {

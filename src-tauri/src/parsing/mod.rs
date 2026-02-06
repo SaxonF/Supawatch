@@ -517,10 +517,29 @@ CREATE TABLE items (
 
         let id_col = table.columns.get("id").expect("id column not found");
         assert!(id_col.is_identity);
+        assert!(!id_col.is_generated);
         assert_eq!(id_col.identity_generation, Some("ALWAYS".to_string()));
 
         let code_col = table.columns.get("code").expect("code column not found");
         assert_eq!(code_col.collation, Some("\"C\"".to_string()));
+    }
+
+    #[test]
+    fn test_parse_generated_column_stored() {
+        let sql = r#"
+CREATE TABLE products (
+    price numeric,
+    qty integer,
+    total numeric GENERATED ALWAYS AS (price * qty) STORED
+);
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let table = schema.tables.get("\"public\".\"products\"").expect("Table not found");
+        
+        let total_col = table.columns.get("total").expect("total column not found");
+        assert!(total_col.is_generated);
+        assert!(!total_col.is_identity);
+        assert_eq!(total_col.generation_expression, Some("price * qty".to_string()));
     }
 
     #[test]
@@ -1204,5 +1223,22 @@ CREATE TRIGGER "on_skill_experience_change" BEFORE UPDATE OF "experience" ON "pu
         assert_eq!(trigger.events.len(), 1);
         // This shows us the exact format sqlparser produces
         assert!(trigger.events[0].to_uppercase().contains("UPDATE"));
+    }
+
+    #[test]
+    fn test_parse_trigger_update_no_columns() {
+        let sql = r#"
+CREATE TABLE products (id integer);
+CREATE TRIGGER update_timestamp
+    BEFORE UPDATE ON products
+    FOR EACH ROW
+    EXECUTE FUNCTION update_modified_column();
+"#;
+        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let table = schema.tables.get("\"public\".\"products\"").expect("Table not found");
+        let trigger = &table.triggers[0];
+        
+        assert_eq!(trigger.events.len(), 1);
+        assert_eq!(trigger.events[0], "UPDATE");
     }
 }

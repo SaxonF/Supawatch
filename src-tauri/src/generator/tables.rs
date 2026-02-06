@@ -27,7 +27,12 @@ pub fn generate_create_table(table: &TableInfo) -> String {
             col_sql.push_str(" NOT NULL");
         }
 
-        if let Some(def) = &col.column_default {
+        // Generated columns use GENERATED ALWAYS AS ... STORED (mutually exclusive with DEFAULT)
+        if col.is_generated {
+            if let Some(expr) = &col.generation_expression {
+                col_sql.push_str(&format!(" GENERATED ALWAYS AS ({}) STORED", expr));
+            }
+        } else if let Some(def) = &col.column_default {
             col_sql.push_str(&format!(" DEFAULT {}", def));
         }
 
@@ -150,7 +155,12 @@ pub fn generate_alter_table(
                 add_sql.push_str(" NOT NULL");
             }
 
-            if let Some(def) = &col.column_default {
+            // Generated columns use GENERATED ALWAYS AS ... STORED (mutually exclusive with DEFAULT)
+            if col.is_generated {
+                if let Some(expr) = &col.generation_expression {
+                    add_sql.push_str(&format!(" GENERATED ALWAYS AS ({}) STORED", expr));
+                }
+            } else if let Some(def) = &col.column_default {
                 add_sql.push_str(&format!(" DEFAULT {}", def));
             }
 
