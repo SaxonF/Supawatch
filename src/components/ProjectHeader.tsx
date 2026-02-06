@@ -2,7 +2,6 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { open } from "@tauri-apps/plugin-shell";
 import {
   CloudDownload,
-  CloudUpload,
   ExternalLink,
   Eye,
   EyeOff,
@@ -69,62 +68,6 @@ export function ProjectHeader({
     }
   };
 
-  const handlePush = async () => {
-    setIsLoading(true);
-    try {
-      const result = await api.pushProject(project.id);
-      if (result === "No changes") {
-        await ask("No schema changes detected", {
-          title: "Info",
-          kind: "info",
-        });
-      } else {
-        await ask("Schema changes pushed successfully", {
-          title: "Success",
-          kind: "info",
-        });
-      }
-    } catch (err) {
-      const errorMsg = String(err);
-      if (errorMsg.startsWith("CONFIRMATION_NEEDED:")) {
-        const summary = errorMsg.replace("CONFIRMATION_NEEDED:", "");
-        const confirmed = await ask(
-          `Destructive changes detected!\n\n${summary}\n\nDo you want to force push these changes?`,
-          {
-            title: "Destructive Changes Detected",
-            kind: "warning",
-            okLabel: "Push Changes",
-            cancelLabel: "Cancel",
-          }
-        );
-
-        if (confirmed) {
-          try {
-            await api.pushProject(project.id, true);
-            await ask("Schema changes pushed successfully", {
-              title: "Success",
-              kind: "info",
-            });
-          } catch (retryErr) {
-            console.error("Failed to push project (forced):", retryErr);
-            await ask("Failed to push project: " + String(retryErr), {
-              title: "Error",
-              kind: "error",
-            });
-          }
-        }
-      } else {
-        console.error("Failed to push project:", err);
-        await ask("Failed to push project: " + String(err), {
-          title: "Error",
-          kind: "error",
-        });
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   const handleDelete = async () => {
     const confirmed = await ask(`Delete project "${project.name}"?`, {
       title: "Confirm Delete",
@@ -154,7 +97,7 @@ export function ProjectHeader({
     if (!project.supabase_project_ref) return;
     try {
       await open(
-        `https://supabase.com/dashboard/project/${project.supabase_project_ref}`
+        `https://supabase.com/dashboard/project/${project.supabase_project_ref}`,
       );
     } catch (err) {
       console.error("Failed to open Supabase dashboard:", err);
@@ -254,32 +197,20 @@ export function ProjectHeader({
         </div>
         <div className="w-px h-5 bg-border mx-1" />
         <div className="flex items-center gap-2">
-          <div className="flex items-center">
-            <Button
-              variant="outline"
-              className="rounded-r-none border-r-0 px-3 hover:bg-muted"
-              onClick={handlePush}
-              disabled={isLoading}
-              title="Push to remote"
-            >
-              <CloudUpload size={16} strokeWidth={1} />
-              Push
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              className={`rounded-l-none w-9 ${
-                showDiffSidebar
-                  ? "bg-muted text-primary hover:text-primary/80"
-                  : "text-muted-foreground hover:text-primary hover:bg-muted"
-              }`}
-              onClick={onToggleDiffSidebar}
-              disabled={isLoading}
-              title={showDiffSidebar ? "Hide schema diff" : "Show schema diff"}
-            >
-              <FileDiff size={16} strokeWidth={1} />
-            </Button>
-          </div>
+          <Button
+            variant="outline"
+            className={
+              showDiffSidebar
+                ? "bg-muted text-primary hover:text-primary/80 gap-2"
+                : "text-muted-foreground hover:text-primary gap-2"
+            }
+            onClick={onToggleDiffSidebar}
+            disabled={isLoading}
+            title={showDiffSidebar ? "Hide schema diff" : "Show schema diff"}
+          >
+            <FileDiff size={16} strokeWidth={1} />
+            Push
+          </Button>
 
           <Button
             variant="outline"
