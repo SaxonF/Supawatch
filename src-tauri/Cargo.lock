@@ -2048,6 +2048,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "harbor"
+version = "0.1.0"
+dependencies = [
+ "async-recursion",
+ "chrono",
+ "dirs",
+ "eszip",
+ "futures",
+ "image 0.24.9",
+ "keyring",
+ "notify",
+ "notify-debouncer-mini",
+ "once_cell",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sqlparser",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-deep-link",
+ "tauri-plugin-dialog",
+ "tauri-plugin-fs",
+ "tauri-plugin-notification",
+ "tauri-plugin-shell",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-store",
+ "thiserror 2.0.12",
+ "tokio",
+ "urlencoding",
+ "uuid",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4868,40 +4902,6 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
-
-[[package]]
-name = "supawatch"
-version = "0.1.0"
-dependencies = [
- "async-recursion",
- "chrono",
- "dirs",
- "eszip",
- "futures",
- "image 0.24.9",
- "keyring",
- "notify",
- "notify-debouncer-mini",
- "once_cell",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "sqlparser",
- "tauri",
- "tauri-build",
- "tauri-plugin-deep-link",
- "tauri-plugin-dialog",
- "tauri-plugin-fs",
- "tauri-plugin-notification",
- "tauri-plugin-shell",
- "tauri-plugin-single-instance",
- "tauri-plugin-store",
- "thiserror 2.0.12",
- "tokio",
- "urlencoding",
- "uuid",
-]
 
 [[package]]
 name = "swc_allocator"

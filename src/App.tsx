@@ -92,7 +92,7 @@ function App() {
     if (!parsed) {
       notify(
         "Deep Link Error",
-        "Invalid deep link format. Expected: supawatch://import?url=...",
+        "Invalid deep link format. Expected: harbor://import?url=...",
       );
       return;
     }
@@ -149,7 +149,7 @@ function App() {
     });
 
     // Listen for deep link events from Rust backend
-    // This is triggered when the app is opened via a supawatch:// URL
+    // This is triggered when the app is opened via a harbor:// URL
     const unlistenDeeplink = listen<string>("deep-link-received", (event) => {
       console.log("Deep link received:", event.payload);
       handleDeepLink(event.payload);

@@ -15,15 +15,22 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["templates"]
+    "resources": ["templates"],
+    "macOS": {
+      "entitlements": "Entitlements.plist",
+      "exceptionDomain": "",
+      "frameworks": [],
+      "providerShortName": null,
+      "signingIdentity": null
+    }
   },
-  "productName": "Supawatch",
+  "productName": "Harbor",
   "version": "0.1.0",
-  "identifier": "com.supawatch.app",
+  "identifier": "dev.getharbor.app",
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["supawatch"]
+        "schemes": ["harbor"]
       }
     }
   },
@@ -32,7 +39,7 @@
       {
         "fullscreen": false,
         "resizable": true,
-        "title": "Supawatch",
+        "title": "Harbor",
         "width": 900,
         "height": 600,
         "minWidth": 700,

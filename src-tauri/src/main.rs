@@ -140,7 +140,19 @@ fn main() {
                 .select_all()
                 .build()?;
 
-            let menu = Menu::with_items(app, &[&file_menu, &edit_menu])?;
+            let app_menu = SubmenuBuilder::new(app, "Harbor")
+                .about(None)
+                .separator()
+                .services()
+                .separator()
+                .hide()
+                .hide_others()
+                .show_all()
+                .separator()
+                .quit()
+                .build()?;
+
+            let menu = Menu::with_items(app, &[&app_menu, &file_menu, &edit_menu])?;
 
             app.set_menu(menu)?;
 

@@ -13,15 +13,7 @@ mod tables;
 mod types;
 mod views;
 
-pub fn parse_schema_sql(sql: &str) -> Result<DbSchema, String> {
-    // Function options workaround:
-    // sqlparser-rs doesn't support SECURITY DEFINER or SET clauses yet, so we manually extract them
-    // and remove them from the SQL before parsing.
-    let (cleaned_sql, func_options) = preprocess_function_options(sql);
-
-    let dialect = PostgreSqlDialect {};
-    let ast = Parser::parse_sql(&dialect, &cleaned_sql).map_err(|e| e.to_string())?;
-
+pub fn parse_schema_sql(files: &[(String, String)]) -> Result<DbSchema, String> {
     let mut tables = HashMap::new();
     let mut enums = HashMap::new();
     let mut functions = HashMap::new();
@@ -32,103 +24,129 @@ pub fn parse_schema_sql(sql: &str) -> Result<DbSchema, String> {
     let mut composite_types = HashMap::new();
     let mut domains = HashMap::new();
 
-    for statement in ast {
-        match statement {
-            Statement::CreateTable(stmt) => {
-                tables::handle_create_table(&mut tables, stmt);
-            }
-            Statement::CreateType {
-                name,
-                representation,
-                ..
-            } => {
-                types::handle_create_type(&mut enums, &mut composite_types, name, representation);
-            }
-            Statement::CreateFunction(stmt) => {
-                let (schema, name) = helpers::parse_object_name(&stmt.name);
-                // Check multiple formats for the function name as it appeared in SQL
-                let func_key_formats = [
-                    format!("\"{}\".\"{}\"", schema, name),
-                    format!("{}.{}", schema, name),
-                    name.clone(),
-                ];
-                
-                let options = func_key_formats.iter()
-                    .find_map(|key| func_options.get(key))
-                    .map(|o| (o.security_definer, o.config_params.clone()))
-                    .unwrap_or((false, vec![]));
-                
-                functions::handle_create_function(&mut functions, stmt, options.0, options.1);
-            }
+    let dialect = PostgreSqlDialect {};
 
-            Statement::CreateRole(stmt) => {
-                roles::handle_create_role(&mut roles, stmt);
-            }
-            Statement::CreateTrigger(stmt) => {
-                constraints::handle_create_trigger(&mut tables, stmt);
-            }
-            Statement::CreatePolicy {
-                name,
-                table_name,
-                command,
-                to,
-                using,
-                with_check,
-                ..
-            } => {
-                constraints::handle_create_policy(
-                    &mut tables,
+    for (filename, sql_content) in files {
+        // Function options workaround:
+        // sqlparser-rs doesn't support SECURITY DEFINER or SET clauses yet, so we manually extract them
+        // and remove them from the SQL before parsing.
+        let (cleaned_sql, func_options) = preprocess_function_options(sql_content);
+
+        let ast = Parser::parse_sql(&dialect, &cleaned_sql).map_err(|e| {
+            // e is typically "Expected ..., found ... at line X, col Y"
+            // We want to prepend the filename
+            format!("Error in {}: {}", filename, e)
+        })?;
+
+        for statement in ast {
+            match statement {
+                Statement::CreateTable(stmt) => {
+                    tables::handle_create_table(&mut tables, stmt);
+                }
+                Statement::CreateType {
+                    name,
+                    representation,
+                    ..
+                } => {
+                    types::handle_create_type(
+                        &mut enums,
+                        &mut composite_types,
+                        name,
+                        representation,
+                    );
+                }
+                Statement::CreateFunction(stmt) => {
+                    let (schema, name) = helpers::parse_object_name(&stmt.name);
+                    // Check multiple formats for the function name as it appeared in SQL
+                    let func_key_formats = [
+                        format!("\"{}\".\"{}\"", schema, name),
+                        format!("{}.{}", schema, name),
+                        name.clone(),
+                    ];
+
+                    let options = func_key_formats
+                        .iter()
+                        .find_map(|key| func_options.get(key))
+                        .map(|o| (o.security_definer, o.config_params.clone()))
+                        .unwrap_or((false, vec![]));
+
+                    functions::handle_create_function(&mut functions, stmt, options.0, options.1);
+                }
+
+                Statement::CreateRole(stmt) => {
+                    roles::handle_create_role(&mut roles, stmt);
+                }
+                Statement::CreateTrigger(stmt) => {
+                    constraints::handle_create_trigger(&mut tables, stmt);
+                }
+                Statement::CreatePolicy {
                     name,
                     table_name,
                     command,
                     to,
                     using,
                     with_check,
-                );
-            }
-            Statement::AlterTable(stmt) => {
-                tables::handle_alter_table(&mut tables, stmt);
-            }
-            Statement::CreateIndex(stmt) => {
-                tables::handle_create_index(&mut tables, stmt);
-            }
-            Statement::CreateView(stmt) => {
-                views::handle_create_view(&mut views, stmt);
-            }
-            Statement::CreateSequence {
-                name,
-                data_type,
-                sequence_options,
-                ..
-            } => {
-                sequences::handle_create_sequence(&mut sequences, name, data_type, sequence_options);
-            }
-            Statement::CreateExtension(stmt) => {
-                roles::handle_create_extension(&mut extensions, stmt);
-            }
-            Statement::CreateDomain(stmt) => {
-                types::handle_create_domain(&mut domains, stmt);
-            }
-            Statement::Comment {
-                object_type,
-                object_name,
-                comment,
-                ..
-            } => {
-                tables::handle_comment(&mut tables, object_type, object_name, comment);
-            }
-            Statement::Grant {
-                privileges,
-                objects,
-                grantees,
-                ..
-            } => {
-                // Handle GRANT EXECUTE ON FUNCTION ... TO ...
-                if let Some(objs) = objects {
-                    handle_grant_on_function(&mut functions, privileges, objs, grantees);
+                    ..
+                } => {
+                    constraints::handle_create_policy(
+                        &mut tables,
+                        name,
+                        table_name,
+                        command,
+                        to,
+                        using,
+                        with_check,
+                    );
                 }
+                Statement::AlterTable(stmt) => {
+                    tables::handle_alter_table(&mut tables, stmt);
+                }
+                Statement::CreateIndex(stmt) => {
+                    tables::handle_create_index(&mut tables, stmt);
+                }
+                Statement::CreateView(stmt) => {
+                    views::handle_create_view(&mut views, stmt);
+                }
+                Statement::CreateSequence {
+                    name,
+                    data_type,
+                    sequence_options,
+                    ..
+                } => {
+                    sequences::handle_create_sequence(
+                        &mut sequences,
+                        name,
+                        data_type,
+                        sequence_options,
+                    );
+                }
+                Statement::CreateExtension(stmt) => {
+                    roles::handle_create_extension(&mut extensions, stmt);
+                }
+                Statement::CreateDomain(stmt) => {
+                    types::handle_create_domain(&mut domains, stmt);
+                }
+                Statement::Comment {
+                    object_type,
+                    object_name,
+                    comment,
+                    ..
+                } => {
+                    tables::handle_comment(&mut tables, object_type, object_name, comment);
+                }
+                Statement::Grant {
+                    privileges,
+                    objects,
+                    grantees,
+                    ..
+                } => {
+                    // Handle GRANT EXECUTE ON FUNCTION ... TO ...
+                    if let Some(objs) = objects {
+                        handle_grant_on_function(&mut functions, privileges, objs, grantees);
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
 
@@ -331,7 +349,10 @@ fn preprocess_function_options(sql: &str) -> (String, std::collections::HashMap<
     let mut cleaned_sql = sql.to_string();
     for (start, end) in removal_ranges {
         if start < cleaned_sql.len() && end <= cleaned_sql.len() {
-             cleaned_sql.replace_range(start..end, "");
+             // Replace with spaces to preserve line numbers/positions
+             let length = end - start;
+             let spaces = " ".repeat(length);
+             cleaned_sql.replace_range(start..end, &spaces);
         }
     }
     
@@ -342,6 +363,25 @@ fn preprocess_function_options(sql: &str) -> (String, std::collections::HashMap<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_multiple_files_error() {
+        let sql1 = "CREATE TABLE t1 (id int);";
+        let sql2 = "CREATE TABLE t2 (id int); MAKE_ERROR;";
+        
+        let files = vec![
+            ("file1.sql".to_string(), sql1.to_string()),
+            ("file2.sql".to_string(), sql2.to_string()),
+        ];
+        
+        let result = parse_schema_sql(&files);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err();
+        
+        println!("Error message: {}", err_msg);
+        assert!(err_msg.contains("Error in file2.sql"));
+        // sqlparser error usually contains "Expected ..., found ..."
+    }
 
     #[test]
     fn test_parse_full_schema() {
@@ -363,7 +403,8 @@ CREATE POLICY "public_read" ON players FOR SELECT USING (true);
 ALTER TABLE players ENABLE ROW LEVEL SECURITY;
         "#;
 
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
 
         // Verify Function
         let func = schema
@@ -402,7 +443,8 @@ CREATE TABLE players (
 CREATE TRIGGER update_player_timestamp BEFORE UPDATE ON public.players FOR EACH ROW EXECUTE FUNCTION update_player_last_played();
         "#;
 
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
 
         // Verify Table
         let table = schema.tables.get("\"public\".\"players\"").expect("Table not found");
@@ -420,7 +462,8 @@ CREATE VIEW user_stats AS SELECT id, count(*) as post_count FROM users GROUP BY 
 CREATE MATERIALIZED VIEW cached_stats AS SELECT * FROM user_stats;
         "#;
 
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
 
         assert_eq!(schema.views.len(), 2);
 
@@ -440,7 +483,8 @@ CREATE MATERIALIZED VIEW cached_stats AS SELECT * FROM user_stats;
 CREATE SEQUENCE user_id_seq INCREMENT BY 1 MINVALUE 1 MAXVALUE 1000000 CACHE 10;
         "#;
 
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
 
         let seq = schema
             .sequences
@@ -462,7 +506,8 @@ CREATE TYPE address AS (
 );
         "#;
 
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
 
         let addr_type = schema
             .composite_types
@@ -482,7 +527,8 @@ CREATE TABLE users (
 );
         "#;
 
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"users\"").expect("Table not found");
 
         assert!(table.check_constraints.len() >= 1);
@@ -495,7 +541,8 @@ CREATE TABLE users (id uuid NOT NULL, active boolean);
 CREATE INDEX active_users_idx ON users (id) WHERE active = true;
         "#;
 
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"users\"").expect("Table not found");
 
         let idx = table
@@ -514,7 +561,8 @@ CREATE UNIQUE INDEX idx_email ON users (email);
 ALTER TABLE users ADD CONSTRAINT fk_role FOREIGN KEY (role_id) REFERENCES roles(id);
 ALTER TABLE users ADD CONSTRAINT unique_username UNIQUE (username);
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"users\"").expect("Table not found");
 
         // Verify CREATE INDEX
@@ -545,7 +593,8 @@ CREATE TABLE items (
     code text COLLATE "C"
 );
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"items\"").expect("Table not found");
 
         let id_col = table.columns.get("id").expect("id column not found");
@@ -566,7 +615,8 @@ CREATE TABLE products (
     total numeric GENERATED ALWAYS AS (price * qty) STORED
 );
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"products\"").expect("Table not found");
         
         let total_col = table.columns.get("total").expect("total column not found");
@@ -581,7 +631,8 @@ CREATE TABLE products (
 CREATE FUNCTION add(a integer, b integer) RETURNS integer LANGUAGE sql AS 'SELECT a + b';
 CREATE FUNCTION add(a float, b float) RETURNS float LANGUAGE sql AS 'SELECT a + b';
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
 
         assert_eq!(schema.functions.len(), 2);
         assert!(schema.functions.contains_key("\"public\".\"add\"(integer, integer)"));
@@ -594,7 +645,8 @@ CREATE FUNCTION add(a float, b float) RETURNS float LANGUAGE sql AS 'SELECT a + 
 CREATE ROLE "Test" WITH LOGIN SUPERUSER PASSWORD 'secret';
 CREATE ROLE "readonly";
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
 
         assert!(schema.roles.contains_key("Test"));
         let test_role = schema.roles.get("Test").unwrap();
@@ -613,7 +665,8 @@ CREATE ROLE "readonly";
         let sql = r#"
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions" VERSION '1.1';
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let ext = schema.extensions.get("uuid-ossp").expect("Extension not found");
         
         // Should be just "extensions", not "\"extensions\""
@@ -633,7 +686,8 @@ ALTER TABLE "posts" ADD CONSTRAINT "posts_user_id_fkey"
     FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE;
 "#;
 
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let posts = schema.tables.get("\"public\".\"posts\"").expect("Table not found");
 
         // FK should have bare/unquoted names (matching introspection behavior)
@@ -654,7 +708,8 @@ ALTER TABLE "posts" ADD CONSTRAINT "posts_user_id_fkey"
         let sql = r#"
 CREATE DOMAIN positive_int AS integer CHECK (VALUE >= 0);
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
 
         let domain = schema.domains.get("\"public\".\"positive_int\"").expect("Domain not found");
         assert_eq!(domain.name, "positive_int");
@@ -667,7 +722,8 @@ CREATE DOMAIN positive_int AS integer CHECK (VALUE >= 0);
         let sql = r#"
 CREATE DOMAIN nonneg_int AS integer DEFAULT 0 CHECK (VALUE >= 0);
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
 
         let domain = schema.domains.get("\"public\".\"nonneg_int\"").expect("Domain not found");
         assert_eq!(domain.name, "nonneg_int");
@@ -681,7 +737,8 @@ CREATE DOMAIN nonneg_int AS integer DEFAULT 0 CHECK (VALUE >= 0);
 CREATE TABLE documents (id uuid, tags text[]);
 CREATE INDEX idx_tags_gin ON documents USING gin (tags);
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"documents\"").expect("Table not found");
 
         let idx = table.indexes.iter().find(|i| i.index_name == "idx_tags_gin")
@@ -695,7 +752,8 @@ CREATE INDEX idx_tags_gin ON documents USING gin (tags);
 CREATE TABLE locations (id uuid, coords point);
 CREATE INDEX idx_coords_gist ON locations USING gist (coords);
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"locations\"").expect("Table not found");
 
         let idx = table.indexes.iter().find(|i| i.index_name == "idx_coords_gist")
@@ -709,7 +767,8 @@ CREATE INDEX idx_coords_gist ON locations USING gist (coords);
 CREATE TABLE cache (id uuid, key text);
 CREATE INDEX idx_key_hash ON cache USING hash (key);
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"cache\"").expect("Table not found");
 
         let idx = table.indexes.iter().find(|i| i.index_name == "idx_key_hash")
@@ -723,7 +782,8 @@ CREATE INDEX idx_key_hash ON cache USING hash (key);
 CREATE TABLE users (id uuid);
 COMMENT ON TABLE users IS 'Main users table';
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"users\"").expect("Table not found");
 
         assert_eq!(table.comment, Some("Main users table".to_string()));
@@ -735,7 +795,8 @@ COMMENT ON TABLE users IS 'Main users table';
 CREATE TABLE users (id uuid, email text);
 COMMENT ON COLUMN users.email IS 'User email address';
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"users\"").expect("Table not found");
         let email_col = table.columns.get("email").expect("Column not found");
 
@@ -750,7 +811,8 @@ CREATE FUNCTION get_current_user_id() RETURNS uuid
     SECURITY DEFINER
     AS $$ SELECT gen_random_uuid(); $$;
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
 
         let func = schema.functions.get("\"public\".\"get_current_user_id\"()")
             .expect("Function not found");
@@ -770,7 +832,8 @@ BEGIN
 END;
 $$;
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
 
         let func = schema.functions.get("\"public\".\"broadcast_position\"()")
             .expect("Function not found");
@@ -788,7 +851,8 @@ CREATE FUNCTION stable_func() RETURNS integer
     STABLE
     AS $$ SELECT 1; $$;
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
 
         let func = schema.functions.get("\"public\".\"stable_func\"()")
             .expect("Function not found");
@@ -803,7 +867,8 @@ CREATE FUNCTION immutable_func(x integer) RETURNS integer
     IMMUTABLE
     AS $$ SELECT x * 2; $$;
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
 
         let func = schema.functions.get("\"public\".\"immutable_func\"(integer)")
             .expect("Function not found");
@@ -818,7 +883,8 @@ CREATE FUNCTION strict_func(x integer) RETURNS integer
     STRICT
     AS $$ SELECT x + 1; $$;
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
 
         let func = schema.functions.get("\"public\".\"strict_func\"(integer)")
             .expect("Function not found");
@@ -833,7 +899,8 @@ CREATE TABLE posts (
     tags text[]
 );
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"posts\"").expect("Table not found");
         let tags_col = table.columns.get("tags").expect("Column not found");
 
@@ -845,7 +912,8 @@ CREATE TABLE posts (
         let sql = r#"
 CREATE TYPE status AS ENUM ('pending', 'active', 'cancelled');
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
 
         let enum_type = schema.enums.get("\"public\".\"status\"").expect("Enum not found");
         assert_eq!(enum_type.name, "status");
@@ -867,7 +935,8 @@ ALTER TABLE posts ADD CONSTRAINT fk_user
     FOREIGN KEY (user_id) REFERENCES users(id)
     ON DELETE CASCADE ON UPDATE SET NULL;
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let posts = schema.tables.get("\"public\".\"posts\"").expect("Table not found");
 
         let fk = &posts.foreign_keys[0];
@@ -885,7 +954,8 @@ CREATE TABLE order_items (
     PRIMARY KEY (order_id, item_id)
 );
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"order_items\"").expect("Table not found");
 
         let order_id_col = table.columns.get("order_id").expect("Column not found");
@@ -905,7 +975,8 @@ CREATE SEQUENCE order_seq
     START WITH 1000
     CACHE 20;
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
 
         let seq = schema.sequences.get("\"public\".\"order_seq\"").expect("Sequence not found");
         assert_eq!(seq.name, "order_seq");
@@ -926,7 +997,8 @@ CREATE POLICY manage_own ON posts FOR ALL TO public
     USING (author_id = current_user_id())
     WITH CHECK (author_id = current_user_id());
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"posts\"").expect("Table not found");
 
         let policy = table.policies.iter().find(|p| p.name == "manage_own")
@@ -943,7 +1015,8 @@ CREATE TYPE person_name AS (
     last_name text
 );
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
 
         let comp_type = schema.composite_types.get("\"public\".\"person_name\"")
             .expect("Composite type not found");
@@ -962,7 +1035,8 @@ CREATE ROLE app_admin WITH
     CREATEROLE
     CONNECTION LIMIT 10;
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
 
         let role = schema.roles.get("app_admin").expect("Role not found");
         assert!(role.login);
@@ -981,7 +1055,8 @@ CREATE TRIGGER trg_notify
     FOR EACH STATEMENT
     EXECUTE FUNCTION notify_event();
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"events\"").expect("Table not found");
 
         let trigger = &table.triggers[0];
@@ -998,7 +1073,8 @@ CREATE TRIGGER trg_audit
     FOR EACH ROW
     EXECUTE FUNCTION audit_changes();
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"data\"").expect("Table not found");
 
         let trigger = &table.triggers[0];
@@ -1013,7 +1089,8 @@ CREATE TRIGGER trg_audit
 CREATE TABLE users (id uuid, email text);
 ALTER TABLE users ADD CONSTRAINT unique_email UNIQUE (email);
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"users\"").expect("Table not found");
 
         let idx = table.indexes.iter().find(|i| i.index_name == "unique_email")
@@ -1029,7 +1106,8 @@ CREATE TABLE "quest_instances" (
   "status" text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed', 'failed', 'abandoned'))
 );
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"quest_instances\"").expect("Table not found");
 
         let constraint = &table.check_constraints[0];
@@ -1047,7 +1125,8 @@ CREATE VIEW user_post_counts AS
     LEFT JOIN posts p ON p.user_id = u.id
     GROUP BY u.id;
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
 
         let view = schema.views.get("\"public\".\"user_post_counts\"").expect("View not found");
         assert!(!view.is_materialized);
@@ -1062,7 +1141,8 @@ CREATE FUNCTION get_stats(IN p_name text, OUT row_count integer)
     LANGUAGE sql
     AS $$ SELECT 100; $$;
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
 
         // Function should be found with its signature
         let func_key = schema.functions.keys()
@@ -1082,7 +1162,8 @@ CREATE FUNCTION greet(name text DEFAULT 'World')
     LANGUAGE sql
     AS $$ SELECT 'Hello'; $$;
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
 
         let func = schema.functions.get("\"public\".\"greet\"(text)")
             .expect("Function not found");
@@ -1095,7 +1176,8 @@ CREATE FUNCTION greet(name text DEFAULT 'World')
 CREATE TABLE custom_schema.users (id uuid);
 CREATE TYPE custom_schema.status AS ENUM ('a', 'b');
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
 
         assert!(schema.tables.contains_key("\"custom_schema\".\"users\""));
         assert!(schema.enums.contains_key("\"custom_schema\".\"status\""));
@@ -1109,7 +1191,8 @@ CREATE TABLE items (
     name text
 );
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"items\"").expect("Table not found");
 
         let id_col = table.columns.get("id").expect("id column not found");
@@ -1125,7 +1208,8 @@ CREATE TABLE prices (
     amount numeric(10, 2)
 );
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"prices\"").expect("Table not found");
 
         let amount_col = table.columns.get("amount").expect("amount column not found");
@@ -1140,7 +1224,8 @@ CREATE TABLE users (
     username varchar(50)
 );
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"users\"").expect("Table not found");
 
         let username_col = table.columns.get("username").expect("username column not found");
@@ -1156,7 +1241,8 @@ CREATE TABLE events (
     created_at timestamptz DEFAULT now()
 );
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"events\"").expect("Table not found");
 
         let created_col = table.columns.get("created_at").expect("created_at column not found");
@@ -1171,7 +1257,8 @@ CREATE TABLE documents (
     data jsonb DEFAULT '{}'::jsonb
 );
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"documents\"").expect("Table not found");
 
         let data_col = table.columns.get("data").expect("data column not found");
@@ -1185,7 +1272,8 @@ CREATE TABLE users (
     id uuid DEFAULT gen_random_uuid() PRIMARY KEY
 );
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"users\"").expect("Table not found");
 
         let id_col = table.columns.get("id").expect("id column not found");
@@ -1201,7 +1289,8 @@ CREATE TABLE users (
     is_active boolean DEFAULT true NOT NULL
 );
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"users\"").expect("Table not found");
 
         let col = table.columns.get("is_active").expect("is_active column not found");
@@ -1218,7 +1307,8 @@ CREATE TABLE posts (
     user_id uuid REFERENCES users(id) ON DELETE CASCADE
 );
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"posts\"").expect("Table not found");
         
         // Verify the FK is captured
@@ -1238,7 +1328,8 @@ CREATE TABLE character_skills (id uuid, experience integer);
 CREATE FUNCTION check_skill_level_up() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
 CREATE TRIGGER "on_skill_experience_change" BEFORE UPDATE OF "experience" ON "public"."character_skills" FOR EACH ROW WHEN ((NEW.experience > OLD.experience)) EXECUTE FUNCTION check_skill_level_up();
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"character_skills\"").expect("Table not found");
         
         assert_eq!(table.triggers.len(), 1);
@@ -1267,7 +1358,8 @@ CREATE TRIGGER update_timestamp
     FOR EACH ROW
     EXECUTE FUNCTION update_modified_column();
 "#;
-        let schema = parse_schema_sql(sql).expect("Failed to parse SQL");
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
         let table = schema.tables.get("\"public\".\"products\"").expect("Table not found");
         let trigger = &table.triggers[0];
         

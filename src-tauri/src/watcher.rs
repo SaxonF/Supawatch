@@ -456,7 +456,7 @@ async fn handle_edge_function_push(
     app_handle.emit("log", &log).ok();
 
     // Save hash path for later
-    let hash_file = function_dir.join(".supawatch_hash");
+    let hash_file = function_dir.join(".harbor_hash");
 
     // Deploy with all files
     match api.deploy_function(&project_ref, &function_slug, &function_slug, &entrypoint, files).await {

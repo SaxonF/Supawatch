@@ -12,7 +12,7 @@ export function Settings() {
     <div className="space-y-8 max-w-lg">
       <div className="space-y-4">
         <p className="text-muted-foreground text-sm">
-          Supawatch monitors your local Supabase project folders for changes to
+          Harbor monitors your local Supabase project folders for changes to
           schema files and edge functions, then syncs them to your remote
           Supabase project.
         </p>

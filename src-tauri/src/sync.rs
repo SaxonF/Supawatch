@@ -34,7 +34,7 @@ pub async fn collect_function_files(dir: &Path) -> Result<Vec<(String, Vec<u8>)>
 
 /// Compute the diff of edge functions (local vs deployed state).
 /// Returns a list of functions that have changed or are new.
-/// Note: This relies on local state (.supawatch_hash files), not remote API state.
+/// Note: This relies on local state (.harbor_hash files), not remote API state.
 pub async fn compute_edge_functions_diff(
     project_local_path: &Path,
 ) -> Result<Vec<EdgeFunctionDiff>, String> {
@@ -73,7 +73,7 @@ pub async fn compute_edge_functions_diff(
         let local_hash = compute_files_hash(&files);
 
         // Check stored hash
-        let hash_file = path.join(".supawatch_hash");
+        let hash_file = path.join(".harbor_hash");
         let is_changed = match tokio::fs::read_to_string(&hash_file).await {
             Ok(stored_hash) => stored_hash.trim() != local_hash,
             Err(_) => true, // No hash = new or not deployed
@@ -401,11 +401,9 @@ pub fn find_schema_path(project_local_path: &Path) -> Option<PathBuf> {
     schema_paths.into_iter().find(|p| p.exists())
 }
 
-/// Read all `.sql` files from a schema directory, sorted alphabetically, and concatenate.
-///
-/// This is completely unopinionated about file contents — it just reads and joins.
-/// The numbered prefixes (00_, 01_, etc.) ensure correct dependency ordering.
-pub async fn read_schema_dir(dir: &Path) -> Result<String, String> {
+/// Read all `.sql` files from a schema directory, sorted alphabetically.
+/// Returns a list of (filename, content) tuples.
+pub async fn read_schema_dir(dir: &Path) -> Result<Vec<(String, String)>, String> {
     let mut entries: Vec<PathBuf> = Vec::new();
 
     let mut read_dir = tokio::fs::read_dir(dir)
@@ -421,30 +419,33 @@ pub async fn read_schema_dir(dir: &Path) -> Result<String, String> {
 
     // Sort alphabetically by filename (numeric prefixes give dependency order)
     entries.sort_by(|a, b| {
-        a.file_name().unwrap_or_default().cmp(&b.file_name().unwrap_or_default())
+        a.file_name()
+            .unwrap_or_default()
+            .cmp(&b.file_name().unwrap_or_default())
     });
 
-    let mut combined = String::new();
+    let mut files = Vec::new();
     for path in entries {
+        let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
         let content = tokio::fs::read_to_string(&path)
             .await
             .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
-        if !combined.is_empty() {
-            combined.push('\n');
-        }
-        combined.push_str(&content);
+        files.push((filename, content));
     }
 
-    Ok(combined)
+    Ok(files)
 }
 
-/// Read the schema SQL from a `SchemaSource` — either a single file or stitched directory.
-pub async fn read_schema_source(source: &SchemaSource) -> Result<String, String> {
+/// Read the schema SQL from a `SchemaSource` — either a single file or directory.
+/// Returns a list of (filename, content) tuples.
+pub async fn read_schema_source(source: &SchemaSource) -> Result<Vec<(String, String)>, String> {
     match source {
         SchemaSource::SingleFile(path) => {
-            tokio::fs::read_to_string(path)
+            let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let content = tokio::fs::read_to_string(path)
                 .await
-                .map_err(|e| format!("Failed to read schema file: {}", e))
+                .map_err(|e| format!("Failed to read schema file: {}", e))?;
+            Ok(vec![(filename, content)])
         }
         SchemaSource::Directory(dir) => read_schema_dir(dir).await,
     }
@@ -485,6 +486,8 @@ pub struct SchemaDiffResult {
 
 /// Compute the diff between remote and local schemas.
 /// Accepts a `SchemaSource` to support both single file and split directory layouts.
+/// Compute the diff between remote and local schemas.
+/// Accepts a `SchemaSource` to support both single file and split directory layouts.
 pub async fn compute_schema_diff(
     api: &SupabaseApi,
     project_ref: &str,
@@ -495,8 +498,9 @@ pub async fn compute_schema_diff(
     let remote_schema = introspector.introspect().await?;
 
     // 2. Parse Local (read from single file or stitch from directory)
-    let local_sql = read_schema_source(source).await?;
-    let local_schema = crate::parsing::parse_schema_sql(&local_sql)?;
+    // Now returns Vec<(filename, content)>
+    let local_files = read_schema_source(source).await?;
+    let local_schema = crate::parsing::parse_schema_sql(&local_files)?;
 
     // 3. Diff (Remote -> Local)
     let diff = crate::diff::compute_diff(&remote_schema, &local_schema);
@@ -524,7 +528,11 @@ pub async fn generate_typescript_types(
     let local_sql = tokio::fs::read_to_string(schema_path)
         .await
         .map_err(|e| format!("Failed to read schema file: {}", e))?;
-    let schema = crate::parsing::parse_schema_sql(&local_sql)?;
+    
+    let filename = schema_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+    let files = vec![(filename, local_sql)];
+    
+    let schema = crate::parsing::parse_schema_sql(&files)?;
 
     // 2. Generate TypeScript
     let config = crate::generator::typescript::TypeScriptConfig::default();
@@ -545,12 +553,12 @@ pub async fn generate_typescript_types(
     Ok(())
 }
 
-/// Generate TypeScript types from a SQL string (already read from file/directory).
+/// Generate TypeScript types from a list of schema files.
 pub async fn generate_typescript_types_from_sql(
-    sql: &str,
+    files: &[(String, String)],
     output_path: &Path,
 ) -> Result<(), String> {
-    let schema = crate::parsing::parse_schema_sql(sql)?;
+    let schema = crate::parsing::parse_schema_sql(files)?;
 
     let config = crate::generator::typescript::TypeScriptConfig::default();
     let typescript_content = crate::generator::typescript::generate_typescript(&schema, &config);

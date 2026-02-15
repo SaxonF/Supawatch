@@ -81,108 +81,104 @@ pub async fn create_project(
              }
         };
 
-        // Auto-pull schema logic
-        println!("[DEBUG] Starting auto-pull schema logic");
+        // Check if supabase folder already exists — if so, skip syncing entirely
         let supabase_dir = std::path::Path::new(&local_path).join("supabase");
-        let schemas_dir = supabase_dir.join("schemas");
-        let schema_path = schemas_dir.join("schema.sql");
-        
-        println!("[DEBUG] Checking if schema exists at: {:?}", schema_path);
-        if !schema_path.exists() {
-             println!("[DEBUG] Schema does not exist, checking access token...");
-             if state.has_access_token().await {
-                println!("[DEBUG] Has access token, getting API client...");
-                if let Ok(api) = state.get_api_client().await {
-                   println!("[DEBUG] Got API client, creating introspector...");
-                   let introspector = crate::introspection::Introspector::new(&api, refer.clone());
-                   
-                   let log = LogEntry::info(
-                        None, 
-                        LogSource::System, 
-                        format!("Auto-pulling schema for linked project: {}", refer)
-                    );
-                   state.add_log(log.clone()).await;
-                   app_handle.emit("log", &log).ok();
+        if supabase_dir.exists() {
+            let log = LogEntry::info(
+                None,
+                LogSource::System,
+                "Existing supabase folder detected — skipping auto-sync. You can pull manually.".to_string(),
+            );
+            state.add_log(log.clone()).await;
+            app_handle.emit("log", &log).ok();
+        } else if state.has_access_token().await {
+            if let Ok(api) = state.get_api_client().await {
+                let log = LogEntry::info(
+                    None,
+                    LogSource::System,
+                    format!("Auto-pulling schema for linked project: {}", refer),
+                );
+                state.add_log(log.clone()).await;
+                app_handle.emit("log", &log).ok();
 
-                   println!("[DEBUG] Starting introspection...");
-                   match introspector.introspect().await {
-                        Ok(remote_schema) => {
-                             println!("[DEBUG] Introspection successful, generating SQL...");
-                             let empty_schema = crate::schema::DbSchema::new();
-                             let diff = crate::diff::compute_diff(&empty_schema, &remote_schema);
-                             let sql = crate::generator::generate_sql(&diff, &remote_schema);
-                             
-                             println!("[DEBUG] Creating schema dir: {:?}", schemas_dir);
-                             if !schemas_dir.exists() {
-                                tokio::fs::create_dir_all(&schemas_dir).await.map_err(|e| e.to_string())?;
-                             }
-                             println!("[DEBUG] Writing schema.sql ({} bytes)", sql.len());
-                             tokio::fs::write(&schema_path, &sql).await.map_err(|e| e.to_string())?;
+                // Use the shared fetch_remote_schema_sql (same as pull flow)
+                match super::sync::fetch_remote_schema_sql(&api, &refer).await {
+                    Ok((_sql, remote_schema)) => {
+                        // Write split schema files (same as pull flow)
+                        let schemas_dir = supabase_dir.join("schemas");
+                        tokio::fs::create_dir_all(&schemas_dir).await.map_err(|e| e.to_string())?;
 
-                             let log = LogEntry::success(
-                                None,
-                                LogSource::System,
-                                "Schema pulled successfully".to_string(),
-                            );
-                            state.add_log(log.clone()).await;
-                            app_handle.emit("log", &log).ok();
-
-                            // Generate TypeScript types if enabled
-                            if generate_typescript.unwrap_or(true) {
-                                let project_path = std::path::Path::new(&local_path);
-                                let output_path = sync::get_typescript_output_path(
-                                    project_path,
-                                    typescript_output_path.as_deref(),
-                                );
-
-                                if let Err(e) = sync::generate_typescript_types(&schema_path, &output_path).await {
-                                    let log = LogEntry::error(
-                                        None,
-                                        LogSource::System,
-                                        format!("Failed to generate TypeScript types: {}", e),
-                                    );
-                                    state.add_log(log.clone()).await;
-                                    app_handle.emit("log", &log).ok();
-                                } else {
-                                    let relative_output = output_path
-                                        .strip_prefix(project_path)
-                                        .unwrap_or(&output_path)
-                                        .to_string_lossy();
-                                    let log = LogEntry::success(
-                                        None,
-                                        LogSource::System,
-                                        format!("TypeScript types generated: {}", relative_output),
-                                    );
-                                    state.add_log(log.clone()).await;
-                                    app_handle.emit("log", &log).ok();
-                                }
-                            }
-                        },
-                        Err(e) => {
-                             println!("[DEBUG] Introspection failed: {}", e);
-                             let log = LogEntry::error(
-                                None, 
-                                LogSource::System, 
-                                format!("Failed to auto-pull schema: {}", e)
-                            );
-                            state.add_log(log.clone()).await;
-                            app_handle.emit("log", &log).ok();
+                        let split_files = crate::generator::split_sql(&remote_schema);
+                        let mut written_files: Vec<String> = Vec::new();
+                        for (filename, content) in &split_files {
+                            let file_path = schemas_dir.join(filename);
+                            tokio::fs::write(&file_path, content)
+                                .await
+                                .map_err(|e| format!("Failed to write {}: {}", filename, e))?;
+                            written_files.push(filename.clone());
                         }
-                   }
 
-                   // Auto-pull Edge Functions using shared sync module
-                   println!("[DEBUG] Starting function sync...");
-                   let _ = sync::pull_edge_functions(
-                       &api,
-                       &refer,
-                       None,
-                       std::path::Path::new(&local_path),
-                       state.as_ref(),
-                       &app_handle,
-                   )
-                   .await;
+                        let file_list = written_files.join(", ");
+                        let log = LogEntry::success(
+                            None,
+                            LogSource::System,
+                            format!("Schema pulled to supabase/schemas/ ({})", file_list),
+                        );
+                        state.add_log(log.clone()).await;
+                        app_handle.emit("log", &log).ok();
+
+                        // Generate TypeScript types from the split files we already have
+                        if generate_typescript.unwrap_or(true) {
+                            let project_path = std::path::Path::new(&local_path);
+                            let output_path = sync::get_typescript_output_path(
+                                project_path,
+                                typescript_output_path.as_deref(),
+                            );
+                            if let Err(e) = sync::generate_typescript_types_from_sql(&split_files, &output_path).await {
+                                let log = LogEntry::error(
+                                    None,
+                                    LogSource::System,
+                                    format!("Failed to generate TypeScript types: {}", e),
+                                );
+                                state.add_log(log.clone()).await;
+                                app_handle.emit("log", &log).ok();
+                            } else {
+                                let relative_output = output_path
+                                    .strip_prefix(project_path)
+                                    .unwrap_or(&output_path)
+                                    .to_string_lossy();
+                                let log = LogEntry::success(
+                                    None,
+                                    LogSource::System,
+                                    format!("TypeScript types generated: {}", relative_output),
+                                );
+                                state.add_log(log.clone()).await;
+                                app_handle.emit("log", &log).ok();
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let log = LogEntry::error(
+                            None,
+                            LogSource::System,
+                            format!("Failed to auto-pull schema: {}", e),
+                        );
+                        state.add_log(log.clone()).await;
+                        app_handle.emit("log", &log).ok();
+                    }
                 }
-             }
+
+                // Auto-pull Edge Functions using shared sync module
+                let _ = sync::pull_edge_functions(
+                    &api,
+                    &refer,
+                    None,
+                    std::path::Path::new(&local_path),
+                    state.as_ref(),
+                    &app_handle,
+                )
+                .await;
+            }
         }
         
         (Some(pid), Some(refer))

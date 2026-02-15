@@ -1,6 +1,6 @@
 {
   "identifier": "migrated",
-  "description": "Supawatch app permissions",
+  "description": "Harbor app permissions",
   "local": true,
   "windows": ["main"],
   "permissions": [

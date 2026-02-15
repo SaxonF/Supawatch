@@ -12,7 +12,7 @@ use crate::models::{AppData, LogEntry, Project};
 use crate::schema::DbSchema;
 use crate::supabase_api::SupabaseApi;
 
-const SERVICE_NAME: &str = "supawatch";
+const SERVICE_NAME: &str = "harbor";
 const ACCESS_TOKEN_KEY: &str = "access_token";
 const OPENAI_KEY_KEY: &str = "openai_key";
 
@@ -109,7 +109,7 @@ impl AppState {
     fn get_data_dir() -> PathBuf {
         let data_dir = dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("supawatch");
+            .join("harbor");
 
         fs::create_dir_all(&data_dir).ok();
         data_dir

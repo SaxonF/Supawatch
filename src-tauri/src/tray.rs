@@ -16,7 +16,7 @@ pub fn create(app_handle: &AppHandle) -> tauri::Result<TrayIcon> {
     TrayIconBuilder::with_id("tray")
         .icon(icon)
         .icon_as_template(true)
-        .tooltip("Supawatch")
+        .tooltip("Harbor")
         .build(app_handle)
 }
 

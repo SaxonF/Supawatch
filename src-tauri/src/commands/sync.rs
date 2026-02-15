@@ -15,7 +15,7 @@ pub struct PullDiffResponse {
     pub schema_files: Vec<String>,
 }
 
-async fn fetch_remote_schema_sql(
+pub(crate) async fn fetch_remote_schema_sql(
     api: &crate::supabase_api::SupabaseApi,
     project_ref: &str,
 ) -> Result<(String, crate::schema::DbSchema), String> {
@@ -243,7 +243,7 @@ async fn push_edge_functions(
         
         // Re-compute hash to update the lockfile after deploy
         let local_hash = sync::compute_files_hash(&files);
-        let hash_file = function_path.join(".supawatch_hash");
+        let hash_file = function_path.join(".harbor_hash");
 
         // Deploy with all files
         match api
@@ -977,7 +977,10 @@ pub async fn split_schema(
     let sql = tokio::fs::read_to_string(&schema_path)
         .await
         .map_err(|e| format!("Failed to read schema file: {}", e))?;
-    let schema = crate::parsing::parse_schema_sql(&sql)?;
+    
+    let filename = schema_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+    let files = vec![(filename, sql)];
+    let schema = crate::parsing::parse_schema_sql(&files)?;
 
     // Generate split files
     let split_files = crate::generator::split_sql(&schema);

@@ -1,13 +1,13 @@
 /**
  * Deep Link URL Generator
  *
- * Generates supawatch:// URLs for sharing sidebar configurations.
+ * Generates harbor:// URLs for sharing sidebar configurations.
  * These URLs can be shared on websites, documentation, etc.
- * When clicked, Supawatch will open the Import Template dialog
+ * When clicked, Harbor will open the Import Template dialog
  * with the URL pre-filled.
  *
  * URL format:
- *   supawatch://import?url=<encoded-url>&groupId=<optional-group>
+ *   harbor://import?url=<encoded-url>&groupId=<optional-group>
  *
  * The JSON file at the URL should contain one of:
  *   - An Item object (requires groupId in URL or wrapper)
@@ -17,7 +17,7 @@
  *   - A wrapper: { type: "group", group: {...} }
  */
 
-const SCHEME = "supawatch";
+const SCHEME = "harbor";
 
 /**
  * Generate a deep link URL that opens the import dialog with a template URL
@@ -33,16 +33,19 @@ const SCHEME = "supawatch";
  *   "https://example.com/templates/users-item.json",
  *   "admin"
  * );
- * // Returns: supawatch://import?url=https%3A%2F%2Fexample.com%2Ftemplates%2Fusers-item.json&groupId=admin
+ * // Returns: harbor://import?url=https%3A%2F%2Fexample.com%2Ftemplates%2Fusers-item.json&groupId=admin
  *
  * // For a group or full spec template
  * const url = generateImportLink(
  *   "https://example.com/templates/monitoring-group.json"
  * );
- * // Returns: supawatch://import?url=https%3A%2F%2Fexample.com%2Ftemplates%2Fmonitoring-group.json
+ * // Returns: harbor://import?url=https%3A%2F%2Fexample.com%2Ftemplates%2Fmonitoring-group.json
  * ```
  */
-export function generateImportLink(templateUrl: string, groupId?: string): string {
+export function generateImportLink(
+  templateUrl: string,
+  groupId?: string,
+): string {
   let url = `${SCHEME}://import?url=${encodeURIComponent(templateUrl)}`;
   if (groupId) {
     url += `&groupId=${encodeURIComponent(groupId)}`;
@@ -53,11 +56,11 @@ export function generateImportLink(templateUrl: string, groupId?: string): strin
 /**
  * Parse a deep link URL and extract the template URL
  *
- * @param url - The supawatch:// URL to parse
+ * @param url - The harbor:// URL to parse
  * @returns The parsed info or null if invalid
  */
 export function parseDeepLinkUrl(
-  url: string
+  url: string,
 ): { templateUrl: string; groupId?: string } | null {
   try {
     const parsed = new URL(url);
