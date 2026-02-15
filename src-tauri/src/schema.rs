@@ -42,6 +42,7 @@ pub struct TableInfo {
     pub policies: Vec<PolicyInfo>,
     pub check_constraints: Vec<CheckConstraintInfo>,
     pub comment: Option<String>,
+    pub extension: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -91,6 +92,7 @@ pub struct EnumInfo {
     pub schema: String, // Added schema field
     pub name: String,
     pub values: Vec<String>,
+    pub extension: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -125,6 +127,7 @@ pub struct FunctionInfo {
     pub security_definer: bool,     // SECURITY DEFINER
     pub config_params: Vec<(String, String)>, // SET param = value (e.g., search_path = '')
     pub grants: Vec<FunctionGrant>, // GRANT EXECUTE ON FUNCTION ... TO ...
+    pub extension: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -156,6 +159,7 @@ pub struct ViewInfo {
     pub comment: Option<String>,
     pub with_options: Vec<String>,    // WITH (security_barrier, etc.)
     pub check_option: Option<String>, // LOCAL, CASCADED
+    pub extension: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -178,6 +182,7 @@ pub struct SequenceInfo {
     pub cache_size: i64,
     pub owned_by: Option<String>, // table.column if owned by a column
     pub comment: Option<String>,
+    pub extension: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -193,6 +198,7 @@ pub struct CompositeTypeInfo {
     pub name: String,
     pub attributes: Vec<CompositeTypeAttribute>,
     pub comment: Option<String>,
+    pub extension: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -212,6 +218,7 @@ pub struct DomainInfo {
     pub check_constraints: Vec<DomainCheckConstraint>,
     pub collation: Option<String>,
     pub comment: Option<String>,
+    pub extension: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -263,6 +270,7 @@ impl Default for FunctionInfo {
             security_definer: false,
             config_params: vec![],
             grants: vec![],
+            extension: None,
         }
     }
 }

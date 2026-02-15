@@ -12,6 +12,7 @@ use crate::tray::update_icon;
 pub struct PullDiffResponse {
     pub migration_sql: String,
     pub edge_functions: Vec<sync::EdgeFunctionDiff>,
+    pub schema_files: Vec<String>,
 }
 
 async fn fetch_remote_schema_sql(
@@ -46,10 +47,14 @@ pub async fn get_pull_diff(
 
     let api = state.get_api_client().await.map_err(|e| e.to_string())?;
 
-    // 1. Get Schema SQL
-    let (migration_sql, _) = fetch_remote_schema_sql(&api, &project_ref).await?;
+    // 1. Get Schema SQL and remote schema
+    let (migration_sql, remote_schema) = fetch_remote_schema_sql(&api, &project_ref).await?;
 
-    // 2. List Edge Functions
+    // 2. Compute the split file names that will be created on pull
+    let split_files = crate::generator::split_sql(&remote_schema);
+    let schema_files: Vec<String> = split_files.into_iter().map(|(name, _)| name).collect();
+
+    // 3. List Edge Functions
     let funcs = api.list_functions(&project_ref).await.map_err(|e| e.to_string())?;
     let edge_functions = funcs
         .into_iter()
@@ -63,6 +68,7 @@ pub async fn get_pull_diff(
     Ok(PullDiffResponse {
         migration_sql,
         edge_functions,
+        schema_files,
     })
 }
 
@@ -101,9 +107,9 @@ async fn pull_project_internal(
     let (sql, remote_schema) = fetch_remote_schema_sql(&api, &project_ref).await?;
 
     // Cache the schema for AI SQL conversion
-    state.set_cached_schema(uuid, remote_schema).await;
+    state.set_cached_schema(uuid, remote_schema.clone()).await;
 
-    // 3. Write to file
+    // 3. Write split files
     let supabase_dir = std::path::Path::new(&project.local_path).join("supabase");
     if !supabase_dir.exists() {
         tokio::fs::create_dir_all(&supabase_dir)
@@ -112,7 +118,6 @@ async fn pull_project_internal(
     }
     
     let schemas_dir = supabase_dir.join("schemas");
-    let schema_path = schemas_dir.join("schema.sql");
     // Ensure schemas dir exists
     if !schemas_dir.exists() {
          tokio::fs::create_dir_all(&schemas_dir)
@@ -120,20 +125,44 @@ async fn pull_project_internal(
             .map_err(|e| e.to_string())?;
     }
 
-    tokio::fs::write(&schema_path, &sql)
+    // Generate split files from the remote schema
+    let split_files = crate::generator::split_sql(&remote_schema);
+
+    // Clear any existing files in the schemas directory
+    let mut existing_entries = tokio::fs::read_dir(&schemas_dir)
         .await
         .map_err(|e| e.to_string())?;
+    while let Some(entry) = existing_entries.next_entry().await.map_err(|e| e.to_string())? {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("sql") {
+            tokio::fs::remove_file(&path)
+                .await
+                .map_err(|e| format!("Failed to remove old schema file: {}", e))?;
+        }
+    }
 
+    // Write each split file
+    let mut written_files: Vec<String> = Vec::new();
+    for (filename, content) in &split_files {
+        let file_path = schemas_dir.join(filename);
+        tokio::fs::write(&file_path, content)
+            .await
+            .map_err(|e| format!("Failed to write {}: {}", filename, e))?;
+        written_files.push(filename.clone());
+    }
+
+    let file_list = written_files.join(", ");
     let log = LogEntry::success(
         Some(uuid),
         LogSource::System,
-        "Project schema pulled to supabase/schemas/schema.sql".to_string(),
+        format!("Schema pulled to supabase/schemas/ ({})", file_list),
     );
     state.add_log(log.clone()).await;
     app_handle.emit("log", &log).ok();
 
     // 4. Generate TypeScript types from the pulled schema
-    generate_typescript_for_project(&project, &schema_path, state.inner(), app_handle).await;
+    let pull_schema_source = sync::SchemaSource::Directory(schemas_dir);
+    generate_typescript_for_project(&project, &pull_schema_source, state.inner(), app_handle).await;
 
     // 5. Pull Edge Functions
     sync::pull_edge_functions(&api, &project_ref, Some(uuid), std::path::Path::new(&project.local_path), state.inner(), app_handle).await?;
@@ -323,12 +352,12 @@ async fn push_project_internal(
     state.add_log(log.clone()).await;
     app_handle.emit("log", &log).ok();
 
-    // Find schema path using shared sync module
-    let schema_path = sync::find_schema_path(Path::new(&project.local_path))
-        .ok_or("Schema file not found (checked supabase/schemas/schema.sql and supabase/schema.sql)")?;
+    // Find schema source using shared sync module
+    let schema_source = sync::find_schema_source(Path::new(&project.local_path))
+        .ok_or("Schema not found (checked supabase/schemas/ directory and supabase/schemas/schema.sql and supabase/schema.sql)")?;
 
     // Compute diff using shared sync module (introspect remote, parse local, compute diff)
-    let diff_result = sync::compute_schema_diff(&api, &project_ref, &schema_path).await?;
+    let diff_result = sync::compute_schema_diff(&api, &project_ref, &schema_source).await?;
     let diff = diff_result.diff;
 
     let summary = diff.summarize();
@@ -408,7 +437,7 @@ async fn push_project_internal(
     state.clear_cached_schema(uuid).await;
 
     // 6. Generate TypeScript types after successful push
-    generate_typescript_for_project(&project, &schema_path, state.inner(), app_handle).await;
+    generate_typescript_for_project(&project, &schema_source, state.inner(), app_handle).await;
 
     // 7. Deploy edge functions if any have changed
     let edge_function_results = push_edge_functions(&api, &project_ref, uuid, std::path::Path::new(&project.local_path), state.inner(), app_handle).await?;
@@ -758,7 +787,7 @@ async fn run_seeds_internal(
 /// This is called after pull and push operations.
 async fn generate_typescript_for_project(
     project: &Project,
-    schema_path: &Path,
+    source: &sync::SchemaSource,
     state: &AppState,
     app_handle: &AppHandle,
 ) {
@@ -783,8 +812,23 @@ async fn generate_typescript_for_project(
     state.add_log(log.clone()).await;
     app_handle.emit("log", &log).ok();
 
+    // Read schema SQL from source
+    let schema_sql = match sync::read_schema_source(source).await {
+        Ok(sql) => sql,
+        Err(e) => {
+            let log = LogEntry::error(
+                Some(project.id),
+                LogSource::Schema,
+                format!("Failed to read schema for TypeScript generation: {}", e),
+            );
+            state.add_log(log.clone()).await;
+            app_handle.emit("log", &log).ok();
+            return;
+        }
+    };
+
     // Generate TypeScript types
-    match sync::generate_typescript_types(schema_path, &ts_output_path).await {
+    match sync::generate_typescript_types_from_sql(&schema_sql, &ts_output_path).await {
         Ok(()) => {
             let relative_output = ts_output_path
                 .strip_prefix(project_path)
@@ -834,12 +878,12 @@ pub async fn get_project_diff(
 
     let api = state.get_api_client().await.map_err(|e| e.to_string())?;
 
-    // Find schema path
-    let schema_path = sync::find_schema_path(Path::new(&project.local_path))
-        .ok_or("Schema file not found (checked supabase/schemas/schema.sql and supabase/schema.sql)")?;
+    // Find schema source
+    let schema_source = sync::find_schema_source(Path::new(&project.local_path))
+        .ok_or("Schema not found (checked supabase/schemas/ directory and supabase/schemas/schema.sql and supabase/schema.sql)")?;
 
     // Compute diff
-    let diff_result = sync::compute_schema_diff(&api, &project_ref, &schema_path).await?;
+    let diff_result = sync::compute_schema_diff(&api, &project_ref, &schema_source).await?;
     let diff = diff_result.diff;
     let summary = diff.summarize();
     let is_destructive = diff.is_destructive();
@@ -912,4 +956,63 @@ pub async fn get_seed_content(
     }
 
     Ok(combined_sql)
+}
+
+/// Split an existing schema.sql into categorized files.
+/// This can be used standalone to "prettify" an existing monolithic schema file.
+#[tauri::command]
+pub async fn split_schema(
+    app_handle: AppHandle,
+    project_id: String,
+) -> Result<Vec<String>, String> {
+    let state = app_handle.state::<Arc<AppState>>();
+    let uuid = Uuid::parse_str(&project_id).map_err(|e| e.to_string())?;
+    let project = state.get_project(uuid).await.map_err(|e| e.to_string())?;
+
+    // Find existing schema file
+    let schema_path = sync::find_schema_path(Path::new(&project.local_path))
+        .ok_or("No schema.sql file found to split")?;
+
+    // Read and parse it
+    let sql = tokio::fs::read_to_string(&schema_path)
+        .await
+        .map_err(|e| format!("Failed to read schema file: {}", e))?;
+    let schema = crate::parsing::parse_schema_sql(&sql)?;
+
+    // Generate split files
+    let split_files = crate::generator::split_sql(&schema);
+
+    // Write split files to the schemas directory
+    let schemas_dir = Path::new(&project.local_path).join("supabase").join("schemas");
+    if !schemas_dir.exists() {
+        tokio::fs::create_dir_all(&schemas_dir)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    let mut written_files: Vec<String> = Vec::new();
+    for (filename, content) in &split_files {
+        let file_path = schemas_dir.join(filename);
+        tokio::fs::write(&file_path, content)
+            .await
+            .map_err(|e| format!("Failed to write {}: {}", filename, e))?;
+        written_files.push(filename.clone());
+    }
+
+    // Remove the old monolithic schema.sql
+    if schema_path.exists() {
+        tokio::fs::remove_file(&schema_path)
+            .await
+            .map_err(|e| format!("Failed to remove old schema file: {}", e))?;
+    }
+
+    let log = LogEntry::info(
+        Some(uuid),
+        LogSource::System,
+        format!("Schema split into {} files: {}", written_files.len(), written_files.join(", ")),
+    );
+    state.add_log(log.clone()).await;
+    app_handle.emit("log", &log).ok();
+
+    Ok(written_files)
 }

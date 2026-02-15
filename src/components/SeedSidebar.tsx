@@ -1,9 +1,9 @@
-import { ask } from "@tauri-apps/plugin-dialog";
 import { Play, RefreshCw, Sprout, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import * as api from "../api";
+import { notify } from "../utils/notification";
 import { Button } from "./ui/button";
 
 interface SeedSidebarProps {
@@ -41,16 +41,10 @@ export function SeedSidebar({ projectId, onClose }: SeedSidebarProps) {
     setIsRunning(true);
     try {
       const result = await api.runSeeds(projectId);
-      await ask(result, {
-        title: "Seeds Executed",
-        kind: "info",
-      });
+      notify("Seeds Executed", result);
     } catch (err) {
       console.error("Failed to run seeds:", err);
-      await ask("Failed to run seeds: " + String(err), {
-        title: "Error",
-        kind: "error",
-      });
+      notify("Error", "Failed to run seeds: " + String(err));
     } finally {
       setIsRunning(false);
     }

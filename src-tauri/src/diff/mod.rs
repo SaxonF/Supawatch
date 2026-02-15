@@ -125,7 +125,11 @@ pub fn compute_diff(remote: &DbSchema, local: &DbSchema) -> SchemaDiff {
         }
     }
 
-    for (name, _) in &remote.tables {
+    for (name, table) in &remote.tables {
+        // If table belongs to an extension, don't drop it (let DROP EXTENSION handle it, or ignore it)
+        if table.extension.is_some() {
+            continue;
+        }
         if !local.tables.contains_key(name) {
             diff.tables_to_drop.push(name.clone());
         }
@@ -159,7 +163,11 @@ pub fn compute_diff(remote: &DbSchema, local: &DbSchema) -> SchemaDiff {
         }
     }
 
-    for (name, _) in &remote.enums {
+    for (name, enum_) in &remote.enums {
+        // If enum belongs to an extension, don't drop it
+        if enum_.extension.is_some() {
+            continue;
+        }
         if !local.enums.contains_key(name) {
             diff.enum_changes.push(EnumChange {
                 name: name.clone(),
@@ -249,7 +257,11 @@ pub fn compute_diff(remote: &DbSchema, local: &DbSchema) -> SchemaDiff {
             }
         }
     }
-    for (name, _) in &remote.functions {
+    for (name, func) in &remote.functions {
+        // If function belongs to an extension, don't drop it
+        if func.extension.is_some() {
+            continue;
+        }
         if !local.functions.contains_key(name) {
             diff.functions_to_drop.push(name.clone());
         }
@@ -266,7 +278,11 @@ pub fn compute_diff(remote: &DbSchema, local: &DbSchema) -> SchemaDiff {
             }
         }
     }
-    for (name, _) in &remote.views {
+    for (name, view) in &remote.views {
+        // If view belongs to an extension, don't drop it
+        if view.extension.is_some() {
+            continue;
+        }
         if !local.views.contains_key(name) {
             diff.views_to_drop.push(name.clone());
         }
@@ -283,7 +299,11 @@ pub fn compute_diff(remote: &DbSchema, local: &DbSchema) -> SchemaDiff {
             }
         }
     }
-    for (name, _) in &remote.sequences {
+    for (name, seq) in &remote.sequences {
+        // If sequence belongs to an extension, don't drop it
+        if seq.extension.is_some() {
+            continue;
+        }
         if !local.sequences.contains_key(name) {
             diff.sequences_to_drop.push(name.clone());
         }
@@ -295,7 +315,11 @@ pub fn compute_diff(remote: &DbSchema, local: &DbSchema) -> SchemaDiff {
             diff.composite_types_to_create.push(local_type.clone());
         }
     }
-    for (name, _) in &remote.composite_types {
+    for (name, type_) in &remote.composite_types {
+        // If composite type belongs to an extension, don't drop it
+        if type_.extension.is_some() {
+            continue;
+        }
         if !local.composite_types.contains_key(name) {
             diff.composite_types_to_drop.push(name.clone());
         }
@@ -307,7 +331,11 @@ pub fn compute_diff(remote: &DbSchema, local: &DbSchema) -> SchemaDiff {
             diff.domains_to_create.push(local_domain.clone());
         }
     }
-    for (name, _) in &remote.domains {
+    for (name, domain) in &remote.domains {
+        // If domain belongs to an extension, don't drop it
+        if domain.extension.is_some() {
+            continue;
+        }
         if !local.domains.contains_key(name) {
             diff.domains_to_drop.push(name.clone());
         }
@@ -444,7 +472,7 @@ fn grants_match(local: &[FunctionGrant], remote: &[FunctionGrant]) -> bool {
 
         // For default roles, only include them if they are present in local definition
         // This implies: if local doesn't mention them, we ignore whatever the remote has (implicit default)
-        if name == "anon" || name == "service_role" || name == "public" {
+        if name == "anon" || name == "service_role" || name == "public" || name == "authenticated" {
             return local.iter().any(|l| l.grantee == name);
         }
 

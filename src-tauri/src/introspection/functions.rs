@@ -64,6 +64,7 @@ pub async fn get_functions(
           p.proisstrict as is_strict,
           p.prosecdef as security_definer,
           p.proconfig as config_params,
+          ext.extname as extension,
           (
             SELECT jsonb_agg(jsonb_build_object(
               'grantee', COALESCE(r.rolname, 'public'),
@@ -76,6 +77,8 @@ pub async fn get_functions(
         FROM pg_proc p
         JOIN pg_language l ON p.prolang = l.oid
         JOIN pg_namespace n ON p.pronamespace = n.oid
+        LEFT JOIN pg_depend dep ON dep.objid = p.oid AND dep.classid = 'pg_proc'::regclass AND dep.deptype = 'e'
+        LEFT JOIN pg_extension ext ON dep.refobjid = ext.oid AND dep.refclassid = 'pg_extension'::regclass
         WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
           AND n.nspname NOT LIKE 'pg_toast%'
           AND n.nspname NOT LIKE 'pg_temp%'
@@ -94,6 +97,7 @@ pub async fn get_functions(
         is_strict: bool,
         security_definer: bool,
         config_params: Option<Vec<String>>,
+        extension: Option<String>,
         grants: Option<serde_json::Value>,
     }
 
@@ -126,6 +130,7 @@ pub async fn get_functions(
                 security_definer: row.security_definer,
                 config_params: parse_config_params(row.config_params),
                 grants: parse_grants(row.grants),
+                extension: row.extension,
             },
         );
     }

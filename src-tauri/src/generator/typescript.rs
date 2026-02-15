@@ -588,6 +588,7 @@ mod tests {
                 "active".to_string(),
                 "completed".to_string(),
             ],
+            extension: None,
         };
 
         let config = TypeScriptConfig::default();
@@ -612,6 +613,7 @@ mod tests {
                 schema: "public".to_string(),
                 name: "status".to_string(),
                 values: vec!["pending".to_string(), "active".to_string()],
+                extension: None,
             },
         );
 
@@ -671,6 +673,7 @@ mod tests {
                 policies: vec![],
                 check_constraints: vec![],
                 comment: None,
+                extension: None,
             },
         );
 

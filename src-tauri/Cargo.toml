@@ -30,6 +30,7 @@ serde_json = "1.0.140"
 tauri-plugin-shell = "~2.3.3"
 tauri-plugin-dialog = "~2.3.2"
 tauri-plugin-fs = "~2.4.1"
+tauri-plugin-notification = "~2.3.0"
 
 # File watching
 notify = "8"

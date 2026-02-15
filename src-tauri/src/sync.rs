@@ -3,7 +3,7 @@
 //! This module consolidates common code used by both manual commands and
 //! the file watcher for syncing with Supabase.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
@@ -353,14 +353,101 @@ pub async fn pull_edge_functions(
 // Schema Path Resolution
 // ============================================================================
 
+/// Represents where the schema is stored — either a single file or a directory of split files.
+#[derive(Debug, Clone)]
+pub enum SchemaSource {
+    SingleFile(PathBuf),
+    Directory(PathBuf),
+}
+
+/// Find the schema source, preferring the split directory layout over a single file.
+///
+/// Checks for:
+/// 1. `supabase/schemas/` directory containing `.sql` files (split layout)
+/// 2. `supabase/schemas/schema.sql` (single file in schemas dir)
+/// 3. `supabase/schema.sql` (legacy single file location)
+pub fn find_schema_source(project_local_path: &Path) -> Option<SchemaSource> {
+    let schemas_dir = project_local_path.join("supabase/schemas");
+
+    // Check for split directory layout first
+    if schemas_dir.exists() && schemas_dir.is_dir() {
+        // Check if directory contains split files (numbered .sql files, not just schema.sql)
+        if let Ok(entries) = std::fs::read_dir(&schemas_dir) {
+            let has_split_files = entries
+                .filter_map(|e| e.ok())
+                .any(|e| {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    name.ends_with(".sql") && name != "schema.sql"
+                });
+
+            if has_split_files {
+                return Some(SchemaSource::Directory(schemas_dir));
+            }
+        }
+    }
+
+    // Fall back to single file
+    find_schema_path(project_local_path).map(SchemaSource::SingleFile)
+}
+
 /// Find the schema file path, checking multiple standard locations.
-pub fn find_schema_path(project_local_path: &Path) -> Option<std::path::PathBuf> {
+/// This is a backwards-compatible wrapper; prefer `find_schema_source()` for new code.
+pub fn find_schema_path(project_local_path: &Path) -> Option<PathBuf> {
     let schema_paths = [
         project_local_path.join("supabase/schemas/schema.sql"),
         project_local_path.join("supabase/schema.sql"),
     ];
 
     schema_paths.into_iter().find(|p| p.exists())
+}
+
+/// Read all `.sql` files from a schema directory, sorted alphabetically, and concatenate.
+///
+/// This is completely unopinionated about file contents — it just reads and joins.
+/// The numbered prefixes (00_, 01_, etc.) ensure correct dependency ordering.
+pub async fn read_schema_dir(dir: &Path) -> Result<String, String> {
+    let mut entries: Vec<PathBuf> = Vec::new();
+
+    let mut read_dir = tokio::fs::read_dir(dir)
+        .await
+        .map_err(|e| format!("Failed to read schema directory: {}", e))?;
+
+    while let Some(entry) = read_dir.next_entry().await.map_err(|e| e.to_string())? {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("sql") {
+            entries.push(path);
+        }
+    }
+
+    // Sort alphabetically by filename (numeric prefixes give dependency order)
+    entries.sort_by(|a, b| {
+        a.file_name().unwrap_or_default().cmp(&b.file_name().unwrap_or_default())
+    });
+
+    let mut combined = String::new();
+    for path in entries {
+        let content = tokio::fs::read_to_string(&path)
+            .await
+            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+        if !combined.is_empty() {
+            combined.push('\n');
+        }
+        combined.push_str(&content);
+    }
+
+    Ok(combined)
+}
+
+/// Read the schema SQL from a `SchemaSource` — either a single file or stitched directory.
+pub async fn read_schema_source(source: &SchemaSource) -> Result<String, String> {
+    match source {
+        SchemaSource::SingleFile(path) => {
+            tokio::fs::read_to_string(path)
+                .await
+                .map_err(|e| format!("Failed to read schema file: {}", e))
+        }
+        SchemaSource::Directory(dir) => read_schema_dir(dir).await,
+    }
 }
 
 /// Find the admin config file path, checking multiple standard locations.
@@ -397,19 +484,18 @@ pub struct SchemaDiffResult {
 }
 
 /// Compute the diff between remote and local schemas.
+/// Accepts a `SchemaSource` to support both single file and split directory layouts.
 pub async fn compute_schema_diff(
     api: &SupabaseApi,
     project_ref: &str,
-    schema_path: &Path,
+    source: &SchemaSource,
 ) -> Result<SchemaDiffResult, String> {
     // 1. Introspect Remote
     let introspector = crate::introspection::Introspector::new(api, project_ref.to_string());
     let remote_schema = introspector.introspect().await?;
 
-    // 2. Parse Local
-    let local_sql = tokio::fs::read_to_string(schema_path)
-        .await
-        .map_err(|e| e.to_string())?;
+    // 2. Parse Local (read from single file or stitch from directory)
+    let local_sql = read_schema_source(source).await?;
     let local_schema = crate::parsing::parse_schema_sql(&local_sql)?;
 
     // 3. Diff (Remote -> Local)
@@ -452,6 +538,29 @@ pub async fn generate_typescript_types(
     }
 
     // 4. Write the TypeScript file
+    tokio::fs::write(output_path, typescript_content)
+        .await
+        .map_err(|e| format!("Failed to write TypeScript file: {}", e))?;
+
+    Ok(())
+}
+
+/// Generate TypeScript types from a SQL string (already read from file/directory).
+pub async fn generate_typescript_types_from_sql(
+    sql: &str,
+    output_path: &Path,
+) -> Result<(), String> {
+    let schema = crate::parsing::parse_schema_sql(sql)?;
+
+    let config = crate::generator::typescript::TypeScriptConfig::default();
+    let typescript_content = crate::generator::typescript::generate_typescript(&schema, &config);
+
+    if let Some(parent) = output_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| format!("Failed to create output directory: {}", e))?;
+    }
+
     tokio::fs::write(output_path, typescript_content)
         .await
         .map_err(|e| format!("Failed to write TypeScript file: {}", e))?;

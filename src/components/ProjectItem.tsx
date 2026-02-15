@@ -13,6 +13,7 @@ import {
 import { useState } from "react";
 import * as api from "../api";
 import type { Project } from "../types";
+import { notify } from "../utils/notification";
 import "./ProjectItem.css";
 import { Button } from "./ui/button";
 
@@ -51,23 +52,17 @@ export function ProjectItem({ project, onUpdate, onDelete }: ProjectItemProps) {
         kind: "warning",
         okLabel: "Overwrite",
         cancelLabel: "Cancel",
-      }
+      },
     );
 
     if (!confirmed) return;
     setIsLoading(true);
     try {
       await api.pullProject(project.id);
-      await ask("Project pulled successfully", {
-        title: "Success",
-        kind: "info",
-      });
+      notify("Success", "Project pulled successfully");
     } catch (err) {
       console.error("Failed to pull project:", err);
-      await ask("Failed to pull project: " + String(err), {
-        title: "Error",
-        kind: "error",
-      });
+      notify("Error", "Failed to pull project: " + String(err));
     } finally {
       setIsLoading(false);
     }
@@ -77,16 +72,24 @@ export function ProjectItem({ project, onUpdate, onDelete }: ProjectItemProps) {
     setIsLoading(true);
     try {
       const result = await api.pushProject(project.id);
-      if (result === "No changes") {
-        await ask("No schema changes detected", {
-          title: "Info",
-          kind: "info",
-        });
+      const hasChanges =
+        result.migration_sql.trim() !== "" ||
+        result.edge_function_results.length > 0;
+
+      if (!hasChanges) {
+        notify("Info", "No schema changes detected");
       } else {
-        await ask("Schema changes pushed successfully", {
-          title: "Success",
-          kind: "info",
-        });
+        const hasErrors = result.edge_function_results.some(
+          (r) => r.status === "error",
+        );
+        if (hasErrors) {
+          notify(
+            "Deployment Warning",
+            "Some edge functions failed to deploy. Please check the logs.",
+          );
+        } else {
+          notify("Success", "Schema changes pushed successfully");
+        }
       }
     } catch (err) {
       const errorMsg = String(err);
@@ -99,30 +102,21 @@ export function ProjectItem({ project, onUpdate, onDelete }: ProjectItemProps) {
             kind: "warning",
             okLabel: "Push Changes",
             cancelLabel: "Cancel",
-          }
+          },
         );
 
         if (confirmed) {
           try {
             await api.pushProject(project.id, true);
-            await ask("Schema changes pushed successfully", {
-              title: "Success",
-              kind: "info",
-            });
+            notify("Success", "Schema changes pushed successfully");
           } catch (retryErr) {
             console.error("Failed to push project (forced):", retryErr);
-            await ask("Failed to push project: " + String(retryErr), {
-              title: "Error",
-              kind: "error",
-            });
+            notify("Error", "Failed to push project: " + String(retryErr));
           }
         }
       } else {
         console.error("Failed to push project:", err);
-        await ask("Failed to push project: " + String(err), {
-          title: "Error",
-          kind: "error",
-        });
+        notify("Error", "Failed to push project: " + String(err));
       }
     } finally {
       setIsLoading(false);
@@ -158,7 +152,7 @@ export function ProjectItem({ project, onUpdate, onDelete }: ProjectItemProps) {
     if (!project.supabase_project_ref) return;
     try {
       await open(
-        `https://supabase.com/dashboard/project/${project.supabase_project_ref}`
+        `https://supabase.com/dashboard/project/${project.supabase_project_ref}`,
       );
     } catch (err) {
       console.error("Failed to open Supabase dashboard:", err);

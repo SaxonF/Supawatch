@@ -236,12 +236,19 @@ export async function deployEdgeFunction(
   functionName: string,
   functionPath: string,
 ): Promise<string> {
-  return invoke("deploy_edge_function", {
-    projectId,
-    functionSlug,
-    functionName,
-    functionPath,
-  });
+  // 3 minute timeout
+  const TIMEOUT = 180_000;
+  return invokeWithTimeout(
+    "deploy_edge_function",
+    {
+      projectId,
+      functionSlug,
+      functionName,
+      functionPath,
+    },
+    TIMEOUT,
+    "Deployment timed out after 3 minutes",
+  );
 }
 
 export async function getRemoteSchema(projectId: string): Promise<string> {
@@ -256,7 +263,14 @@ export async function pushProject(
   projectId: string,
   force?: boolean,
 ): Promise<import("./types").PushResponse> {
-  return invoke("push_project", { projectId, force });
+  // 3 minute timeout (backend http client has 2m timeout)
+  const TIMEOUT = 180_000;
+  return invokeWithTimeout(
+    "push_project",
+    { projectId, force },
+    TIMEOUT,
+    "Push timed out after 3 minutes. Please check your internet connection or try again.",
+  );
 }
 
 export async function getProjectDiff(
@@ -269,6 +283,10 @@ export async function getPullDiff(
   projectId: string,
 ): Promise<import("./types").PullDiffResponse> {
   return invoke("get_pull_diff", { projectId });
+}
+
+export async function splitSchema(projectId: string): Promise<string[]> {
+  return invoke("split_schema", { projectId });
 }
 
 // Supabase Logs API

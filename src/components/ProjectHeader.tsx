@@ -7,14 +7,24 @@ import {
   EyeOff,
   FileDiff,
   Folder,
+  MoreHorizontal,
   PanelLeft,
+  Scissors,
   Sprout,
   Trash2,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import * as api from "../api";
 import type { Project } from "../types";
+import { notify } from "../utils/notification";
 import { Button } from "./ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 
 interface ProjectHeaderProps {
   project: Project;
@@ -82,6 +92,30 @@ export function ProjectHeader({
       onDelete();
     } catch (err) {
       console.error("Failed to delete project:", err);
+    }
+  };
+
+  const handleSplitSchema = async () => {
+    const confirmed = await ask(
+      "Split schema.sql into categorized files? This will replace the monolithic file with numbered files (e.g. 00_extensions.sql, 04_tables.sql).",
+      {
+        title: "Split Schema",
+        kind: "info",
+        okLabel: "Split",
+        cancelLabel: "Cancel",
+      },
+    );
+
+    if (!confirmed) return;
+    try {
+      const files = await api.splitSchema(project.id);
+      notify(
+        "Success",
+        `Schema split into ${files.length} files:\n${files.join("\n")}`,
+      );
+    } catch (err) {
+      console.error("Failed to split schema:", err);
+      notify("Error", "Failed to split schema: " + String(err));
     }
   };
 
@@ -160,14 +194,6 @@ export function ProjectHeader({
           <Button
             variant="outline"
             size="icon"
-            onClick={handleDelete}
-            title="Delete project"
-          >
-            <Trash2 size={16} strokeWidth={1} />
-          </Button>
-          <Button
-            variant="outline"
-            size="icon"
             className={
               showSeedSidebar
                 ? "bg-muted text-primary hover:text-primary/80"
@@ -231,6 +257,27 @@ export function ProjectHeader({
             Watch
           </Button>
         </div>
+
+        <div className="w-px h-5 bg-border mx-1" />
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" title="More actions">
+              <MoreHorizontal size={16} strokeWidth={1} />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={handleSplitSchema}>
+              <Scissors size={16} strokeWidth={1} />
+              Split Schema
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onClick={handleDelete}>
+              <Trash2 size={16} strokeWidth={1} />
+              Delete Project
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </header>
   );

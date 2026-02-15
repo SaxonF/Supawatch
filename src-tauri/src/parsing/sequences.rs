@@ -59,6 +59,7 @@ pub fn handle_create_sequence(
             cache_size,
             owned_by,
             comment: None,
+            extension: None,
         },
     );
 }

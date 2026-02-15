@@ -15,15 +15,21 @@ pub async fn get_enums(
     project_ref: &str,
 ) -> Result<HashMap<String, EnumInfo>, String> {
     let query = r#"
-        SELECT n.nspname as schema, t.typname as name, array_agg(e.enumlabel ORDER BY e.enumsortorder) as values
+        SELECT
+            n.nspname as schema,
+            t.typname as name,
+            array_agg(e.enumlabel ORDER BY e.enumsortorder) as values,
+            ext.extname as extension
         FROM pg_type t
         JOIN pg_enum e ON t.oid = e.enumtypid
         JOIN pg_namespace n ON t.typnamespace = n.oid
+        LEFT JOIN pg_depend dep ON dep.objid = t.oid AND dep.classid = 'pg_type'::regclass AND dep.deptype = 'e'
+        LEFT JOIN pg_extension ext ON dep.refobjid = ext.oid AND dep.refclassid = 'pg_extension'::regclass
         WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
           AND n.nspname NOT LIKE 'pg_toast%'
           AND n.nspname NOT LIKE 'pg_temp%'
           AND n.nspname NOT IN ('auth', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium', 'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger', 'topology', 'supabase_migrations', 'supabase_functions', 'cron', 'pgbouncer')
-        GROUP BY n.nspname, t.typname
+        GROUP BY n.nspname, t.typname, t.oid, ext.extname
     "#;
 
     #[derive(Deserialize)]
@@ -31,6 +37,7 @@ pub async fn get_enums(
         schema: String,
         name: String,
         values: serde_json::Value,
+        extension: Option<String>,
     }
 
     let result = api
@@ -52,6 +59,7 @@ pub async fn get_enums(
                 schema: row.schema,
                 name: row.name,
                 values,
+                extension: row.extension,
             },
         );
     }
@@ -75,19 +83,22 @@ pub async fn get_composite_types(
                     'collation', c.collname
                 ) ORDER BY a.attnum
             ) as attributes,
-            obj_description(t.oid, 'pg_type') as comment
+            obj_description(t.oid, 'pg_type') as comment,
+            ext.extname as extension
         FROM pg_type t
         JOIN pg_namespace n ON t.typnamespace = n.oid
         JOIN pg_class cls ON cls.oid = t.typrelid
         LEFT JOIN pg_attribute a ON a.attrelid = cls.oid AND a.attnum > 0 AND NOT a.attisdropped
         LEFT JOIN pg_collation c ON c.oid = a.attcollation AND c.collname != 'default'
+        LEFT JOIN pg_depend dep ON dep.objid = t.oid AND dep.classid = 'pg_type'::regclass AND dep.deptype = 'e'
+        LEFT JOIN pg_extension ext ON dep.refobjid = ext.oid AND dep.refclassid = 'pg_extension'::regclass
         WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
           AND n.nspname NOT LIKE 'pg_toast%'
           AND n.nspname NOT LIKE 'pg_temp%'
           AND n.nspname NOT IN ('auth', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium', 'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger', 'topology', 'supabase_migrations', 'supabase_functions', 'cron', 'pgbouncer')
         AND t.typtype = 'c'
         AND cls.relkind = 'c'
-        GROUP BY n.nspname, t.typname, t.oid
+        GROUP BY n.nspname, t.typname, t.oid, ext.extname
     "#;
 
     #[derive(Deserialize)]
@@ -96,6 +107,7 @@ pub async fn get_composite_types(
         name: String,
         attributes: serde_json::Value,
         comment: Option<String>,
+        extension: Option<String>,
     }
 
     let result = api
@@ -134,6 +146,7 @@ pub async fn get_composite_types(
                 name: row.name,
                 attributes: attrs,
                 comment: row.comment,
+                extension: row.extension,
             },
         );
     }
@@ -155,6 +168,7 @@ pub async fn get_domains(
             t.typnotnull as is_not_null,
             c.collname as collation,
             obj_description(t.oid, 'pg_type') as comment,
+            ext.extname as extension,
             (
                 SELECT json_agg(json_build_object(
                     'name', con.conname,
@@ -166,6 +180,8 @@ pub async fn get_domains(
         FROM pg_type t
         JOIN pg_namespace n ON t.typnamespace = n.oid
         LEFT JOIN pg_collation c ON c.oid = t.typcollation AND c.collname != 'default'
+        LEFT JOIN pg_depend dep ON dep.objid = t.oid AND dep.classid = 'pg_type'::regclass AND dep.deptype = 'e'
+        LEFT JOIN pg_extension ext ON dep.refobjid = ext.oid AND dep.refclassid = 'pg_extension'::regclass
         WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
           AND n.nspname NOT LIKE 'pg_toast%'
           AND n.nspname NOT LIKE 'pg_temp%'
@@ -182,6 +198,7 @@ pub async fn get_domains(
         is_not_null: bool,
         collation: Option<String>,
         comment: Option<String>,
+        extension: Option<String>,
         check_constraints: Option<serde_json::Value>,
     }
 
@@ -221,6 +238,7 @@ pub async fn get_domains(
                 check_constraints: checks,
                 collation: row.collation,
                 comment: row.comment,
+                extension: row.extension,
             },
         );
     }

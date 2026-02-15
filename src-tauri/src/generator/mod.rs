@@ -8,8 +8,265 @@ mod types;
 use crate::defaults;
 use crate::diff::{EnumChangeType, SchemaDiff};
 use crate::schema::{
-    CompositeTypeInfo, DbSchema, DomainInfo, ExtensionInfo, RoleInfo, SequenceInfo, TableInfo, ViewInfo,
+    CompositeTypeInfo, DbSchema, DomainInfo, ExtensionInfo, RoleInfo, SequenceInfo, TableInfo,
+    ViewInfo,
 };
+
+/// Generate split SQL files from a `DbSchema`.
+///
+/// Takes a complete schema and produces a `Vec<(filename, sql_content)>` where each file
+/// contains a specific category of SQL objects. Files are numbered so that alphabetical
+/// sorting gives correct dependency order.
+///
+/// This is a standalone operation — it works on any `DbSchema`, whether parsed from a local
+/// file or introspected from remote. It can be used during pull or independently to
+/// "prettify" an existing schema.sql.
+pub fn split_sql(schema: &DbSchema) -> Vec<(String, String)> {
+    let mut files: Vec<(String, String)> = Vec::new();
+
+    // ---- 00_extensions.sql: CREATE SCHEMA + CREATE EXTENSION ----
+    {
+        let mut stmts: Vec<String> = Vec::new();
+
+        // Collect schemas from all objects
+        let mut schemas = std::collections::HashSet::new();
+        for table in schema.tables.values() {
+            schemas.insert(table.schema.clone());
+        }
+        for view in schema.views.values() {
+            schemas.insert(view.schema.clone());
+        }
+        for enum_info in schema.enums.values() {
+            schemas.insert(enum_info.schema.clone());
+        }
+        for seq in schema.sequences.values() {
+            schemas.insert(seq.schema.clone());
+        }
+        for func in schema.functions.values() {
+            schemas.insert(func.schema.clone());
+        }
+        for comp in schema.composite_types.values() {
+            schemas.insert(comp.schema.clone());
+        }
+        for domain in schema.domains.values() {
+            schemas.insert(domain.schema.clone());
+        }
+        for ext in schema.extensions.values() {
+            if let Some(s) = &ext.schema {
+                schemas.insert(s.clone());
+            }
+        }
+
+        let mut sorted_schemas: Vec<String> = schemas.into_iter().collect();
+        sorted_schemas.sort();
+        for s in sorted_schemas {
+            if !defaults::is_excluded_schema(&s) {
+                stmts.push(format!("CREATE SCHEMA IF NOT EXISTS \"{}\";", s));
+            }
+        }
+
+        // Extensions (sorted by name for deterministic output)
+        let mut exts: Vec<&ExtensionInfo> = schema.extensions.values().collect();
+        exts.sort_by(|a, b| a.name.cmp(&b.name));
+        for ext in exts {
+            stmts.push(roles::generate_create_extension(ext));
+        }
+
+        if !stmts.is_empty() {
+            files.push(("00_extensions.sql".to_string(), stmts.join("\n")));
+        }
+    }
+
+    // ---- 01_roles.sql ----
+    {
+        let mut stmts: Vec<String> = Vec::new();
+        let mut role_list: Vec<&RoleInfo> = schema.roles.values().collect();
+        role_list.sort_by(|a, b| a.name.cmp(&b.name));
+        for role in role_list {
+            stmts.push(roles::generate_create_role(role));
+        }
+        if !stmts.is_empty() {
+            files.push(("01_roles.sql".to_string(), stmts.join("\n")));
+        }
+    }
+
+    // ---- 02_types.sql: enums, composite types, domains ----
+    {
+        let mut stmts: Vec<String> = Vec::new();
+
+        // Enums
+        let mut enum_list: Vec<(&String, &crate::schema::EnumInfo)> =
+            schema.enums.iter().collect();
+        enum_list.sort_by(|a, b| a.0.cmp(b.0));
+        for (name, enum_info) in enum_list {
+            stmts.push(types::generate_create_enum(name, &enum_info.values));
+        }
+
+        // Composite types
+        let mut comp_list: Vec<&CompositeTypeInfo> = schema.composite_types.values().collect();
+        comp_list.sort_by(|a, b| a.name.cmp(&b.name));
+        for comp in comp_list {
+            stmts.push(types::generate_create_composite_type(comp));
+        }
+
+        // Domains
+        let mut domain_list: Vec<&DomainInfo> = schema.domains.values().collect();
+        domain_list.sort_by(|a, b| a.name.cmp(&b.name));
+        for domain in domain_list {
+            stmts.push(types::generate_create_domain(domain));
+        }
+
+        if !stmts.is_empty() {
+            files.push(("02_types.sql".to_string(), stmts.join("\n")));
+        }
+    }
+
+    // ---- 03_sequences.sql ----
+    {
+        let mut stmts: Vec<String> = Vec::new();
+        let mut seq_list: Vec<&SequenceInfo> = schema.sequences.values().collect();
+        seq_list.sort_by(|a, b| a.name.cmp(&b.name));
+        for seq in seq_list {
+            stmts.push(objects::generate_create_sequence(seq));
+        }
+        if !stmts.is_empty() {
+            files.push(("03_sequences.sql".to_string(), stmts.join("\n")));
+        }
+    }
+
+    // ---- 04_tables.sql: tables with their indexes, RLS, policies, triggers ----
+    {
+        let mut stmts: Vec<String> = Vec::new();
+        let mut table_list: Vec<(&String, &TableInfo)> = schema.tables.iter().collect();
+        table_list.sort_by(|a, b| a.0.cmp(b.0));
+
+        for (name, table) in &table_list {
+            // CREATE TABLE (includes indexes and RLS enable)
+            stmts.push(tables::generate_create_table(table));
+
+            // Policies
+            let qualified_name = format!("\"{}\".\"{}\"\n", table.schema, table.table_name);
+            let qualified_name = qualified_name.trim().to_string();
+            for policy in &table.policies {
+                stmts.push(constraints::generate_create_policy(&qualified_name, policy));
+            }
+
+            // Triggers
+            for trigger in &table.triggers {
+                stmts.push(constraints::generate_create_trigger(&qualified_name, trigger));
+            }
+
+            // Add a blank line between tables for readability
+            stmts.push(String::new());
+        }
+
+        if !stmts.is_empty() {
+            files.push(("04_tables.sql".to_string(), stmts.join("\n")));
+        }
+    }
+
+    // ---- 05_views.sql ----
+    {
+        let mut stmts: Vec<String> = Vec::new();
+        let mut view_list: Vec<&ViewInfo> = schema.views.values().collect();
+        view_list.sort_by(|a, b| a.name.cmp(&b.name));
+        for view in view_list {
+            stmts.push(objects::generate_create_view(view));
+        }
+        if !stmts.is_empty() {
+            files.push(("05_views.sql".to_string(), stmts.join("\n")));
+        }
+    }
+
+    // ---- 06_functions.sql: functions + their grants ----
+    {
+        let mut stmts: Vec<String> = Vec::new();
+        let mut func_list: Vec<&crate::schema::FunctionInfo> = schema.functions.values().collect();
+        func_list.sort_by(|a, b| a.name.cmp(&b.name));
+        for func in func_list {
+            stmts.push(objects::generate_create_function(func));
+            let grants = objects::generate_function_grants(func);
+            stmts.extend(grants);
+        }
+        if !stmts.is_empty() {
+            files.push(("06_functions.sql".to_string(), stmts.join("\n")));
+        }
+    }
+
+    // ---- 07_foreign_keys.sql: all FK constraints deferred for dependency safety ----
+    {
+        let mut stmts: Vec<String> = Vec::new();
+        let mut table_list: Vec<(&String, &TableInfo)> = schema.tables.iter().collect();
+        table_list.sort_by(|a, b| a.0.cmp(b.0));
+
+        for (_, table) in &table_list {
+            let qualified_name = format!("\"{}\".\"{}\"\n", table.schema, table.table_name);
+            let qualified_name = qualified_name.trim().to_string();
+            for fk in &table.foreign_keys {
+                stmts.push(constraints::generate_add_foreign_key(&qualified_name, fk));
+            }
+        }
+
+        if !stmts.is_empty() {
+            files.push(("07_foreign_keys.sql".to_string(), stmts.join("\n")));
+        }
+    }
+
+    // ---- 08_comments.sql ----
+    {
+        let mut stmts: Vec<String> = Vec::new();
+
+        // Table and column comments
+        let mut table_list: Vec<(&String, &TableInfo)> = schema.tables.iter().collect();
+        table_list.sort_by(|a, b| a.0.cmp(b.0));
+        for (name, table) in &table_list {
+            if let Some(comment) = &table.comment {
+                stmts.push(format!(
+                    "COMMENT ON TABLE \"{}\" IS '{}';",
+                    name,
+                    escape_string(comment)
+                ));
+            }
+            let mut columns: Vec<_> = table.columns.values().collect();
+            columns.sort_by(|a, b| a.column_name.cmp(&b.column_name));
+            for col in columns {
+                if let Some(comment) = &col.comment {
+                    stmts.push(format!(
+                        "COMMENT ON COLUMN \"{}\".\"{}\" IS '{}';",
+                        name,
+                        col.column_name,
+                        escape_string(comment)
+                    ));
+                }
+            }
+        }
+
+        // View comments
+        let mut view_list: Vec<&ViewInfo> = schema.views.values().collect();
+        view_list.sort_by(|a, b| a.name.cmp(&b.name));
+        for view in view_list {
+            if let Some(comment) = &view.comment {
+                let view_type = if view.is_materialized {
+                    "MATERIALIZED VIEW"
+                } else {
+                    "VIEW"
+                };
+                stmts.push(format!(
+                    "COMMENT ON {} \"{}\" IS '{}';",
+                    view_type,
+                    view.name,
+                    escape_string(comment)
+                ));
+            }
+        }
+
+        if !stmts.is_empty() {
+            files.push(("08_comments.sql".to_string(), stmts.join("\n")));
+        }
+    }
+
+    files
+}
 
 pub fn generate_sql(diff: &SchemaDiff, local_schema: &DbSchema) -> String {
     let mut statements: Vec<String> = vec![];

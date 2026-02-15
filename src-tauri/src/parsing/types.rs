@@ -20,6 +20,7 @@ pub fn handle_create_type(
                         schema,
                         name: enum_name,
                         values: labels.iter().map(|v| v.value.clone()).collect(),
+                        extension: None,
                     },
                 );
             }
@@ -42,6 +43,7 @@ pub fn handle_create_type(
                         name: type_name,
                         attributes: attrs,
                         comment: None,
+                        extension: None,
                     },
                 );
             }
@@ -93,6 +95,7 @@ pub fn handle_create_domain(
             check_constraints,
             collation: collation.map(|c| c.to_string()),
             comment: None,
+            extension: None,
         },
     );
 }

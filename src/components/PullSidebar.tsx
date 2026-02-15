@@ -5,6 +5,7 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import * as api from "../api";
 import type { PullDiffResponse } from "../types";
+import { notify } from "../utils/notification";
 import { Button } from "./ui/button";
 
 interface PullSidebarProps {
@@ -56,7 +57,7 @@ export function PullSidebar({
         kind: "warning",
         okLabel: "Overwrite",
         cancelLabel: "Cancel",
-      }
+      },
     );
 
     if (!confirmed) return;
@@ -64,17 +65,11 @@ export function PullSidebar({
     setIsPulling(true);
     try {
       await api.pullProject(projectId);
-      await ask("Project pulled successfully", {
-        title: "Success",
-        kind: "info",
-      });
+      notify("Success", "Project pulled successfully");
       onSuccess();
     } catch (err) {
       console.error("Failed to pull project:", err);
-      await ask("Failed to pull project: " + String(err), {
-        title: "Error",
-        kind: "error",
-      });
+      notify("Error", "Failed to pull project: " + String(err));
     } finally {
       setIsPulling(false);
     }
@@ -154,6 +149,24 @@ export function PullSidebar({
                     >
                       <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
                       <span className="font-mono text-xs">{func.name}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {diff.schema_files.length > 0 && (
+              <div className="p-4 border-b shrink-0">
+                <h3 className="text-xs text-muted-foreground uppercase tracking-wider mb-2 font-mono">
+                  Schema Files ({diff.schema_files.length})
+                </h3>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {diff.schema_files.map((file) => (
+                    <div
+                      key={file}
+                      className="flex items-center gap-2 text-sm rounded-full py-2 px-3 bg-muted"
+                    >
+                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                      <span className="font-mono text-xs">{file}</span>
                     </div>
                   ))}
                 </div>

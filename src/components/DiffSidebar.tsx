@@ -14,6 +14,7 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import * as api from "../api";
 import type { DiffResponse, EdgeFunctionDeploymentResult } from "../types";
+import { notify } from "../utils/notification";
 import { Button } from "./ui/button";
 
 interface DiffSidebarProps {
@@ -90,19 +91,13 @@ export function DiffSidebar({
       );
 
       if (hasErrors) {
-        await ask(
+        notify(
+          "Deployment Warning",
           "Some edge functions failed to deploy. Please check the results.",
-          {
-            title: "Deployment Warning",
-            kind: "warning",
-          },
         );
         // Do NOT close or refresh immediately so user can see errors
       } else {
-        await ask("Schema changes pushed successfully", {
-          title: "Success",
-          kind: "info",
-        });
+        notify("Success", "Schema changes pushed successfully");
         loadDiff(); // Refresh to show empty
         onSuccess();
       }
@@ -133,33 +128,21 @@ export function DiffSidebar({
             );
 
             if (hasErrors) {
-              await ask(
+              notify(
+                "Deployment Warning",
                 "Some edge functions failed to deploy. Please check the results.",
-                {
-                  title: "Deployment Warning",
-                  kind: "warning",
-                },
               );
             } else {
-              await ask("Schema changes pushed successfully", {
-                title: "Success",
-                kind: "info",
-              });
+              notify("Success", "Schema changes pushed successfully");
               loadDiff();
               onSuccess();
             }
           } catch (retryErr) {
-            await ask("Failed to push project: " + String(retryErr), {
-              title: "Error",
-              kind: "error",
-            });
+            notify("Error", "Failed to push project: " + String(retryErr));
           }
         }
       } else {
-        await ask("Failed to push project: " + String(err), {
-          title: "Error",
-          kind: "error",
-        });
+        notify("Error", "Failed to push project: " + String(err));
       }
     } finally {
       setIsPushing(false);

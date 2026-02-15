@@ -85,6 +85,7 @@ pub fn handle_create_table(
             policies: vec![],
             check_constraints,
             comment: None,
+            extension: None,
         },
     );
 }

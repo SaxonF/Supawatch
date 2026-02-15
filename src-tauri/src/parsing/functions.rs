@@ -81,6 +81,7 @@ pub fn handle_create_function(
             security_definer,
             config_params,
             grants: vec![], // Grants are added separately via GRANT statements
+            extension: None,
         },
     );
 }

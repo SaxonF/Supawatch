@@ -112,7 +112,8 @@ pub async fn get_extensions(
             ExtensionInfo {
                 name: row.name,
                 version: row.version,
-                schema: row.schema,
+                // "public" is the default schema, treat as None to avoid emitting WITH SCHEMA "public"
+                schema: row.schema.filter(|s| s != "public"),
             },
         );
     }

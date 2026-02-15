@@ -22,9 +22,12 @@ pub async fn get_views(
                 false as is_materialized,
                 obj_description(c.oid, 'pg_class') as comment,
                 c.reloptions as options,
-                c.oid
+                c.oid,
+                ext.extname as extension
             FROM pg_class c
             JOIN pg_namespace n ON n.oid = c.relnamespace
+            LEFT JOIN pg_depend dep ON dep.objid = c.oid AND dep.classid = 'pg_class'::regclass AND dep.deptype = 'e'
+            LEFT JOIN pg_extension ext ON dep.refobjid = ext.oid AND dep.refclassid = 'pg_extension'::regclass
             WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
               AND n.nspname NOT LIKE 'pg_toast%'
               AND n.nspname NOT LIKE 'pg_temp%'
@@ -41,9 +44,12 @@ pub async fn get_views(
                 true as is_materialized,
                 obj_description(c.oid, 'pg_class') as comment,
                 c.reloptions as options,
-                c.oid
+                c.oid,
+                ext.extname as extension
             FROM pg_class c
             JOIN pg_namespace n ON n.oid = c.relnamespace
+            LEFT JOIN pg_depend dep ON dep.objid = c.oid AND dep.classid = 'pg_class'::regclass AND dep.deptype = 'e'
+            LEFT JOIN pg_extension ext ON dep.refobjid = ext.oid AND dep.refclassid = 'pg_extension'::regclass
             WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
               AND n.nspname NOT LIKE 'pg_toast%'
               AND n.nspname NOT LIKE 'pg_temp%'
@@ -125,6 +131,7 @@ fn parse_views_response(data: &serde_json::Value) -> Result<HashMap<String, View
         is_materialized: bool,
         comment: Option<String>,
         options: Option<serde_json::Value>,
+        extension: Option<String>,
     }
 
     #[derive(Deserialize)]
@@ -183,6 +190,7 @@ fn parse_views_response(data: &serde_json::Value) -> Result<HashMap<String, View
                 comment: row.comment,
                 with_options: options,
                 check_option: None,
+                extension: row.extension,
             },
         );
     }

@@ -1,9 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { ask, message } from "@tauri-apps/plugin-dialog";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useState } from "react";
 
 import * as api from "./api";
+import "./App.css";
 import { CreateProjectForm } from "./components/CreateProjectForm";
 import { DiffSidebar } from "./components/DiffSidebar";
 import { ImportTemplateDialog } from "./components/ImportTemplateDialog";
@@ -16,13 +17,12 @@ import { Sidebar } from "./components/Sidebar";
 import { SqlEditor } from "./components/SqlEditor";
 import type { FileChange, Project } from "./types";
 import { parseDeepLinkUrl } from "./utils/deeplink";
-
-import "./App.css";
+import { notify } from "./utils/notification";
 
 function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
-    null
+    null,
   );
   const [isLoading, setIsLoading] = useState(true);
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -90,10 +90,10 @@ function App() {
 
     const parsed = parseDeepLinkUrl(url);
     if (!parsed) {
-      message("Invalid deep link format. Expected: supawatch://import?url=...", {
-        title: "Deep Link Error",
-        kind: "error",
-      });
+      notify(
+        "Deep Link Error",
+        "Invalid deep link format. Expected: supawatch://import?url=...",
+      );
       return;
     }
 
@@ -134,7 +134,7 @@ function App() {
           kind: "warning",
           okLabel: "Push Changes",
           cancelLabel: "Cancel",
-        }
+        },
       );
 
       if (confirmed) {
@@ -143,10 +143,7 @@ function App() {
           console.log("Forced push successful");
         } catch (err) {
           console.error("Failed to push project (forced):", err);
-          await message(`Failed to push project: ${err}`, {
-            title: "Push Failed",
-            kind: "error",
-          });
+          notify("Push Failed", `Failed to push project: ${err}`);
         }
       }
     });

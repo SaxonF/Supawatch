@@ -81,6 +81,7 @@ export interface DiffResponse {
 export interface PullDiffResponse {
   migration_sql: string;
   edge_functions: EdgeFunctionDiff[];
+  schema_files: string[];
 }
 
 export interface ProjectKeys {

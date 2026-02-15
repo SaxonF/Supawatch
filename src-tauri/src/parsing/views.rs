@@ -36,6 +36,7 @@ pub fn handle_create_view(
             comment: None,
             with_options,
             check_option: None,
+            extension: None,
         },
     );
 }

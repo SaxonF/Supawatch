@@ -33,6 +33,7 @@ fn test_generate_sql_full() {
             security_definer: false,
             config_params: vec![],
             grants: vec![],
+            extension: None,
         }],
         functions_to_drop: vec!["\"old_func\"".to_string()],
         functions_to_update: vec![],
@@ -125,6 +126,7 @@ fn test_generate_create_sequence() {
         cache_size: 10,
         owned_by: Some("users.id".to_string()),
         comment: None,
+        extension: None,
     };
 
     let sql = generate_create_sequence(&seq);
@@ -145,6 +147,7 @@ fn test_generate_create_view() {
         comment: None,
         with_options: vec!["security_barrier=true".to_string()],
         check_option: None,
+        extension: None,
     };
 
     let sql = generate_create_view(&view);
@@ -164,6 +167,7 @@ fn test_generate_materialized_view() {
         comment: None,
         with_options: vec![],
         check_option: None,
+        extension: None,
     };
 
     let sql = generate_create_view(&view);
@@ -184,6 +188,7 @@ fn test_generate_create_domain() {
         }],
         collation: None,
         comment: None,
+        extension: None,
     };
 
     let sql = generate_create_domain(&domain);
@@ -210,6 +215,7 @@ fn test_generate_composite_type() {
             },
         ],
         comment: None,
+        extension: None,
     };
 
     let sql = generate_create_composite_type(&comp_type);
@@ -302,6 +308,7 @@ fn test_generate_alter_table_columns() {
         policies: vec![],
         check_constraints: vec![],
         comment: None,
+        extension: None,
     };
 
     let mut table_diff = TableDiff {
@@ -460,7 +467,7 @@ fn test_generate_function_with_volatility() {
         is_strict: false,
         security_definer: false,
             config_params: vec![],
-            grants: vec![],
+            grants: vec![], extension: None,
     };
 
     let sql = generate_create_function(&func);
@@ -485,7 +492,7 @@ fn test_generate_function_with_strict() {
         is_strict: true,
         security_definer: false,
             config_params: vec![],
-            grants: vec![],
+            grants: vec![], extension: None,
     };
 
     let sql = generate_create_function(&func);
@@ -508,7 +515,7 @@ fn test_generate_function_with_security_definer() {
         is_strict: false,
         security_definer: true,
         config_params: vec![],
-        grants: vec![],
+        grants: vec![], extension: None,
     };
 
     let sql = generate_create_function(&func);
@@ -532,7 +539,7 @@ fn test_generate_function_with_default_args() {
         is_strict: false,
         security_definer: false,
             config_params: vec![],
-            grants: vec![],
+            grants: vec![], extension: None,
     };
 
     let sql = generate_create_function(&func);
@@ -555,6 +562,7 @@ fn test_generate_alter_sequence() {
         cache_size: 20,
         owned_by: None,
         comment: None,
+        extension: None,
     };
 
     let sql = generate_alter_sequence(&seq);
@@ -595,6 +603,7 @@ fn test_generate_identity_column_change() {
         policies: vec![],
         check_constraints: vec![],
         comment: None,
+        extension: None,
     };
 
     let table_diff = TableDiff {
@@ -663,6 +672,7 @@ fn test_generate_collation_change() {
         policies: vec![],
         check_constraints: vec![],
         comment: None,
+        extension: None,
     };
 
     let table_diff = TableDiff {
@@ -719,6 +729,7 @@ fn test_generate_check_constraint_add() {
             }
         ],
         comment: None,
+        extension: None,
     };
 
     let table_diff = TableDiff {
@@ -762,6 +773,7 @@ fn test_generate_rls_enable() {
         policies: vec![],
         check_constraints: vec![],
         comment: None,
+        extension: None,
     };
 
     let table_diff = TableDiff {
@@ -799,6 +811,7 @@ fn test_generate_rls_disable() {
         policies: vec![],
         check_constraints: vec![],
         comment: None,
+        extension: None,
     };
 
     let table_diff = TableDiff {
@@ -923,6 +936,7 @@ fn test_generate_drop_view() {
         comment: None,
         with_options: vec![],
         check_option: None,
+        extension: None,
     });
 
     let diff = SchemaDiff {
@@ -967,6 +981,7 @@ fn test_generate_drop_materialized_view() {
         comment: None,
         with_options: vec![],
         check_option: None,
+        extension: None,
     });
 
     let diff = SchemaDiff {
@@ -1137,6 +1152,7 @@ fn test_generate_domain_with_collation() {
         check_constraints: vec![],
         collation: Some("C".to_string()),
         comment: None,
+        extension: None,
     };
 
     let sql = generate_create_domain(&domain);
@@ -1159,6 +1175,7 @@ fn test_generate_domain_with_default() {
         ],
         collation: None,
         comment: None,
+        extension: None,
     };
 
     let sql = generate_create_domain(&domain);
@@ -1184,6 +1201,7 @@ fn test_generate_composite_type_with_collation() {
             },
         ],
         comment: None,
+        extension: None,
     };
 
     let sql = generate_create_composite_type(&comp_type);
@@ -1202,6 +1220,7 @@ fn test_generate_view_with_check_option() {
         comment: None,
         with_options: vec![],
         check_option: Some("LOCAL".to_string()),
+        extension: None,
     };
 
     let sql = generate_create_view(&view);
@@ -1221,6 +1240,7 @@ fn test_generate_index_drop_with_constraint() {
         policies: vec![],
         check_constraints: vec![],
         comment: None,
+        extension: None,
     };
 
     let table_diff = TableDiff {
@@ -1270,6 +1290,7 @@ fn test_generate_unique_constraint_via_index() {
         policies: vec![],
         check_constraints: vec![],
         comment: None,
+        extension: None,
     };
 
     let table_diff = TableDiff {
@@ -1336,6 +1357,7 @@ fn test_generate_drop_default() {
         policies: vec![],
         check_constraints: vec![],
         comment: None,
+        extension: None,
     };
 
     let table_diff = TableDiff {
@@ -1404,6 +1426,7 @@ fn test_generate_drop_identity() {
         policies: vec![],
         check_constraints: vec![],
         comment: None,
+        extension: None,
     };
 
     let table_diff = TableDiff {
@@ -1477,6 +1500,7 @@ fn test_generate_add_generated_column() {
         policies: vec![],
         check_constraints: vec![],
         comment: None,
+        extension: None,
     };
 
     let table_diff = TableDiff {
@@ -1556,6 +1580,7 @@ fn test_generate_create_table_with_generated_column() {
         policies: vec![],
         check_constraints: vec![],
         comment: None,
+        extension: None,
     };
 
     let sql = generate_create_table(&table);

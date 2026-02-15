@@ -7,18 +7,24 @@ use crate::supabase_api::SupabaseApi;
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use super::helpers::{extract_index_expressions, extract_trigger_when_clause, extract_update_of_columns, parse_pg_array, parse_pg_oid_array, parse_policy_cmd};
+use super::helpers::{extract_index_expressions, extract_trigger_when_clause, extract_update_of_columns, parse_pg_array, parse_policy_cmd};
 
 /// The bulk SQL query to fetch all table information in a single call.
 pub const TABLES_BULK_QUERY: &str = r#"
     WITH table_list AS (
-        SELECT table_schema as schema, table_name as name
-        FROM information_schema.tables
-        WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
-          AND table_schema NOT LIKE 'pg_toast%'
-          AND table_schema NOT LIKE 'pg_temp%'
-          AND table_schema NOT IN ('auth', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium', 'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger', 'topology', 'supabase_migrations', 'supabase_functions', 'cron', 'pgbouncer')
-        AND table_type = 'BASE TABLE'
+        SELECT
+            n.nspname as schema,
+            c.relname as name,
+            ext.extname as extension
+        FROM pg_class c
+        JOIN pg_namespace n ON c.relnamespace = n.oid
+        LEFT JOIN pg_depend dep ON dep.objid = c.oid AND dep.classid = 'pg_class'::regclass AND dep.deptype = 'e'
+        LEFT JOIN pg_extension ext ON dep.refobjid = ext.oid AND dep.refclassid = 'pg_extension'::regclass
+        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+          AND n.nspname NOT LIKE 'pg_toast%'
+          AND n.nspname NOT LIKE 'pg_temp%'
+          AND n.nspname NOT IN ('auth', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgsodium', 'pgsodium_masks', 'supa_audit', 'net', 'pgtle', 'repack', 'tiger', 'topology', 'supabase_migrations', 'supabase_functions', 'cron', 'pgbouncer')
+        AND c.relkind = 'r'
     ),
     columns_data AS (
         SELECT
@@ -150,7 +156,10 @@ pub const TABLES_BULK_QUERY: &str = r#"
             c.relname as table_name,
             p.polname as name,
             p.polcmd as cmd,
-            p.polroles as roles,
+            CASE
+                WHEN p.polroles = '{0}' THEN ARRAY['public']
+                ELSE ARRAY(SELECT rolname::text FROM pg_authid WHERE oid = ANY(p.polroles))
+            END as roles,
             pg_get_expr(p.polqual, p.polrelid) as qual,
             pg_get_expr(p.polwithcheck, p.polrelid) as with_check
         FROM pg_policy p
@@ -244,6 +253,7 @@ pub fn parse_bulk_response(data: &serde_json::Value) -> Result<HashMap<String, T
     struct TableRow {
         schema: String,
         name: String,
+        extension: Option<String>,
     }
     let table_rows: Vec<TableRow> = data
         .get("tables")
@@ -333,7 +343,7 @@ pub fn parse_bulk_response(data: &serde_json::Value) -> Result<HashMap<String, T
         table_name: String,
         name: String,
         cmd: String,
-        roles: serde_json::Value,
+        roles: Vec<String>,
         qual: Option<String>,
         with_check: Option<String>,
     }
@@ -400,6 +410,7 @@ pub fn parse_bulk_response(data: &serde_json::Value) -> Result<HashMap<String, T
                 policies: vec![],
                 check_constraints: vec![],
                 comment: None,
+                extension: row.extension,
             },
         );
     }
@@ -578,7 +589,7 @@ pub fn parse_bulk_response(data: &serde_json::Value) -> Result<HashMap<String, T
             table.policies.push(PolicyInfo {
                 name: pol.name,
                 cmd: parse_policy_cmd(&pol.cmd),
-                roles: parse_pg_oid_array(&pol.roles),
+                roles: pol.roles,
                 qual: pol.qual,
                 with_check: pol.with_check,
             });

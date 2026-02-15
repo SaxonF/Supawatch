@@ -64,14 +64,17 @@ pub fn handle_create_extension(
     } = stmt;
 
     let ext_name = name.to_string().trim_matches('"').to_string();
-    let ext_schema = schema.map(|s| s.to_string().trim_matches('"').to_string()).unwrap_or("public".to_string());
+    // Only store schema if explicitly specified and not the default "public"
+    let ext_schema = schema
+        .map(|s| s.to_string().trim_matches('"').to_string())
+        .filter(|s| s != "public");
 
     extensions.insert(
         ext_name.clone(),
         ExtensionInfo {
             name: ext_name,
             version: version.map(|v| v.to_string().trim_matches('\'').to_string()),
-            schema: Some(ext_schema),
+            schema: ext_schema,
         },
     );
 }

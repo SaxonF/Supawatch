@@ -21,16 +21,7 @@ pub fn parse_pg_array(val: &serde_json::Value) -> Vec<String> {
     }
 }
 
-/// Parse PostgreSQL OID array to role names.
-pub fn parse_pg_oid_array(val: &serde_json::Value) -> Vec<String> {
-    // Simplified: return "public" if {0} or equivalent, else "authenticated" placeholder
-    let s = val.to_string();
-    if s.contains("{0}") {
-        vec!["public".to_string()]
-    } else {
-        vec!["authenticated".to_string()] // Placeholder until we map OIDs
-    }
-}
+
 
 /// Parse policy command character to SQL command name.
 pub fn parse_policy_cmd(cmd: &str) -> String {

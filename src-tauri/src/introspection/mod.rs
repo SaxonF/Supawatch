@@ -539,7 +539,7 @@ mod tests {
                     "table_name": "posts",
                     "name": "select_own",
                     "cmd": "r",
-                    "roles": [0],
+                    "roles": ["public"],
                     "qual": "user_id = auth.uid()",
                     "with_check": null
                 }
@@ -555,6 +555,39 @@ mod tests {
         assert_eq!(table.policies.len(), 1);
         assert_eq!(table.policies[0].name, "select_own");
         assert_eq!(table.policies[0].cmd, "SELECT");
+        assert_eq!(table.policies[0].roles, vec!["public"]);
+    }
+
+    #[test]
+    fn test_parse_bulk_response_with_service_role_policy() {
+        let data = json!({
+            "tables": [{"schema": "public", "name": "jobs"}],
+            "columns": [],
+            "foreign_keys": [],
+            "indexes": [],
+            "triggers": [],
+            "policies": [
+                {
+                    "schema": "public",
+                    "table_name": "jobs",
+                    "name": "service_manage",
+                    "cmd": "*",
+                    "roles": ["service_role"],
+                    "qual": "true",
+                    "with_check": "true"
+                }
+            ],
+            "rls": [{"schema": "public", "table_name": "jobs", "rls_enabled": true}],
+            "check_constraints": [],
+            "table_comments": []
+        });
+
+        let result = tables::parse_bulk_response(&data).unwrap();
+        let table = result.get("\"public\".\"jobs\"").unwrap();
+        assert_eq!(table.policies.len(), 1);
+        assert_eq!(table.policies[0].name, "service_manage");
+        assert_eq!(table.policies[0].cmd, "ALL");
+        assert_eq!(table.policies[0].roles, vec!["service_role"]);
     }
 
     #[test]

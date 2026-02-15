@@ -250,23 +250,23 @@ async fn handle_schema_push(
     app_handle.emit("log", &log).ok();
 
     // Find schema path using shared sync module
-    let schema_path = match sync::find_schema_path(Path::new(&project.local_path)) {
-        Some(p) => p,
+    let schema_source = match sync::find_schema_source(Path::new(&project.local_path)) {
+        Some(s) => s,
         None => {
             let log = LogEntry::error(
                 Some(project_id),
                 LogSource::Schema,
-                "Schema file not found (checked supabase/schemas/schema.sql and supabase/schema.sql)".to_string(),
+                "Schema not found (checked supabase/schemas/ directory and supabase/schemas/schema.sql and supabase/schema.sql)".to_string(),
             );
             state.add_log(log.clone()).await;
             app_handle.emit("log", &log).ok();
             update_icon(&app_handle, false);
-            return Err("Schema file not found".to_string());
+            return Err("Schema not found".to_string());
         }
     };
 
     // Compute diff using shared sync module (introspect remote, parse local, compute diff)
-    let diff_result = match sync::compute_schema_diff(&api, &project_ref, &schema_path).await {
+    let diff_result = match sync::compute_schema_diff(&api, &project_ref, &schema_source).await {
         Ok(r) => r,
         Err(e) => {
             let log = LogEntry::error(
@@ -508,12 +508,20 @@ async fn handle_typescript_generation(
 
     let project_path = Path::new(base_path);
 
-    // Find schema path
-    let schema_path = match sync::find_schema_path(project_path) {
-        Some(p) => p,
+    // Find schema source
+    let schema_source = match sync::find_schema_source(project_path) {
+        Some(s) => s,
         None => {
-            // No schema file found, skip TypeScript generation
+            // No schema found, skip TypeScript generation
             return Ok(());
+        }
+    };
+
+    // Read schema SQL (from single file or stitched directory)
+    let schema_sql = match sync::read_schema_source(&schema_source).await {
+        Ok(sql) => sql,
+        Err(e) => {
+            return Err(format!("Failed to read schema: {}", e));
         }
     };
 
@@ -531,8 +539,8 @@ async fn handle_typescript_generation(
     state.add_log(log.clone()).await;
     app_handle.emit("log", &log).ok();
 
-    // Generate TypeScript types
-    match sync::generate_typescript_types(&schema_path, &ts_output_path).await {
+    // Generate TypeScript types from the already-read schema SQL
+    match sync::generate_typescript_types_from_sql(&schema_sql, &ts_output_path).await {
         Ok(()) => {
             let relative_output = ts_output_path
                 .strip_prefix(project_path)

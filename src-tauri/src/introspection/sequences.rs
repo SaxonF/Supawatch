@@ -27,13 +27,16 @@ pub async fn get_sequences(
                 THEN c.relname || '.' || a.attname
                 ELSE NULL
             END as owned_by,
-            obj_description(s.oid, 'pg_class') as comment
+            obj_description(s.oid, 'pg_class') as comment,
+            ext.extname as extension
         FROM pg_class s
         JOIN pg_sequence seq ON seq.seqrelid = s.oid
         JOIN pg_namespace n ON n.oid = s.relnamespace
         LEFT JOIN pg_depend d ON d.objid = s.oid AND d.deptype = 'a'
         LEFT JOIN pg_class c ON c.oid = d.refobjid
         LEFT JOIN pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
+        LEFT JOIN pg_depend dep ON dep.objid = s.oid AND dep.classid = 'pg_class'::regclass AND dep.deptype = 'e'
+        LEFT JOIN pg_extension ext ON dep.refobjid = ext.oid AND dep.refclassid = 'pg_extension'::regclass
         WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
           AND n.nspname NOT LIKE 'pg_toast%'
           AND n.nspname NOT LIKE 'pg_temp%'
@@ -67,6 +70,7 @@ pub async fn get_sequences(
         cache_size: i64,
         owned_by: Option<String>,
         comment: Option<String>,
+        extension: Option<String>,
     }
 
     let result = api
@@ -95,6 +99,7 @@ pub async fn get_sequences(
                 cache_size: row.cache_size,
                 owned_by: row.owned_by,
                 comment: row.comment,
+                extension: row.extension,
             },
         );
     }
