@@ -6,13 +6,15 @@ use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::RwLock;
 use uuid::Uuid;
+use keyring::Entry;
 
 use crate::models::{AppData, LogEntry, Project};
 use crate::schema::DbSchema;
 use crate::supabase_api::SupabaseApi;
 
-const TOKEN_FILE_NAME: &str = ".token";
-const OPENAI_KEY_FILE_NAME: &str = ".openai_key";
+const SERVICE_NAME: &str = "supawatch";
+const ACCESS_TOKEN_KEY: &str = "access_token";
+const OPENAI_KEY_KEY: &str = "openai_key";
 
 #[derive(Error, Debug)]
 pub enum StateError {
@@ -38,8 +40,6 @@ pub struct AppState {
     pub schema_cache: RwLock<HashMap<Uuid, DbSchema>>,
     pub http_client: reqwest::Client,
     data_path: PathBuf,
-    token_path: PathBuf,
-    openai_key_path: PathBuf,
 }
 
 impl AppState {
@@ -49,36 +49,42 @@ impl AppState {
 
         let data_dir = Self::get_data_dir();
         let data_path = data_dir.join("data.json");
-        let token_path = data_dir.join(TOKEN_FILE_NAME);
-        let openai_key_path = data_dir.join(OPENAI_KEY_FILE_NAME);
         
-        let (mut data, legacy_token) = Self::load_data(&data_path).unwrap_or_default();
+        let (mut data, _) = Self::load_data(&data_path).unwrap_or_default();
 
-        println!("[TOKEN] Attempting to load token from file...");
-        // Try to load from token file
-        let file_token = Self::load_token_from_file(&token_path);
-        
-        // 2. Resolve final token
-        if let Some(ref token) = file_token {
-            println!("[TOKEN] Successfully loaded token from file (length: {})", token.len());
-            data.access_token = Some(token.clone());
-        } else if let Some(ref token) = legacy_token {
-            // Migration: Move to token file
-            println!("[TOKEN] Found legacy token in data.json, migrating to token file...");
-            match Self::save_token_to_file(&token_path, token) {
-                Ok(_) => println!("[TOKEN] Migration successful"),
-                Err(e) => eprintln!("[TOKEN] Migration failed: {}", e),
+        println!("[TOKEN] Loading token from keychain...");
+        let access_token = match Entry::new(SERVICE_NAME, ACCESS_TOKEN_KEY) {
+            Ok(entry) => match entry.get_password() {
+                Ok(pwd) => {
+                    println!("[TOKEN] Successfully loaded token from keychain");
+                    Some(pwd)
+                },
+                Err(_) => {
+                    println!("[TOKEN] No token found in keychain");
+                    None
+                }
+            },
+            Err(e) => {
+                eprintln!("[TOKEN] Failed to access keychain: {}", e);
+                None
             }
-            data.access_token = Some(token.clone());
-        } else {
-            println!("[TOKEN] No token found in file or legacy storage");
-        }
+        };
+        data.access_token = access_token.clone();
 
-        // Load OpenAI key
-        let openai_key = Self::load_token_from_file(&openai_key_path);
-        if openai_key.is_some() {
-            println!("[OPENAI] Successfully loaded OpenAI key from file");
-        }
+        println!("[OPENAI] Loading OpenAI key from keychain...");
+        let openai_key_val = match Entry::new(SERVICE_NAME, OPENAI_KEY_KEY) {
+            Ok(entry) => match entry.get_password() {
+                Ok(pwd) => {
+                    println!("[OPENAI] Successfully loaded OpenAI key from keychain");
+                    Some(pwd)
+                },
+                Err(_) => None
+            },
+            Err(_) => None
+        };
+
+        // Initialize state with loaded values
+        let openai_key = RwLock::new(openai_key_val);
 
         let http_client = reqwest::Client::builder()
             .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
@@ -93,12 +99,10 @@ impl AppState {
             data: RwLock::new(data),
             logs: RwLock::new(Vec::new()),
             watchers: RwLock::new(HashMap::new()),
-            openai_key: RwLock::new(openai_key),
+            openai_key,
             schema_cache: RwLock::new(HashMap::new()),
             http_client,
             data_path,
-            token_path,
-            openai_key_path,
         }
     }
     
@@ -133,69 +137,6 @@ impl AppState {
         Ok((data, legacy_token))
     }
     
-    // Simple XOR obfuscation (not encryption, but better than plaintext)
-    fn obfuscate(data: &str) -> Vec<u8> {
-        let key = b"supawatch_secret_key_2024"; // Static key for obfuscation
-        data.as_bytes()
-            .iter()
-            .enumerate()
-            .map(|(i, &b)| b ^ key[i % key.len()])
-            .collect()
-    }
-    
-    fn deobfuscate(data: &[u8]) -> Result<String, String> {
-        let key = b"supawatch_secret_key_2024";
-        let bytes: Vec<u8> = data
-            .iter()
-            .enumerate()
-            .map(|(i, &b)| b ^ key[i % key.len()])
-            .collect();
-        String::from_utf8(bytes).map_err(|e| e.to_string())
-    }
-    
-    fn save_token_to_file(path: &PathBuf, token: &str) -> Result<(), String> {
-        println!("[TOKEN] Saving token to file: {:?}", path);
-        let obfuscated = Self::obfuscate(token);
-        fs::write(path, obfuscated).map_err(|e| {
-            eprintln!("[TOKEN] Failed to write token file: {}", e);
-            e.to_string()
-        })?;
-        println!("[TOKEN] Token saved successfully to file");
-        Ok(())
-    }
-    
-    fn load_token_from_file(path: &PathBuf) -> Option<String> {
-        match fs::read(path) {
-            Ok(data) => {
-                match Self::deobfuscate(&data) {
-                    Ok(token) => Some(token),
-                    Err(e) => {
-                        eprintln!("[TOKEN] Failed to deobfuscate token: {}", e);
-                        None
-                    }
-                }
-            },
-            Err(_) => None,
-        }
-    }
-    
-    fn delete_token_file(path: &PathBuf) -> Result<(), String> {
-        println!("[TOKEN] Deleting token file");
-        match fs::remove_file(path) {
-            Ok(_) => {
-                println!("[TOKEN] Token file deleted successfully");
-                Ok(())
-            },
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                println!("[TOKEN] Token file doesn't exist");
-                Ok(())
-            },
-            Err(e) => {
-                eprintln!("[TOKEN] Failed to delete token file: {}", e);
-                Err(e.to_string())
-            }
-        }
-    }
 
     pub async fn save(&self) -> Result<(), StateError> {
         let data = self.data.read().await;
@@ -328,13 +269,14 @@ impl AppState {
     // Access token operations
     pub async fn set_access_token(&self, token: String) -> Result<(), StateError> {
         println!("[TOKEN] set_access_token called");
-        // Save to file
-        Self::save_token_to_file(&self.token_path, &token).map_err(StateError::WriteError)?;
+        
+        let entry = Entry::new(SERVICE_NAME, ACCESS_TOKEN_KEY).map_err(|e| StateError::WriteError(e.to_string()))?;
+        entry.set_password(&token).map_err(|e| StateError::WriteError(e.to_string()))?;
 
         let mut data = self.data.write().await;
         data.access_token = Some(token);
         drop(data);
-        self.save().await
+        Ok(())
     }
 
     pub async fn get_access_token(&self) -> Option<String> {
@@ -343,8 +285,8 @@ impl AppState {
     }
 
     pub async fn clear_access_token(&self) -> Result<(), StateError> {
-        // Remove from file
-        Self::delete_token_file(&self.token_path).map_err(StateError::WriteError)?;
+        let entry = Entry::new(SERVICE_NAME, ACCESS_TOKEN_KEY).map_err(|e| StateError::WriteError(e.to_string()))?;
+        entry.delete_credential().map_err(|e| StateError::WriteError(e.to_string()))?;
 
         let mut data = self.data.write().await;
         data.access_token = None;
@@ -366,7 +308,9 @@ impl AppState {
     // OpenAI key operations
     pub async fn set_openai_key(&self, key: String) -> Result<(), StateError> {
         println!("[OPENAI] set_openai_key called");
-        Self::save_token_to_file(&self.openai_key_path, &key).map_err(StateError::WriteError)?;
+        let entry = Entry::new(SERVICE_NAME, OPENAI_KEY_KEY).map_err(|e| StateError::WriteError(e.to_string()))?;
+        entry.set_password(&key).map_err(|e| StateError::WriteError(e.to_string()))?;
+        
         let mut openai_key = self.openai_key.write().await;
         *openai_key = Some(key);
         Ok(())
@@ -378,7 +322,9 @@ impl AppState {
     }
 
     pub async fn clear_openai_key(&self) -> Result<(), StateError> {
-        Self::delete_token_file(&self.openai_key_path).map_err(StateError::WriteError)?;
+        let entry = Entry::new(SERVICE_NAME, OPENAI_KEY_KEY).map_err(|e| StateError::WriteError(e.to_string()))?;
+        entry.delete_credential().map_err(|e| StateError::WriteError(e.to_string()))?;
+        
         let mut openai_key = self.openai_key.write().await;
         *openai_key = None;
         Ok(())

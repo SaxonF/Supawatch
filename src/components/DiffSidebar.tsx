@@ -91,13 +91,13 @@ export function DiffSidebar({
       );
 
       if (hasErrors) {
-        notify(
+        await notify(
           "Deployment Warning",
           "Some edge functions failed to deploy. Please check the results.",
         );
         // Do NOT close or refresh immediately so user can see errors
       } else {
-        notify("Success", "Schema changes pushed successfully");
+        await notify("Success", "Schema changes pushed successfully");
         loadDiff(); // Refresh to show empty
         onSuccess();
       }
@@ -128,21 +128,24 @@ export function DiffSidebar({
             );
 
             if (hasErrors) {
-              notify(
+              await notify(
                 "Deployment Warning",
                 "Some edge functions failed to deploy. Please check the results.",
               );
             } else {
-              notify("Success", "Schema changes pushed successfully");
+              await notify("Success", "Schema changes pushed successfully");
               loadDiff();
               onSuccess();
             }
           } catch (retryErr) {
-            notify("Error", "Failed to push project: " + String(retryErr));
+            await notify(
+              "Error",
+              "Failed to push project: " + String(retryErr),
+            );
           }
         }
       } else {
-        notify("Error", "Failed to push project: " + String(err));
+        await notify("Error", "Failed to push project: " + String(err));
       }
     } finally {
       setIsPushing(false);
@@ -333,7 +336,7 @@ export function DiffSidebar({
                   )}
                 </div>
                 {result.error && (
-                  <pre className="mt-1 text-xs text-red-500 overflow-x-auto whitespace-pre-wrap p-2 bg-red-500/5 rounded border border-red-500/10">
+                  <pre className="mt-2 text-xs text-red-500 overflow-x-auto whitespace-pre-wrap">
                     {result.error}
                   </pre>
                 )}

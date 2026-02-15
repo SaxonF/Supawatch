@@ -36,6 +36,9 @@ tauri-plugin-notification = "~2.3.0"
 notify = "8"
 notify-debouncer-mini = "0.6"
 
+# Security
+keyring = { version = "3", features = ["apple-native"] }
+
 # Utilities
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
