@@ -59,6 +59,11 @@ pub async fn compute_edge_functions_diff(
             None => continue,
         };
 
+        // Skip shared folders (starting with _) like _shared
+        if function_slug.starts_with('_') {
+            continue;
+        }
+
         // Collect all files
         let files = match collect_function_files(&path).await {
             Ok(f) => f,

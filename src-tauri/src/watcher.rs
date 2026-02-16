@@ -602,6 +602,11 @@ fn classify_file_change(path: &str, base_path: &str) -> FileChangeType {
     if (relative_lower.contains("/functions/") || relative_lower.starts_with("functions/"))
         && (relative_lower.ends_with(".ts") || relative_lower.ends_with(".js"))
     {
+        // Skip shared folders (starting with _) like _shared
+        let slug = extract_function_slug(&relative);
+        if !slug.is_empty() && slug.starts_with('_') {
+            return FileChangeType::Other;
+        }
         return FileChangeType::EdgeFunction;
     }
 
