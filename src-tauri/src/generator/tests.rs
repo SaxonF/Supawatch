@@ -1589,3 +1589,431 @@ fn test_generate_create_table_with_generated_column() {
     assert!(sql.contains("GENERATED ALWAYS AS (price * qty) STORED"), 
         "CREATE TABLE should include generated column expression. Got: {}", sql);
 }
+
+#[test]
+fn test_enum_to_text_with_generated_dependency() {
+    // Remote: table has an ENUM column and a GENERATED column using it
+    let remote_table = TableInfo {
+        schema: "authz".into(),
+        table_name: "permissions".into(),
+        columns: HashMap::from([
+            ("action".into(), ColumnInfo {
+                column_name: "action".into(),
+                data_type: "authz.permission_action".into(), // ENUM type
+                is_nullable: false,
+                column_default: None,
+                udt_name: "permission_action".into(), // Postgres often reports enum UDT as the enum name
+                is_primary_key: false,
+                is_unique: false,
+                is_identity: false,
+                identity_generation: None,
+                collation: None,
+                enum_name: Some("authz.permission_action".into()),
+                is_array: false,
+                is_generated: false,
+                generation_expression: None,
+                comment: None,
+            }),
+            ("permission_key".into(), ColumnInfo {
+                column_name: "permission_key".into(),
+                data_type: "text".into(),
+                is_nullable: true,
+                column_default: None,
+                udt_name: "text".into(),
+                is_primary_key: false,
+                is_unique: true,
+                is_identity: false,
+                identity_generation: None,
+                collation: None,
+                enum_name: None,
+                is_array: false,
+                is_generated: true,
+                generation_expression: Some("resource_name || ':' || case action when 'create' then 'create' end".into()),
+                comment: None,
+            }),
+        ]),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+        extension: None,
+    };
+
+    // Local: table has TEXT column and updated GENERATED column
+    let local_table = TableInfo {
+        schema: "authz".into(),
+        table_name: "permissions".into(),
+        columns: HashMap::from([
+            ("action".into(), ColumnInfo {
+                column_name: "action".into(),
+                data_type: "text".into(), // Changed to TEXT
+                is_nullable: false,
+                column_default: None,
+                udt_name: "text".into(),
+                is_primary_key: false,
+                is_unique: false,
+                is_identity: false,
+                identity_generation: None,
+                collation: None,
+                enum_name: None,
+                is_array: false,
+                is_generated: false,
+                generation_expression: None,
+                comment: None,
+            }),
+            ("permission_key".into(), ColumnInfo {
+                column_name: "permission_key".into(),
+                data_type: "text".into(),
+                is_nullable: true,
+                column_default: None,
+                udt_name: "text".into(),
+                is_primary_key: false,
+                is_unique: true,
+                is_identity: false,
+                identity_generation: None,
+                collation: None,
+                enum_name: None,
+                is_array: false,
+                is_generated: true,
+                generation_expression: Some("resource_name || ':' || action".into()), // Expression changed
+                comment: None,
+            }),
+        ]),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+        extension: None,
+    };
+
+    let table_diff = crate::diff::tables::compute_table_diff(&remote_table, &local_table);
+    
+    // We expect the diff to have identified the change
+    // Using current logic, it probably shows as a modification
+    // Our fix will change it to drop/add
+    
+    let statements = generate_alter_table("\"authz\".\"permissions\"", &table_diff, &local_table);
+    
+    println!("Statements: {:#?}", statements);
+
+    // Verify correct operations are present
+    let drop_found = statements.iter().any(|s| s.contains("DROP COLUMN IF EXISTS \"permission_key\""));
+    let alter_found = statements.iter().any(|s| s.contains("ALTER COLUMN \"action\" TYPE text"));
+    // Note: The add statement will look like this once fixed:
+    let add_found = statements.iter().any(|s| s.contains("ADD COLUMN \"permission_key\" text GENERATED ALWAYS AS (resource_name || ':' || action) STORED"));
+
+    assert!(drop_found, "Should generate DROP COLUMN for modified generated column");
+    assert!(alter_found, "Should generate ALTER COLUMN TYPE");
+    assert!(add_found, "Should generate ADD COLUMN for recreated generated column");
+    
+    // Verify ORDER: Drop must be before Alter
+    let drop_idx = statements.iter().position(|s| s.contains("DROP COLUMN IF EXISTS \"permission_key\"")).unwrap();
+    let alter_idx = statements.iter().position(|s| s.contains("ALTER COLUMN \"action\" TYPE text")).unwrap();
+    let add_idx = statements.iter().position(|s| s.contains("ADD COLUMN \"permission_key\" text")).unwrap();
+    
+    assert!(drop_idx < alter_idx, "DROP generated column should happen BEFORE altering its dependency (drop: {}, alter: {})", drop_idx, alter_idx);
+    
+    // The CRITICAL check: The ADDS happen AFTER modifications in standard generate_alter_table?
+    // Actually, looking at generate_alter_table:
+    // 1. Drops
+    // 2. Adds
+    // 3. Modifies
+    // So ADD is BEFORE MODIFY. This is BAD for this case because "permission_key" (ADD) uses "action" (MODIFY).
+    // "action" is still ENUM when we ADD "permission_key".
+    // "permission_key" expression uses "action" as text (concatenation).
+    // Postgres MIGHT auto-cast enum to text in concatenation, but if strict typing is involved or if the expression assumes text, it might fail.
+    // 
+    // HOWEVER, the real issue for the user was:
+    // API error: 400 - {"message":"Failed to run sql query: ERROR:  42703: column \"action\" does not exist\nLINE 19: ALTER TABLE \"authz\".\"permissions\" ALTER COLUMN \"action\" TYPE TEXT USING \"action\"::TEXT;\n                                                                                 ^\n"}
+    //
+    // Wait, "column action does not exist"? That sounds like it was dropped?
+    // Or maybe "action" in USING clause is ambiguous?
+    //
+    // If we drop `permission_key` (which depends on `action`), we are fine to alter `action`.
+    // The error the user saw: `diffing should handle it since the old column was an enum?`
+    // The user's provided diff:
+    // `ALTER TABLE "authz"."permissions" ADD CONSTRAINT "permissions_action_check" CHECK (length(TRIM(action)) > 0);`
+    // This looks like a CHECK constraint addition.
+    //
+    // Wait, the user said:
+    // "Which resulted in this diff: ALTER TABLE ... ADD CONSTRAINT ..."
+    // AND then "Which gave this error ... column action does not exist ... ALTER TABLE ... ALTER COLUMN action TYPE TEXT ..."
+    //
+    // The user's error message shows:
+    // `ALTER TABLE "authz"."permissions" ALTER COLUMN "action" TYPE TEXT USING "action"::TEXT;`
+    // 
+    // If the error is "column "action" does not exist", it might be that `action` acts weirdly in the USING clause if it's an enum? No, that should work.
+    //
+    // Let's verify what happens with the test.
+    assert!(alter_idx < add_idx, "ALTER dependency should happen BEFORE re-adding generated column (alter: {}, add: {})", alter_idx, add_idx);
+}
+
+#[test]
+fn test_generated_column_normalization_public_prefix() {
+    // Remote: has public. prefix in expression (common in Postgres)
+    let remote_table = TableInfo {
+        schema: "public".into(),
+        table_name: "objects".into(),
+        columns: HashMap::from([
+            ("current_combat_level".into(), ColumnInfo {
+                column_name: "current_combat_level".into(),
+                data_type: "integer".into(),
+                is_nullable: true,
+                column_default: None,
+                udt_name: "int4".into(),
+                is_primary_key: false,
+                is_unique: false,
+                is_identity: false,
+                identity_generation: None,
+                collation: None,
+                enum_name: None,
+                is_array: false,
+                is_generated: true,
+                generation_expression: Some("public.calculate_progression_level(current_combat_experience)".into()),
+                comment: None,
+            }),
+        ]),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+        extension: None,
+    };
+
+    // Local: no public. prefix (user definition)
+    let local_table = TableInfo {
+        schema: "public".into(),
+        table_name: "objects".into(),
+        columns: HashMap::from([
+            ("current_combat_level".into(), ColumnInfo {
+                column_name: "current_combat_level".into(),
+                data_type: "integer".into(),
+                is_nullable: true,
+                column_default: None,
+                udt_name: "int4".into(),
+                is_primary_key: false,
+                is_unique: false,
+                is_identity: false,
+                identity_generation: None,
+                collation: None,
+                enum_name: None,
+                is_array: false,
+                is_generated: true,
+                generation_expression: Some("calculate_progression_level(current_combat_experience)".into()),
+                comment: None,
+            }),
+        ]),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+        extension: None,
+    };
+
+    let diff = crate::diff::tables::compute_table_diff(&remote_table, &local_table);
+    
+    // Should be empty if normalization works
+    // Currently expected to fail (show diff)
+    assert!(diff.is_empty(), "Diff should be empty but found changes: {:#?}", diff);
+}
+
+#[test]
+fn test_generated_column_normalization_type_casts() {
+    // Check various normalizations:
+    // 1. strip ::text, ::regconfig
+    // 2. strip public.
+    // 3. collapse whitespace
+    
+    // Remote: messy, explicit casts, extra spaces
+    let remote_table = TableInfo {
+        schema: "public".into(),
+        table_name: "test_gen".into(),
+        columns: HashMap::from([
+            ("col1_ts".into(), ColumnInfo {
+                column_name: "col1_ts".into(),
+                data_type: "tsvector".into(),
+                is_nullable: true,
+                column_default: None,
+                udt_name: "tsvector".into(),
+                is_primary_key: false,
+                is_unique: false,
+                is_identity: false,
+                identity_generation: None,
+                collation: None,
+                enum_name: None,
+                is_array: false,
+                is_generated: true,
+                generation_expression: Some("to_tsvector('english'::regconfig, coalesce(body, ''::text))".into()),
+                comment: None,
+            }),
+             ("col2_concat".into(), ColumnInfo {
+                column_name: "col2_concat".into(),
+                data_type: "text".into(),
+                is_nullable: true,
+                column_default: None,
+                udt_name: "text".into(),
+                is_primary_key: false,
+                is_unique: false,
+                is_identity: false,
+                identity_generation: None,
+                collation: None,
+                enum_name: None,
+                is_array: false,
+                is_generated: true,
+                generation_expression: Some("((resource_name)::text || ':'::text) || (action)::text".into()),
+                comment: None,
+            }),
+        ]),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+        extension: None,
+    };
+
+    // Local: clean, user defined
+    let local_table = TableInfo {
+        schema: "public".into(),
+        table_name: "test_gen".into(),
+        columns: HashMap::from([
+            ("col1_ts".into(), ColumnInfo {
+                column_name: "col1_ts".into(),
+                data_type: "tsvector".into(),
+                is_nullable: true,
+                column_default: None,
+                udt_name: "tsvector".into(),
+                is_primary_key: false,
+                is_unique: false,
+                is_identity: false,
+                identity_generation: None,
+                collation: None,
+                enum_name: None,
+                is_array: false,
+                is_generated: true,
+                generation_expression: Some("to_tsvector('english', coalesce(body, ''))".into()),
+                comment: None,
+            }),
+             ("col2_concat".into(), ColumnInfo {
+                column_name: "col2_concat".into(),
+                data_type: "text".into(),
+                is_nullable: true,
+                column_default: None,
+                udt_name: "text".into(),
+                is_primary_key: false,
+                is_unique: false,
+                is_identity: false,
+                identity_generation: None,
+                collation: None,
+                enum_name: None,
+                is_array: false,
+                is_generated: true,
+                generation_expression: Some("resource_name || ':' || action".into()),
+                comment: None,
+            }),
+        ]),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+        extension: None,
+    };
+
+    let diff = crate::diff::tables::compute_table_diff(&remote_table, &local_table);
+    
+    // Should be empty
+    assert!(diff.is_empty(), "Diff should be empty but found changes: {:#?}", diff);
+}
+
+#[test]
+fn test_generated_column_normalization_case_sensitivity() {
+    // Check case insensitivity outside quotes
+    
+    // Remote: Uppercase function, mixed case text cast
+    let remote_table = TableInfo {
+        schema: "public".into(),
+        table_name: "test_gen_case".into(),
+        columns: HashMap::from([
+            ("col1".into(), ColumnInfo {
+                column_name: "col1".into(),
+                data_type: "tsvector".into(),
+                is_nullable: true,
+                column_default: None,
+                udt_name: "tsvector".into(),
+                is_primary_key: false,
+                is_unique: false,
+                is_identity: false,
+                identity_generation: None,
+                collation: None,
+                enum_name: None,
+                is_array: false,
+                is_generated: true,
+                generation_expression: Some("to_tsvector('english'::regconfig, COALESCE(body, ''::TEXT))".into()),
+                comment: None,
+            }),
+        ]),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+        extension: None,
+    };
+
+    // Local: Lowercase function, clean
+    let local_table = TableInfo {
+        schema: "public".into(),
+        table_name: "test_gen_case".into(),
+        columns: HashMap::from([
+            ("col1".into(), ColumnInfo {
+                column_name: "col1".into(),
+                data_type: "tsvector".into(),
+                is_nullable: true,
+                column_default: None,
+                udt_name: "tsvector".into(),
+                is_primary_key: false,
+                is_unique: false,
+                is_identity: false,
+                identity_generation: None,
+                collation: None,
+                enum_name: None,
+                is_array: false,
+                is_generated: true,
+                generation_expression: Some("to_tsvector('english', coalesce(body, ''))".into()),
+                comment: None,
+            }),
+        ]),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![],
+        comment: None,
+        extension: None,
+    };
+
+    let diff = crate::diff::tables::compute_table_diff(&remote_table, &local_table);
+    
+    // Should be empty
+    assert!(diff.is_empty(), "Diff should be empty but found changes: {:#?}", diff);
+}

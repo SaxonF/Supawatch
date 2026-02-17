@@ -143,9 +143,13 @@ pub fn generate_alter_table(
         ));
     }
 
-    // Add columns
+    // Add columns (non-generated first)
     for col_name in &diff.columns_to_add {
         if let Some(col) = local_table.columns.get(col_name) {
+            if col.is_generated {
+                continue;
+            }
+
             let mut add_sql = format!(
                 "ALTER TABLE {} ADD COLUMN \"{}\" {}",
                 table_name, col.column_name, col.data_type
@@ -155,12 +159,7 @@ pub fn generate_alter_table(
                 add_sql.push_str(" NOT NULL");
             }
 
-            // Generated columns use GENERATED ALWAYS AS ... STORED (mutually exclusive with DEFAULT)
-            if col.is_generated {
-                if let Some(expr) = &col.generation_expression {
-                    add_sql.push_str(&format!(" GENERATED ALWAYS AS ({}) STORED", expr));
-                }
-            } else if let Some(def) = &col.column_default {
+            if let Some(def) = &col.column_default {
                 add_sql.push_str(&format!(" DEFAULT {}", def));
             }
 
@@ -248,6 +247,31 @@ pub fn generate_alter_table(
                 }
                 (None, None) => {}
             }
+        }
+    }
+
+    // Add generated columns (after modifications, so dependencies are ready)
+    for col_name in &diff.columns_to_add {
+        if let Some(col) = local_table.columns.get(col_name) {
+            if !col.is_generated {
+                continue;
+            }
+
+            let mut add_sql = format!(
+                "ALTER TABLE {} ADD COLUMN \"{}\" {}",
+                table_name, col.column_name, col.data_type
+            );
+
+            if !col.is_nullable {
+                add_sql.push_str(" NOT NULL");
+            }
+
+            if let Some(expr) = &col.generation_expression {
+                add_sql.push_str(&format!(" GENERATED ALWAYS AS ({}) STORED", expr));
+            }
+
+            add_sql.push(';');
+            statements.push(add_sql);
         }
     }
 

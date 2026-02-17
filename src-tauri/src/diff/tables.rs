@@ -50,6 +50,141 @@ pub fn compute_table_diff(remote: &TableInfo, local: &TableInfo) -> TableDiff {
                 comment_change: None,
             };
 
+            // Generated Columns
+            // We use generation_expression as the source of truth.
+            // Helper to get normalized expression for comparison
+            fn normalize_gen_expr(expr: &Option<String>) -> Option<String> {
+                expr.as_ref().map(|s| {
+                    let mut trimmed = s.trim();
+                    // Remove outer parens if present
+                    while trimmed.starts_with('(') && trimmed.ends_with(')') {
+                         trimmed = trimmed[1..trimmed.len()-1].trim();
+                    }
+
+                    // 1. Case insensitivity (ignoring quoted strings)
+                    // Do this FIRST so that everything else (stripping casts, public, etc) works on lowercase
+                    let mut lowercased = String::with_capacity(trimmed.len());
+                    let mut in_quote = false;
+                    let mut chars_iter = trimmed.chars().peekable();
+                    
+                    while let Some(c) = chars_iter.next() {
+                        if c == '\'' {
+                            // Check for escaped quote (e.g. 'O''Neil')
+                            if in_quote {
+                                if let Some(&next_c) = chars_iter.peek() {
+                                    if next_c == '\'' {
+                                        lowercased.push(c);
+                                        lowercased.push(chars_iter.next().unwrap());
+                                        continue;
+                                    }
+                                }
+                            }
+                            in_quote = !in_quote;
+                            lowercased.push(c);
+                        } else {
+                            if in_quote {
+                                lowercased.push(c);
+                            } else {
+                                lowercased.push(c.to_ascii_lowercase());
+                            }
+                        }
+                    }
+                    
+                    // 2. Remove "public." prefix
+                    let without_public = lowercased.replace("public.", "");
+                    
+                    // 3. Collapse whitespace
+                    let mut collapsed = without_public.split_whitespace().collect::<Vec<_>>().join(" ");
+                    
+                    // 4. Strip common type casts
+                    let type_cast_suffixes = [
+                        "::text", "::regconfig", "::integer", "::int", "::bigint", "::smallint",
+                        "::boolean", "::bool", "::numeric", "::jsonb", "::varchar",
+                        "::character varying", "::timestamp", "::timestamptz", "::date",
+                        "::time", "::float", "::double precision", "::regclass", "::regtype",
+                        "::bpchar",
+                    ];
+                    
+                    for suffix in type_cast_suffixes {
+                        collapsed = collapsed.replace(suffix, "");
+                    }
+
+                    // 5. Remove inner parentheses found in concatenations or expressions
+                    let mut s = collapsed;
+                    let mut changed = true;
+                    while changed {
+                        changed = false;
+                        let mut new_s = String::with_capacity(s.len());
+                        let chars: Vec<char> = s.chars().collect();
+                        let mut i = 0;
+                        while i < chars.len() {
+                            if chars[i] == '(' {
+                                // check ahead for matching ) without commas or other parens
+                                let mut j = i + 1;
+                                let mut has_comma = false;
+                                let mut has_paren = false;
+                                let mut found = false;
+                                while j < chars.len() {
+                                    if chars[j] == '(' { has_paren = true; break; }
+                                    if chars[j] == ',' { has_comma = true; } 
+                                    if chars[j] == ')' { found = true; break; }
+                                    j += 1;
+                                }
+                                
+                                if found && !has_paren && !has_comma {
+                                    // It's a simple group (a) or ("a") or ('a')
+                                    // Check if it's a function call?
+                                    // Only if `i > 0` and chars[i-1] is identifier char.
+                                    let is_func = if i > 0 {
+                                        let prev = chars[i-1];
+                                        prev.is_alphanumeric() || prev == '_'
+                                    } else {
+                                        false
+                                    };
+                                    
+                                    if !is_func {
+                                        // Remove parens
+                                        // push content from i+1 to j
+                                        for k in i+1..j {
+                                            new_s.push(chars[k]);
+                                        }
+                                        i = j + 1;
+                                        changed = true;
+                                        continue;
+                                    }
+                                }
+                            }
+                            new_s.push(chars[i]);
+                            i += 1;
+                        }
+                        if changed {
+                            s = new_s;
+                        }
+                    }
+                    
+                    s
+                })
+            }
+
+            let normalized_local = normalize_gen_expr(&local_col.generation_expression);
+            let normalized_remote = normalize_gen_expr(&remote_col.generation_expression);
+
+            let generated_changed = local_col.is_generated != remote_col.is_generated || 
+               normalized_local != normalized_remote;
+
+            if generated_changed {
+                println!("[DIFF] Generated column '{}' changed:", name);
+                println!("[DIFF]   Local raw:       {:?}", local_col.generation_expression);
+                println!("[DIFF]   Remote raw:      {:?}", remote_col.generation_expression);
+                println!("[DIFF]   Local norm:      {:?}", normalized_local);
+                println!("[DIFF]   Remote norm:     {:?}", normalized_remote);
+                
+                // Generated column changes require DROP and ADD
+                diff.columns_to_drop.push(name.clone());
+                diff.columns_to_add.push(name.clone());
+                continue;
+            }
+
             // Type comparison (normalized)
             if utils::normalize_data_type(&local_col.data_type) != utils::normalize_data_type(&remote_col.data_type) {
                 changes.type_change =
@@ -85,30 +220,6 @@ pub fn compute_table_diff(remote: &TableInfo, local: &TableInfo) -> TableDiff {
                 changes.collation_change = Some((
                     remote_col.collation.clone(),
                     local_col.collation.clone(),
-                ));
-            }
-
-            // Generated Columns
-            // We use generation_expression as the source of truth.
-            // Helper to get normalized expression for comparison
-            // Remove outer parens if present, as Postgres sometimes adds them
-            fn normalize_gen_expr(expr: &Option<String>) -> Option<String> {
-                expr.as_ref().map(|s| {
-                    let trimmed = s.trim();
-                    if trimmed.starts_with('(') && trimmed.ends_with(')') {
-                         trimmed[1..trimmed.len()-1].trim().to_string()
-                    } else {
-                        trimmed.to_string()
-                    }
-                })
-            }
-
-            if local_col.is_generated != remote_col.is_generated || 
-               normalize_gen_expr(&local_col.generation_expression) != normalize_gen_expr(&remote_col.generation_expression) {
-                   
-                changes.generated_change = Some((
-                    remote_col.generation_expression.clone(),
-                    local_col.generation_expression.clone()
                 ));
             }
 

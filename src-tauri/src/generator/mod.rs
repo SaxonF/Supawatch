@@ -388,30 +388,10 @@ pub fn generate_sql(diff: &SchemaDiff, local_schema: &DbSchema) -> String {
         statements.push(format!("DROP TABLE IF EXISTS {} CASCADE;", name));
     }
 
-    // Drop enums
-    for enum_change in &diff.enum_changes {
-        if enum_change.type_ == EnumChangeType::Drop {
-            statements.push(format!("DROP TYPE IF EXISTS {} CASCADE;", objects::ensure_quoted(&enum_change.name)));
-        }
-    }
-
-    // Drop composite types
-    for name in &diff.composite_types_to_drop {
-        statements.push(format!("DROP TYPE IF EXISTS {} CASCADE;", objects::ensure_quoted(name)));
-    }
-
-    // Drop domains
-    for name in &diff.domains_to_drop {
-        statements.push(format!("DROP DOMAIN IF EXISTS {} CASCADE;", objects::ensure_quoted(name)));
-    }
-
-    // Drop extensions (last, as others may depend on them)
-    for name in &diff.extensions_to_drop {
-        // Extensions keys might not be qualified? introspection says extensions usually global but name is unique.
-        // parsing.rs uses just name.
-        // So for extension, we keep quotes: "uuid-ossp".
-        statements.push(format!("DROP EXTENSION IF EXISTS \"{}\" CASCADE;", name));
-    }
+    // Drop enums - MOVED TO END
+    // Drop composite types - MOVED TO END
+    // Drop domains - MOVED TO END
+    // Drop extensions - MOVED TO END
 
     // ====================
     // 3. TYPES (domains, composite types, enums)
@@ -618,6 +598,32 @@ pub fn generate_sql(diff: &SchemaDiff, local_schema: &DbSchema) -> String {
                 escape_string(comment)
             ));
         }
+    }
+
+    // ====================
+    // 10. DROP TYPES & EXTENSIONS (deferred to end to allow migration away from them first)
+    // ====================
+
+    // Drop domains
+    for name in &diff.domains_to_drop {
+        statements.push(format!("DROP DOMAIN IF EXISTS {} CASCADE;", objects::ensure_quoted(name)));
+    }
+
+    // Drop composite types
+    for name in &diff.composite_types_to_drop {
+        statements.push(format!("DROP TYPE IF EXISTS {} CASCADE;", objects::ensure_quoted(name)));
+    }
+
+    // Drop enums
+    for enum_change in &diff.enum_changes {
+        if enum_change.type_ == EnumChangeType::Drop {
+            statements.push(format!("DROP TYPE IF EXISTS {} CASCADE;", objects::ensure_quoted(&enum_change.name)));
+        }
+    }
+
+    // Drop extensions (last, as others may depend on them)
+    for name in &diff.extensions_to_drop {
+        statements.push(format!("DROP EXTENSION IF EXISTS \"{}\" CASCADE;", name));
     }
 
     statements.join("\n")
