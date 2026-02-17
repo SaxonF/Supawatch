@@ -32,6 +32,7 @@ export function DiffSidebar({
   const [isLoading, setIsLoading] = useState(false);
   const [isPushing, setIsPushing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pushError, setPushError] = useState<string | null>(null);
   const [deploymentResults, setDeploymentResults] = useState<
     EdgeFunctionDeploymentResult[] | null
   >(null);
@@ -81,6 +82,7 @@ export function DiffSidebar({
 
     setIsPushing(true);
     setDeploymentResults(null);
+    setPushError(null);
     try {
       const response = await api.pushProject(projectId, diff.is_destructive);
 
@@ -138,14 +140,14 @@ export function DiffSidebar({
               onSuccess();
             }
           } catch (retryErr) {
-            await notify(
-              "Error",
-              "Failed to push project: " + String(retryErr),
-            );
+            const retryErrorMsg = String(retryErr);
+            setPushError(retryErrorMsg);
+            await notify("Error", "Failed to push project: " + retryErrorMsg);
           }
         }
       } else {
-        await notify("Error", "Failed to push project: " + String(err));
+        setPushError(errorMsg);
+        await notify("Error", "Failed to push project: " + errorMsg);
       }
     } finally {
       setIsPushing(false);
@@ -290,58 +292,85 @@ export function DiffSidebar({
         )}
       </div>
 
-      {deploymentResults && deploymentResults.length > 0 && (
+      {(pushError || (deploymentResults && deploymentResults.length > 0)) && (
         <div className="bg-background border-t max-h-60 overflow-auto">
           <div className="p-3 border-b bg-muted/30 flex items-center justify-between sticky top-0 backdrop-blur-sm z-10">
             <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-              Deployment Results
+              {pushError ? "Push Error" : "Deployment Results"}
             </h3>
-            {deploymentResults.some((r) => r.status === "error") && (
+            {(pushError ||
+              (deploymentResults &&
+                deploymentResults.some((r) => r.status === "error"))) && (
               <Button
                 variant="ghost"
                 size="icon"
                 className="h-6 w-6"
                 onClick={() => {
-                  const errorText = deploymentResults
-                    .filter((r) => r.status === "error" && r.error)
-                    .map((r) => `Function: ${r.name}\nError: ${r.error}`)
-                    .join("\n\n");
+                  let errorText = "";
+                  if (pushError) {
+                    errorText = pushError;
+                  }
+                  if (deploymentResults) {
+                    const fnErrors = deploymentResults
+                      .filter((r) => r.status === "error" && r.error)
+                      .map((r) => `Function: ${r.name}\nError: ${r.error}`)
+                      .join("\n\n");
+                    if (fnErrors) {
+                      errorText = errorText
+                        ? errorText + "\n\n" + fnErrors
+                        : fnErrors;
+                    }
+                  }
                   navigator.clipboard.writeText(errorText);
                 }}
-                title="Copy all errors"
+                title="Copy errors"
               >
                 <Copy size={12} className="text-muted-foreground" />
               </Button>
             )}
           </div>
           <div>
-            {deploymentResults.map((result) => (
-              <div
-                key={result.name}
-                className={`p-3 border-b last:border-0 text-sm ${result.status === "error" ? "bg-red-500/5" : ""}`}
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-2">
-                    {result.status === "success" ? (
-                      <CheckCircle size={14} className="text-green-500" />
-                    ) : (
-                      <AlertTriangle size={14} className="text-red-500" />
+            {pushError && (
+              <div className="p-3 border-b bg-red-500/5">
+                <div className="flex items-center gap-2 mb-1">
+                  <AlertTriangle size={14} className="text-red-500" />
+                  <span className="font-medium text-sm">
+                    Schema Push Failed
+                  </span>
+                </div>
+                <pre className="mt-2 text-xs text-red-500 overflow-x-auto whitespace-pre-wrap">
+                  {pushError}
+                </pre>
+              </div>
+            )}
+            {deploymentResults &&
+              deploymentResults.map((result) => (
+                <div
+                  key={result.name}
+                  className={`p-3 border-b last:border-0 text-sm ${result.status === "error" ? "bg-red-500/5" : ""}`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                      {result.status === "success" ? (
+                        <CheckCircle size={14} className="text-green-500" />
+                      ) : (
+                        <AlertTriangle size={14} className="text-red-500" />
+                      )}
+                      <span className="font-medium">{result.name}</span>
+                    </div>
+                    {result.version && (
+                      <span className="text-xs text-muted-foreground">
+                        v{result.version}
+                      </span>
                     )}
-                    <span className="font-medium">{result.name}</span>
                   </div>
-                  {result.version && (
-                    <span className="text-xs text-muted-foreground">
-                      v{result.version}
-                    </span>
+                  {result.error && (
+                    <pre className="mt-2 text-xs text-red-500 overflow-x-auto whitespace-pre-wrap">
+                      {result.error}
+                    </pre>
                   )}
                 </div>
-                {result.error && (
-                  <pre className="mt-2 text-xs text-red-500 overflow-x-auto whitespace-pre-wrap">
-                    {result.error}
-                  </pre>
-                )}
-              </div>
-            ))}
+              ))}
           </div>
         </div>
       )}

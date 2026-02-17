@@ -302,36 +302,40 @@ pub fn generate_sql(diff: &SchemaDiff, local_schema: &DbSchema) -> String {
     }
 
     // ====================
-    // 0.5 SCHEMAS
+    // 0.5 SCHEMAS — only create schemas needed by NEW objects
     // ====================
     let mut schemas = std::collections::HashSet::new();
 
-    for table in local_schema.tables.values() {
-        schemas.insert(table.schema.clone());
+    // Collect schemas from objects that are being CREATED (not all local objects)
+    for name in &diff.tables_to_create {
+        if let Some(table) = local_schema.tables.get(name) {
+            schemas.insert(table.schema.clone());
+        }
     }
-    for view in local_schema.views.values() {
+    for view in &diff.views_to_create {
         schemas.insert(view.schema.clone());
     }
-    for enum_info in local_schema.enums.values() {
-        schemas.insert(enum_info.schema.clone());
+    for enum_change in &diff.enum_changes {
+        if enum_change.type_ == EnumChangeType::Create {
+            // Enum name may be schema-qualified; extract schema
+            if let Some(dot_pos) = enum_change.name.rfind('.') {
+                let schema_part = &enum_change.name[..dot_pos];
+                let cleaned = schema_part.trim_matches('"');
+                schemas.insert(cleaned.to_string());
+            }
+        }
     }
-    for seq in local_schema.sequences.values() {
+    for seq in &diff.sequences_to_create {
         schemas.insert(seq.schema.clone());
     }
-    for func in local_schema.functions.values() {
+    for func in &diff.functions_to_create {
         schemas.insert(func.schema.clone());
     }
-    for comp in local_schema.composite_types.values() {
+    for comp in &diff.composite_types_to_create {
         schemas.insert(comp.schema.clone());
     }
-    for domain in local_schema.domains.values() {
+    for domain in &diff.domains_to_create {
         schemas.insert(domain.schema.clone());
-    }
-    // Extensions might specify a schema
-    for ext in local_schema.extensions.values() {
-        if let Some(s) = &ext.schema {
-            schemas.insert(s.clone());
-        }
     }
 
     let mut sorted_schemas: Vec<String> = schemas.into_iter().collect();

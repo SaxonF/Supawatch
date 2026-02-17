@@ -406,45 +406,56 @@ pub fn triggers_differ(local: &TriggerInfo, remote: &TriggerInfo) -> bool {
 
 pub fn indexes_differ(local: &IndexInfo, remote: &IndexInfo) -> bool {
     if local.columns != remote.columns {
-        eprintln!("=== INDEX DIFF DEBUG for {} ===", local.index_name);
-        eprintln!("COLUMNS DIFFER: local={:?} remote={:?}", local.columns, remote.columns);
-        eprintln!("=== END DEBUG ===");
+        println!("[DIFF] Index '{}' COLUMNS differ: local={:?} remote={:?}", local.index_name, local.columns, remote.columns);
         return true;
     }
     if local.is_unique != remote.is_unique {
-        eprintln!("=== INDEX DIFF DEBUG for {} ===", local.index_name);
-        eprintln!("IS_UNIQUE DIFFERS: local={} remote={}", local.is_unique, remote.is_unique);
-        eprintln!("=== END DEBUG ===");
+        println!("[DIFF] Index '{}' IS_UNIQUE differs: local={} remote={}", local.index_name, local.is_unique, remote.is_unique);
         return true;
     }
     if local.is_primary != remote.is_primary {
-        eprintln!("=== INDEX DIFF DEBUG for {} ===", local.index_name);
-        eprintln!("IS_PRIMARY DIFFERS: local={} remote={}", local.is_primary, remote.is_primary);
-        eprintln!("=== END DEBUG ===");
+        println!("[DIFF] Index '{}' IS_PRIMARY differs: local={} remote={}", local.index_name, local.is_primary, remote.is_primary);
         return true;
     }
     if local.index_method.to_lowercase() != remote.index_method.to_lowercase() {
-        eprintln!("=== INDEX DIFF DEBUG for {} ===", local.index_name);
-        eprintln!("METHOD DIFFERS: local={} remote={}", local.index_method, remote.index_method);
-        eprintln!("=== END DEBUG ===");
+        println!("[DIFF] Index '{}' METHOD differs: local={} remote={}", local.index_name, local.index_method, remote.index_method);
         return true;
     }
     let local_where_normalized = utils::normalize_option(&local.where_clause);
     let remote_where_normalized = utils::normalize_option(&remote.where_clause);
     if local_where_normalized != remote_where_normalized {
-        eprintln!("=== INDEX DIFF DEBUG for {} ===", local.index_name);
-        eprintln!("WHERE_CLAUSE DIFFERS:");
-        eprintln!("  LOCAL raw: {:?}", local.where_clause);
-        eprintln!("  REMOTE raw: {:?}", remote.where_clause);
-        eprintln!("  LOCAL normalized: {:?}", local_where_normalized);
-        eprintln!("  REMOTE normalized: {:?}", remote_where_normalized);
-        eprintln!("=== END DEBUG ===");
+        println!("[DIFF] Index '{}' WHERE differs:", local.index_name);
+        println!("[DIFF]   local raw:  {:?}", local.where_clause);
+        println!("[DIFF]   remote raw: {:?}", remote.where_clause);
+        println!("[DIFF]   local norm: {:?}", local_where_normalized);
+        println!("[DIFF]   remote norm: {:?}", remote_where_normalized);
         return true;
     }
-    if local.expressions != remote.expressions {
-        eprintln!("=== INDEX DIFF DEBUG for {} ===", local.index_name);
-        eprintln!("EXPRESSIONS DIFFER: local={:?} remote={:?}", local.expressions, remote.expressions);
-        eprintln!("=== END DEBUG ===");
+    // Normalize expressions before comparing: lowercase, strip quotes, collapse whitespace, strip type casts
+    let normalize_expr = |e: &str| -> String {
+        let s = e.to_lowercase().replace('"', "");
+        let collapsed = s.split_whitespace().collect::<Vec<_>>().join(" ");
+        // Strip common type casts (e.g., ::uuid, ::text, ::integer)
+        let type_cast_suffixes = [
+            "::uuid", "::text", "::integer", "::int", "::bigint", "::smallint",
+            "::boolean", "::bool", "::numeric", "::jsonb", "::varchar",
+            "::character varying", "::timestamp", "::timestamptz", "::date",
+            "::time", "::float", "::double precision", "::regclass", "::regtype",
+        ];
+        let mut result = collapsed;
+        for suffix in type_cast_suffixes {
+            result = result.replace(suffix, "");
+        }
+        result
+    };
+    let local_exprs: Vec<String> = local.expressions.iter().map(|e| normalize_expr(e)).collect();
+    let remote_exprs: Vec<String> = remote.expressions.iter().map(|e| normalize_expr(e)).collect();
+    if local_exprs != remote_exprs {
+        println!("[DIFF] Index '{}' EXPRESSIONS differ:", local.index_name);
+        println!("[DIFF]   local raw:  {:?}", local.expressions);
+        println!("[DIFF]   remote raw: {:?}", remote.expressions);
+        println!("[DIFF]   local norm: {:?}", local_exprs);
+        println!("[DIFF]   remote norm: {:?}", remote_exprs);
         return true;
     }
     false

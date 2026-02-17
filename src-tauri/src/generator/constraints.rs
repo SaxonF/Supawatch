@@ -15,13 +15,16 @@ pub fn generate_create_index(table_name: &str, idx: &IndexInfo) -> String {
         sql.push_str(&format!(" USING {}", idx.index_method));
     }
 
-    // Columns or expressions
-    if !idx.expressions.is_empty() {
-        sql.push_str(&format!(" ({})", idx.expressions.join(", ")));
-    } else {
-        let cols: Vec<String> = idx.columns.iter().map(|c| format!("\"{}\"", c)).collect();
-        sql.push_str(&format!(" ({})", cols.join(", ")));
+    // Columns and/or expressions
+    // For mixed indexes (columns + expressions), include both
+    let mut parts: Vec<String> = Vec::new();
+    for c in &idx.columns {
+        parts.push(format!("\"{}\"", c));
     }
+    for e in &idx.expressions {
+        parts.push(e.clone());
+    }
+    sql.push_str(&format!(" ({})", parts.join(", ")));
 
     // WHERE clause for partial indexes
     if let Some(where_clause) = &idx.where_clause {

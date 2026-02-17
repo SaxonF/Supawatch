@@ -437,6 +437,29 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_index_expressions_coalesce() {
+        // Expression-only index
+        let def = "CREATE UNIQUE INDEX idx ON t USING btree (COALESCE(node_id, '00000000-0000-0000-0000-000000000000'::uuid)) WHERE (x IS NOT NULL)";
+        let exprs = extract_index_expressions(def);
+        assert_eq!(exprs.len(), 1);
+        assert!(exprs[0].to_lowercase().contains("coalesce"));
+        // The full COALESCE expression should be intact, not split at the internal comma
+        assert!(exprs[0].contains("00000000"), "Expression should contain the full UUID, got: {}", exprs[0]);
+    }
+
+    #[test]
+    fn test_extract_index_expressions_mixed_columns_and_coalesce() {
+        // Mixed index: regular columns + coalesce expression with internal commas
+        let def = "CREATE UNIQUE INDEX role_bindings_member_unique_idx ON authz.role_bindings USING btree (organization_id, role_id, scope, COALESCE(node_id, '00000000-0000-0000-0000-000000000000'::uuid), principal_member_id) WHERE (principal_member_id IS NOT NULL)";
+        let exprs = extract_index_expressions(def);
+        assert_eq!(exprs.len(), 1, "Should extract exactly one expression, got: {:?}", exprs);
+        let expr = &exprs[0].to_lowercase();
+        assert!(expr.contains("coalesce"), "Expression should contain coalesce");
+        assert!(expr.contains("node_id"), "Expression should contain node_id");
+        assert!(expr.contains("00000000"), "Expression should contain the full UUID, not be split at internal comma");
+    }
+
+    #[test]
     fn test_parse_function_args_variadic() {
         let args = parse_function_args("VARIADIC args text[]");
         assert_eq!(args.len(), 1);
@@ -828,6 +851,48 @@ mod tests {
         let idx = &table.indexes[0];
         assert!(idx.where_clause.is_some());
         assert!(idx.where_clause.as_ref().unwrap().contains("active"));
+    }
+
+    #[test]
+    fn test_parse_bulk_response_expression_only_index() {
+        // Simulates what the introspection query returns for an expression-only index
+        // The LEFT JOIN + FILTER produces null columns when all index keys are expressions
+        let data = json!({
+            "tables": [{"schema": "authz", "name": "role_bindings"}],
+            "columns": [],
+            "foreign_keys": [],
+            "indexes": [
+                {
+                    "schema": "authz",
+                    "table_name": "role_bindings",
+                    "index_name": "role_bindings_member_unique_idx",
+                    "index_method": "btree",
+                    "is_unique": true,
+                    "is_primary": false,
+                    "columns": null,
+                    "owning_constraint": null,
+                    "index_def": "CREATE UNIQUE INDEX role_bindings_member_unique_idx ON authz.role_bindings USING btree (COALESCE(node_id, '00000000-0000-0000-0000-000000000000'::uuid)) WHERE (principal_member_id IS NOT NULL)",
+                    "where_clause": "(principal_member_id IS NOT NULL)"
+                }
+            ],
+            "triggers": [],
+            "policies": [],
+            "rls": [],
+            "check_constraints": [],
+            "table_comments": []
+        });
+
+        let result = tables::parse_bulk_response(&data).unwrap();
+        let table = result.get("\"authz\".\"role_bindings\"").unwrap();
+        assert_eq!(table.indexes.len(), 1);
+        let idx = &table.indexes[0];
+        assert_eq!(idx.index_name, "role_bindings_member_unique_idx");
+        assert!(idx.columns.is_empty(), "Expression-only index should have empty columns, got: {:?}", idx.columns);
+        assert!(idx.is_unique);
+        assert_eq!(idx.index_method, "btree");
+        assert!(idx.where_clause.is_some());
+        assert_eq!(idx.expressions.len(), 1, "Should extract one expression from index_def, got: {:?}", idx.expressions);
+        assert!(idx.expressions[0].to_lowercase().contains("coalesce"), "Expression should contain coalesce, got: {}", idx.expressions[0]);
     }
 
     #[test]

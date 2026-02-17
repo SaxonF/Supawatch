@@ -2833,3 +2833,175 @@ fn test_extension_artifact_filtering() {
     );
 }
 
+#[test]
+fn test_expression_only_index_no_diff() {
+    // Expression-only indexes (like coalesce(...)) should not produce spurious diffs
+    // when both local and remote have the same index with equivalent expressions
+    let local_idx = IndexInfo {
+        index_name: "role_bindings_member_unique_idx".to_string(),
+        columns: vec![],
+        is_unique: true,
+        is_primary: false,
+        owning_constraint: None,
+        index_method: "btree".to_string(),
+        where_clause: Some("principal_member_id IS NOT NULL".to_string()),
+        expressions: vec!["coalesce(node_id, '00000000-0000-0000-0000-000000000000'::UUID)".to_string()],
+    };
+
+    // Remote has lowercase type cast (PostgreSQL normalizes to lowercase)
+    let remote_idx = IndexInfo {
+        index_name: "role_bindings_member_unique_idx".to_string(),
+        columns: vec![],
+        is_unique: true,
+        is_primary: false,
+        owning_constraint: None,
+        index_method: "btree".to_string(),
+        where_clause: Some("(principal_member_id IS NOT NULL)".to_string()),
+        expressions: vec!["COALESCE(node_id, '00000000-0000-0000-0000-000000000000'::uuid)".to_string()],
+    };
+
+    assert!(
+        !tables::indexes_differ(&local_idx, &remote_idx),
+        "Expression-only indexes with equivalent coalesce expressions should not differ"
+    );
+}
+
+#[test]
+fn test_expression_index_type_cast_normalization() {
+    // Verify type casts like ::UUID vs ::uuid don't cause false diffs
+    let local_idx = IndexInfo {
+        index_name: "idx_test".to_string(),
+        columns: vec![],
+        is_unique: false,
+        is_primary: false,
+        owning_constraint: None,
+        index_method: "btree".to_string(),
+        where_clause: None,
+        expressions: vec!["coalesce(col, 'default'::TEXT)".to_string()],
+    };
+
+    let remote_idx = IndexInfo {
+        index_name: "idx_test".to_string(),
+        columns: vec![],
+        is_unique: false,
+        is_primary: false,
+        owning_constraint: None,
+        index_method: "btree".to_string(),
+        where_clause: None,
+        expressions: vec!["COALESCE(col, 'default'::text)".to_string()],
+    };
+
+    assert!(
+        !tables::indexes_differ(&local_idx, &remote_idx),
+        "Type cast differences should be normalized away"
+    );
+}
+
+#[test]
+fn test_expression_only_index_realistic_pipeline() {
+    // Simulate EXACTLY what each side produces:
+    // LOCAL: sqlparser's to_string() on coalesce expression
+    // REMOTE: extract_index_expressions on pg_get_indexdef output + parse_pg_array on null columns
+
+    // Remote side: what introspection returns after extract_index_expressions + parse_pg_array(null)
+    // pg_get_indexdef returns: COALESCE(node_id, '00000000-...'::uuid)
+    // extract_index_expressions extracts the expression part
+    // parse_pg_array on null returns []
+    let remote_idx = IndexInfo {
+        index_name: "role_bindings_member_unique_idx".to_string(),
+        columns: vec![],
+        is_unique: true,
+        is_primary: false,
+        owning_constraint: None,
+        index_method: "btree".to_string(),
+        where_clause: Some("(principal_member_id IS NOT NULL)".to_string()),
+        expressions: vec!["COALESCE(node_id, '00000000-0000-0000-0000-000000000000'::uuid)".to_string()],
+    };
+
+    // Local side: sqlparser parses CREATE INDEX ... (coalesce(...))
+    // sqlparser's to_string() for coalesce typically produces: COALESCE(node_id, '00000000-...'::UUID)
+    let local_idx = IndexInfo {
+        index_name: "role_bindings_member_unique_idx".to_string(),
+        columns: vec![],
+        is_unique: true,
+        is_primary: false,
+        owning_constraint: None,
+        index_method: "btree".to_string(),
+        where_clause: Some("principal_member_id IS NOT NULL".to_string()),
+        expressions: vec!["COALESCE(node_id, '00000000-0000-0000-0000-000000000000'::UUID)".to_string()],
+    };
+
+    eprintln!("=== REALISTIC PIPELINE TEST ===");
+    eprintln!("Remote columns: {:?}", remote_idx.columns);
+    eprintln!("Remote expressions: {:?}", remote_idx.expressions);
+    eprintln!("Remote where: {:?}", remote_idx.where_clause);
+    eprintln!("Local columns: {:?}", local_idx.columns);
+    eprintln!("Local expressions: {:?}", local_idx.expressions);
+    eprintln!("Local where: {:?}", local_idx.where_clause);
+
+    assert!(
+        !tables::indexes_differ(&local_idx, &remote_idx),
+        "Realistic expression-only index should not produce a diff"
+    );
+}
+
+#[test]
+fn test_expression_only_index_end_to_end_parsing() {
+    // Test the ACTUAL parser output vs the ACTUAL introspection output
+    // Uses the real schema definition with mixed columns + expression
+    use crate::parsing;
+
+    let local_sql = r#"
+CREATE TABLE "authz"."role_bindings" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "organization_id" UUID NOT NULL,
+    "role_id" UUID NOT NULL,
+    "scope" TEXT NOT NULL,
+    "node_id" UUID,
+    "principal_member_id" UUID
+);
+CREATE UNIQUE INDEX "role_bindings_member_unique_idx" ON "authz"."role_bindings" (organization_id, role_id, scope, coalesce(node_id, '00000000-0000-0000-0000-000000000000'::UUID), principal_member_id) WHERE principal_member_id IS NOT NULL;
+"#;
+
+    let files = vec![("schema.sql".to_string(), local_sql.to_string())];
+    let local_schema = parsing::parse_schema_sql(&files).unwrap();
+    let local_table = local_schema.tables.get("\"authz\".\"role_bindings\"")
+        .expect("Table should exist");
+
+    assert!(!local_table.indexes.is_empty(), "Should have at least one index");
+    let local_idx = &local_table.indexes[0];
+
+    eprintln!("=== LOCAL PARSER OUTPUT ===");
+    eprintln!("index_name: {:?}", local_idx.index_name);
+    eprintln!("columns: {:?}", local_idx.columns);
+    eprintln!("expressions: {:?}", local_idx.expressions);
+    eprintln!("where_clause: {:?}", local_idx.where_clause);
+    eprintln!("is_unique: {}", local_idx.is_unique);
+    eprintln!("index_method: {}", local_idx.index_method);
+
+    // Simulate remote from pg_get_indexdef + introspection query
+    // Remote has same regular columns + expression extracted from pg_get_indexdef
+    let remote_idx = IndexInfo {
+        index_name: "role_bindings_member_unique_idx".to_string(),
+        columns: vec!["organization_id".to_string(), "role_id".to_string(), "scope".to_string(), "principal_member_id".to_string()],
+        is_unique: true,
+        is_primary: false,
+        owning_constraint: None,
+        index_method: "btree".to_string(),
+        where_clause: Some("(principal_member_id IS NOT NULL)".to_string()),
+        expressions: vec!["COALESCE(node_id, '00000000-0000-0000-0000-000000000000'::uuid)".to_string()],
+    };
+
+    eprintln!("=== REMOTE (simulated) ===");
+    eprintln!("columns: {:?}", remote_idx.columns);
+    eprintln!("expressions: {:?}", remote_idx.expressions);
+    eprintln!("where_clause: {:?}", remote_idx.where_clause);
+
+    let differs = tables::indexes_differ(local_idx, &remote_idx);
+    eprintln!("indexes_differ result: {}", differs);
+
+    assert!(
+        !differs,
+        "End-to-end: parsed local index should match introspected remote index"
+    );
+}

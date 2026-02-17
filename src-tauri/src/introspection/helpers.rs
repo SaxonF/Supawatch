@@ -157,6 +157,7 @@ pub fn extract_update_of_columns(trigger_def: &str) -> Option<Vec<String>> {
 
 /// Extract expressions from index definition.
 /// Handles cases like: CREATE INDEX idx ON table (col, lower(name)) WHERE condition
+/// Also handles mixed indexes: (org_id, role_id, coalesce(node_id, '...'::uuid), member_id)
 pub fn extract_index_expressions(index_def: &str) -> Vec<String> {
     let mut expressions = vec![];
 
@@ -183,8 +184,12 @@ pub fn extract_index_expressions(index_def: &str) -> Vec<String> {
             }
             if let Some(end) = paren_end {
                 let cols_str = &in_parens[..end];
-                for part in cols_str.split(',') {
+                // Split by commas, but only at depth 0 (not inside parentheses)
+                // This correctly handles expressions like COALESCE(a, b) which contain commas
+                let parts = split_respecting_parens(cols_str);
+                for part in &parts {
                     let trimmed = part.trim();
+                    // Check if the part contains parentheses, indicating it's likely an expression
                     if trimmed.contains('(') {
                         expressions.push(trimmed.to_string());
                     }
@@ -194,6 +199,47 @@ pub fn extract_index_expressions(index_def: &str) -> Vec<String> {
     }
 
     expressions
+}
+
+/// Split a string by commas, but only at parenthesis depth 0.
+/// This ensures commas inside function calls like COALESCE(a, b) are not treated as separators.
+fn split_respecting_parens(s: &str) -> Vec<String> {
+    let mut parts = vec![];
+    let mut current = String::new();
+    let mut depth = 0;
+    let mut in_single_quote = false;
+
+    for c in s.chars() {
+        match c {
+            '\'' if !in_single_quote => {
+                in_single_quote = true;
+                current.push(c);
+            }
+            '\'' if in_single_quote => {
+                in_single_quote = false;
+                current.push(c);
+            }
+            '(' if !in_single_quote => {
+                depth += 1;
+                current.push(c);
+            }
+            ')' if !in_single_quote => {
+                depth -= 1;
+                current.push(c);
+            }
+            ',' if depth == 0 && !in_single_quote => {
+                parts.push(current.clone());
+                current.clear();
+            }
+            _ => {
+                current.push(c);
+            }
+        }
+    }
+    if !current.is_empty() {
+        parts.push(current);
+    }
+    parts
 }
 
 /// Custom deserializer for i64 that handles string or int.

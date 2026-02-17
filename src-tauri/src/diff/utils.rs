@@ -628,9 +628,25 @@ pub fn normalize_default_option(opt: &Option<String>) -> Option<String> {
 /// - float8 -> double precision
 /// - varchar -> character varying
 /// - char -> character
+/// - timestamptz -> timestamp with time zone
+/// - timestamp -> timestamp without time zone
+/// - timetz -> time with time zone
+/// - time -> time without time zone
+/// - public.custom_type -> custom_type (strip default schema prefix)
 pub fn normalize_data_type(data_type: &str) -> String {
     let lower = data_type.to_lowercase();
     let trimmed = lower.trim();
+    
+    // Strip schema prefixes from types
+    // e.g. "public.file_node_kind" -> "file_node_kind"
+    // e.g. "extensions.citext" -> "citext" (extension types installed in extensions schema)
+    let known_schema_prefixes = [
+        "public.", "extensions.", "pg_catalog.",
+    ];
+    let trimmed = known_schema_prefixes.iter()
+        .find(|prefix| trimmed.starts_with(*prefix))
+        .map(|prefix| &trimmed[prefix.len()..])
+        .unwrap_or(trimmed);
     
     // Check for exact matches first
     match trimmed {
@@ -643,6 +659,12 @@ pub fn normalize_data_type(data_type: &str) -> String {
         "real" | "float4" => "real".to_string(),
         "varchar" => "character varying".to_string(),
         "char" => "character".to_string(),
+        // Timestamp type aliases
+        "timestamptz" | "timestamp with time zone" => "timestamp with time zone".to_string(),
+        "timestamp" | "timestamp without time zone" => "timestamp without time zone".to_string(),
+        // Time type aliases
+        "timetz" | "time with time zone" => "time with time zone".to_string(),
+        "time" | "time without time zone" => "time without time zone".to_string(),
         // Handle array variants (simple recursive check for [] suffix)
         s if s.ends_with("[]") => {
             let inner = &s[..s.len() - 2];

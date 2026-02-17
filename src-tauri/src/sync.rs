@@ -26,10 +26,65 @@ pub struct EdgeFunctionDiff {
 
 /// Collect all source files in a function directory recursively.
 /// Returns a list of (relative_path, content) pairs.
+/// Also includes files from `../_shared` if it exists, prefixed with `_shared/`.
 pub async fn collect_function_files(dir: &Path) -> Result<Vec<(String, Vec<u8>)>, String> {
     let mut files = Vec::new();
+    
+    // 1. Collect function-specific files
     collect_files_recursive(dir, dir, &mut files).await?;
+
+    // 2. Collect shared files if they exist
+    // Check for _shared directory at ../_shared relative to the function dir
+    if let Some(parent) = dir.parent() {
+        let shared_dir = parent.join("_shared");
+        if shared_dir.exists() && shared_dir.is_dir() {
+            // We want these files to appear as "_shared/..." in the bundle
+            // The Deno runtime (and Supabase) typically expects 
+            // imports like `from "../_shared/mod.ts"` to work.
+            // When we deploy with `deploy_function`, we send a flat list of paths.
+            // Using "../_shared/" as a prefix should work if the server respects it.
+            collect_files_recursive_with_prefix(&shared_dir, &shared_dir, &mut files, "../_shared/").await?;
+        }
+    }
+
     Ok(files)
+}
+
+#[async_recursion::async_recursion]
+async fn collect_files_recursive_with_prefix(
+    base: &Path,
+    current: &Path,
+    files: &mut Vec<(String, Vec<u8>)>,
+    prefix: &str,
+) -> Result<(), String> {
+    let mut entries = tokio::fs::read_dir(current)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+
+        if path.is_dir() {
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name == "node_modules" || name.starts_with('.') {
+                continue;
+            }
+            collect_files_recursive_with_prefix(base, &path, files, prefix).await?;
+        } else {
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if matches!(ext, "ts" | "js" | "json" | "tsx" | "jsx" | "mts" | "mjs") {
+                let relative = path
+                    .strip_prefix(base)
+                    .map_err(|e| e.to_string())?
+                    .to_string_lossy();
+                let full_key = format!("{}{}", prefix, relative);
+                let content = tokio::fs::read(&path).await.map_err(|e| e.to_string())?;
+                files.push((full_key, content));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Compute the diff of edge functions (local vs deployed state).

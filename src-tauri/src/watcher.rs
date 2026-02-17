@@ -407,37 +407,86 @@ async fn handle_edge_function_push(
 
     update_icon(&app_handle, true);
 
+    // If change is in _shared, deploy ALL functions
+    if function_slug == "_shared" {
+        let log = LogEntry::info(
+            Some(project_id),
+            LogSource::EdgeFunction,
+            "Shared code andged. Deploying all functions...".to_string(),
+        );
+        state.add_log(log.clone()).await;
+        app_handle.emit("log", &log).ok();
+
+        let functions_dir = std::path::Path::new(base_path)
+            .join("supabase")
+            .join("functions");
+
+        if let Ok(mut entries) = tokio::fs::read_dir(&functions_dir).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                if entry.path().is_dir() {
+                    if let Some(slug) = entry.file_name().to_str() {
+                        if slug.starts_with('_') || slug.starts_with('.') {
+                            continue;
+                        }
+                        // Deploy function
+                        if let Err(e) = deploy_function_internal(&state, &app_handle, project_id, &project_ref, &api, base_path, slug).await {
+                             let log = LogEntry::error(
+                                Some(project_id),
+                                LogSource::EdgeFunction,
+                                format!("Failed to auto-deploy {}: {}", slug, e),
+                            );
+                            state.add_log(log.clone()).await;
+                            app_handle.emit("log", &log).ok();
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        // Deploy single function
+        if let Err(e) = deploy_function_internal(&state, &app_handle, project_id, &project_ref, &api, base_path, &function_slug).await {
+            update_icon(&app_handle, false);
+             return Err(e);
+        }
+        
+    }
+
+    update_icon(&app_handle, false);
+    Ok(())
+}
+
+async fn deploy_function_internal(
+    state: &Arc<AppState>,
+    app_handle: &AppHandle,
+    project_id: Uuid,
+    project_ref: &str,
+    api: &crate::supabase_api::SupabaseApi,
+    base_path: &str,
+    function_slug: &str,
+) -> Result<(), String> {
     // Find function directory and collect ALL files
     let function_dir = std::path::Path::new(base_path)
         .join("supabase")
         .join("functions")
-        .join(&function_slug);
+        .join(function_slug);
 
     // Use shared sync module for file collection
+    // This now includes _shared files if they exist
     let files = match sync::collect_function_files(&function_dir).await {
         Ok(f) => f,
         Err(e) => {
-            let log = LogEntry::error(
-                Some(project_id),
-                LogSource::EdgeFunction,
-                format!("Failed to read function directory: {}", e),
-            );
-            state.add_log(log.clone()).await;
-            app_handle.emit("log", &log).ok();
-            update_icon(&app_handle, false);
-            return Err(e);
+             return Err(format!("Failed to read function directory: {}", e));
         }
     };
 
     if files.is_empty() {
-        let log = LogEntry::warning(
+         let log = LogEntry::warning(
             Some(project_id),
             LogSource::EdgeFunction,
             format!("No files found in function directory: {}", function_slug),
         );
         state.add_log(log.clone()).await;
         app_handle.emit("log", &log).ok();
-        update_icon(&app_handle, false);
         return Ok(());
     }
 
@@ -459,7 +508,7 @@ async fn handle_edge_function_push(
     let hash_file = function_dir.join(".harbor_hash");
 
     // Deploy with all files
-    match api.deploy_function(&project_ref, &function_slug, &function_slug, &entrypoint, files).await {
+    match api.deploy_function(project_ref, function_slug, function_slug, &entrypoint, files).await {
         Ok(result) => {
             // Save hash after successful deploy
             let _ = tokio::fs::write(&hash_file, &local_hash).await;
@@ -473,19 +522,10 @@ async fn handle_edge_function_push(
             app_handle.emit("log", &log).ok();
         }
         Err(e) => {
-            let log = LogEntry::error(
-                Some(project_id),
-                LogSource::EdgeFunction,
-                format!("Deploy failed: {}", e),
-            );
-            state.add_log(log.clone()).await;
-            app_handle.emit("log", &log).ok();
-            update_icon(&app_handle, false);
             return Err(e.to_string());
         }
     }
 
-    update_icon(&app_handle, false);
     Ok(())
 }
 
@@ -602,11 +642,6 @@ fn classify_file_change(path: &str, base_path: &str) -> FileChangeType {
     if (relative_lower.contains("/functions/") || relative_lower.starts_with("functions/"))
         && (relative_lower.ends_with(".ts") || relative_lower.ends_with(".js"))
     {
-        // Skip shared folders (starting with _) like _shared
-        let slug = extract_function_slug(&relative);
-        if !slug.is_empty() && slug.starts_with('_') {
-            return FileChangeType::Other;
-        }
         return FileChangeType::EdgeFunction;
     }
 

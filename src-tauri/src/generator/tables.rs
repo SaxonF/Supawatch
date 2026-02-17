@@ -131,7 +131,7 @@ pub fn generate_alter_table(
                 table_name, constraint
             ));
         } else {
-            statements.push(format!("DROP INDEX IF EXISTS \"{}\";", i.index_name));
+            statements.push(format!("DROP INDEX IF EXISTS \"{}\".\"{}\";", local_table.schema, i.index_name));
         }
     }
 

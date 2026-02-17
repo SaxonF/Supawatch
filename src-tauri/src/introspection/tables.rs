@@ -111,7 +111,7 @@ pub const TABLES_BULK_QUERY: &str = r#"
             n.nspname as schema,
             t.relname as table_name,
             i.relname as index_name,
-            array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum)) as columns,
+            array_agg(a.attname ORDER BY array_position(ix.indkey::int[], a.attnum)) FILTER (WHERE a.attname IS NOT NULL) as columns,
             ix.indisunique as is_unique,
             ix.indisprimary as is_primary,
             MAX(con.conname) as owning_constraint,
@@ -122,7 +122,7 @@ pub const TABLES_BULK_QUERY: &str = r#"
         JOIN pg_index ix ON t.oid = ix.indrelid
         JOIN pg_class i ON i.oid = ix.indexrelid
         JOIN pg_am am ON i.relam = am.oid
-        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
+        LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey::int[]) AND a.attnum > 0 AND NOT a.attisdropped
         JOIN pg_namespace n ON t.relnamespace = n.oid
         LEFT JOIN pg_constraint con ON con.conindid = i.oid
         WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
