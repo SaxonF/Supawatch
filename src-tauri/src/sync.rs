@@ -432,22 +432,32 @@ pub fn find_schema_source(project_local_path: &Path) -> Option<SchemaSource> {
     // Check for split directory layout first
     if schemas_dir.exists() && schemas_dir.is_dir() {
         // Check if directory contains split files (numbered .sql files, not just schema.sql)
-        if let Ok(entries) = std::fs::read_dir(&schemas_dir) {
-            let has_split_files = entries
-                .filter_map(|e| e.ok())
-                .any(|e| {
-                    let name = e.file_name().to_string_lossy().to_string();
-                    name.ends_with(".sql") && name != "schema.sql"
-                });
-
-            if has_split_files {
-                return Some(SchemaSource::Directory(schemas_dir));
-            }
+        // We need to check recursively because files might only exist in subfolders
+        if has_sql_files_recursive(&schemas_dir) {
+            return Some(SchemaSource::Directory(schemas_dir));
         }
     }
 
     // Fall back to single file
     find_schema_path(project_local_path).map(SchemaSource::SingleFile)
+}
+
+fn has_sql_files_recursive(dir: &Path) -> bool {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if has_sql_files_recursive(&path) {
+                    return true;
+                }
+            } else if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name.ends_with(".sql") && name != "schema.sql" {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Find the schema file path, checking multiple standard locations.
@@ -461,39 +471,54 @@ pub fn find_schema_path(project_local_path: &Path) -> Option<PathBuf> {
     schema_paths.into_iter().find(|p| p.exists())
 }
 
-/// Read all `.sql` files from a schema directory, sorted alphabetically.
-/// Returns a list of (filename, content) tuples.
+/// Read all `.sql` files from a schema directory recursively, sorted alphabetically by relative path.
+/// Returns a list of (relative_path, content) tuples.
 pub async fn read_schema_dir(dir: &Path) -> Result<Vec<(String, String)>, String> {
-    let mut entries: Vec<PathBuf> = Vec::new();
+    let mut files = Vec::new();
 
-    let mut read_dir = tokio::fs::read_dir(dir)
+    // Collect files recursively
+    collect_schema_files_recursive(dir, dir, &mut files).await?;
+
+    // Sort alphabetically by filename (relative path) to ensure deterministic order
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+
+    Ok(files)
+}
+
+#[async_recursion::async_recursion]
+async fn collect_schema_files_recursive(
+    base: &Path,
+    current: &Path,
+    files: &mut Vec<(String, String)>,
+) -> Result<(), String> {
+    let mut entries = tokio::fs::read_dir(current)
         .await
-        .map_err(|e| format!("Failed to read schema directory: {}", e))?;
+        .map_err(|e| format!("Failed to read directory {}: {}", current.display(), e))?;
 
-    while let Some(entry) = read_dir.next_entry().await.map_err(|e| e.to_string())? {
+    while let Ok(Some(entry)) = entries.next_entry().await {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("sql") {
-            entries.push(path);
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+
+        if name.starts_with('.') {
+            continue;
+        }
+
+        if path.is_dir() {
+            collect_schema_files_recursive(base, &path, files).await?;
+        } else if path.extension().and_then(|e| e.to_str()) == Some("sql") {
+            let relative = path
+                .strip_prefix(base)
+                .map_err(|e| e.to_string())?
+                .to_string_lossy()
+                .to_string();
+            let content = tokio::fs::read_to_string(&path)
+                .await
+                .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+            files.push((relative, content));
         }
     }
 
-    // Sort alphabetically by filename (numeric prefixes give dependency order)
-    entries.sort_by(|a, b| {
-        a.file_name()
-            .unwrap_or_default()
-            .cmp(&b.file_name().unwrap_or_default())
-    });
-
-    let mut files = Vec::new();
-    for path in entries {
-        let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-        let content = tokio::fs::read_to_string(&path)
-            .await
-            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
-        files.push((filename, content));
-    }
-
-    Ok(files)
+    Ok(())
 }
 
 /// Read the schema SQL from a `SchemaSource` — either a single file or directory.
@@ -648,5 +673,91 @@ pub fn get_typescript_output_path(
             .join("src")
             .join("types")
             .join("database.ts"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+    use std::io::Write;
+    use uuid::Uuid;
+
+    #[tokio::test]
+    async fn test_read_schema_dir_recursive() {
+        // Create a temp directory manually since we don't have tempfile crate
+        let temp_dir = std::env::temp_dir().join(format!("harbor_test_{}", Uuid::new_v4()));
+        tokio::fs::create_dir(&temp_dir).await.unwrap();
+        let path = &temp_dir;
+
+        // Create root file
+        let file1_path = path.join("01_base.sql");
+        let mut file1 = File::create(&file1_path).unwrap();
+        writeln!(file1, "CREATE TABLE t1 (id int);").unwrap();
+
+        // Create nested directory
+        let sub_path = path.join("auth");
+        tokio::fs::create_dir(&sub_path).await.unwrap();
+
+        // Create nested file
+        let file2_path = sub_path.join("02_users.sql");
+        let mut file2 = File::create(&file2_path).unwrap();
+        writeln!(file2, "CREATE TABLE users (id uuid);").unwrap();
+
+        // Create deeper nested directory
+        let deep_path = sub_path.join("v1");
+        tokio::fs::create_dir(&deep_path).await.unwrap();
+
+        // Create deeper nested file
+        let file3_path = deep_path.join("03_profiles.sql");
+        let mut file3 = File::create(&file3_path).unwrap();
+        writeln!(file3, "CREATE TABLE profiles (id uuid);").unwrap();
+
+        // Run recursive read
+        let files_result = read_schema_dir(path).await;
+        
+        // Clean up
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+        let files = files_result.unwrap();
+
+        assert_eq!(files.len(), 3);
+
+        // Verify content and order
+        // Note: The order depends on how files are returned and sorted
+        // our implementation sorts by relative filename string.
+        
+        // "01_base.sql"
+        // "auth/02_users.sql" 
+        // "auth/v1/03_profiles.sql"
+        
+        assert_eq!(files[0].0, "01_base.sql");
+        assert_eq!(files[1].0, "auth/02_users.sql");
+        assert_eq!(files[2].0, "auth/v1/03_profiles.sql");
+    }
+
+    #[test]
+    fn test_has_sql_files_recursive() {
+        let dir = std::env::temp_dir().join(format!("harbor_test_detect_{}", Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        
+        // Initially empty
+        assert!(!has_sql_files_recursive(&dir));
+
+        // Create nested dir
+        let sub_dir = dir.join("nested");
+        std::fs::create_dir(&sub_dir).unwrap();
+        assert!(!has_sql_files_recursive(&dir));
+
+        // Add file in nested dir
+        let file_path = sub_dir.join("test.sql");
+        let mut file = File::create(&file_path).unwrap();
+        writeln!(file, "SELECT 1;").unwrap();
+
+        // Should be detected now
+        assert!(has_sql_files_recursive(&dir));
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

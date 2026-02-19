@@ -42,7 +42,7 @@ keyring = { version = "3", features = ["apple-native"] }
 # Utilities
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-tokio = { version = "1", features = ["sync", "rt", "fs", "macros"] }
+tokio = { version = "1", features = ["sync", "rt", "fs", "macros", "time"] }
 dirs = "6"
 thiserror = "2"
 once_cell = "1"

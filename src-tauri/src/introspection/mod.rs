@@ -37,17 +37,32 @@ impl<'a> Introspector<'a> {
         println!("[DEBUG introspect] Running bulk queries...");
 
         let (enums, functions, roles, tables_data, views, sequences, extensions, composite_types, domains) =
-            tokio::try_join!(
-                self.get_enums(),
-                self.get_functions(),
-                self.get_roles(),
-                self.get_all_tables_bulk(),
-                self.get_views(),
-                self.get_sequences(),
-                self.get_extensions(),
-                self.get_composite_types(),
-                self.get_domains()
-            )?;
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                async {
+                    tokio::try_join!(
+                        self.get_enums(),
+                        self.get_functions(),
+                        self.get_roles(),
+                        self.get_all_tables_bulk(),
+                        self.get_views(),
+                        self.get_sequences(),
+                        self.get_extensions(),
+                        self.get_composite_types(),
+                        self.get_domains()
+                    )
+                },
+            )
+            .await
+            {
+                Ok(result) => result?,
+                Err(_) => {
+                    return Err(
+                        "Introspection timed out after 10 seconds. Check your database connection."
+                            .to_string(),
+                    )
+                }
+            };
 
         let total_triggers: usize = tables_data.values().map(|t| t.triggers.len()).sum();
         let total_policies: usize = tables_data.values().map(|t| t.policies.len()).sum();
