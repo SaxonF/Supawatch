@@ -43,8 +43,10 @@ fn build_schema_context(schema: &crate::schema::DbSchema) -> String {
             
             // Add foreign keys for relationships
             for fk in &table.foreign_keys {
-                context.push_str(&format!("  FK: {} -> {}.{}.{}\n", 
-                    fk.column_name, fk.foreign_schema, fk.foreign_table, fk.foreign_column));
+                let columns = fk.columns.join(", ");
+                let foreign_columns = fk.foreign_columns.join(", ");
+                context.push_str(&format!("  FK: ({}) -> {}.{}.({})\n", 
+                    columns, fk.foreign_schema, fk.foreign_table, foreign_columns));
             }
         }
     }

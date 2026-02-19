@@ -13,6 +13,9 @@ mod tables;
 mod types;
 mod views;
 
+#[cfg(test)]
+mod tests_composite;
+
 pub fn parse_schema_sql(files: &[(String, String)]) -> Result<DbSchema, String> {
     let mut tables = HashMap::new();
     let mut enums = HashMap::new();
@@ -693,9 +696,9 @@ ALTER TABLE "posts" ADD CONSTRAINT "posts_user_id_fkey"
         // FK should have bare/unquoted names (matching introspection behavior)
         let fk = &posts.foreign_keys[0];
         assert_eq!(fk.constraint_name, "posts_user_id_fkey"); // no quotes
-        assert_eq!(fk.column_name, "user_id"); // no quotes
+        assert_eq!(fk.columns, vec!["user_id"]); // no quotes
         assert_eq!(fk.foreign_table, "users"); // no quotes
-        assert_eq!(fk.foreign_column, "id"); // no quotes
+        assert_eq!(fk.foreign_columns, vec!["id"]); // no quotes
         assert_eq!(fk.on_delete, "CASCADE");
     }
 
@@ -1314,9 +1317,9 @@ CREATE TABLE posts (
         // Verify the FK is captured
         assert_eq!(table.foreign_keys.len(), 1);
         let fk = &table.foreign_keys[0];
-        assert_eq!(fk.column_name, "user_id");
+        assert_eq!(fk.columns, vec!["user_id"]);
         assert_eq!(fk.foreign_table, "users");
-        assert_eq!(fk.foreign_column, "id");
+        assert_eq!(fk.foreign_columns, vec!["id"]);
         assert_eq!(fk.on_delete, "CASCADE");
         assert_eq!(fk.on_update, "NO ACTION");
     }
@@ -1391,5 +1394,27 @@ $$;
 "#;
         let (cleaned_sql_unquoted, _) = preprocess_function_options(sql_unquoted);
         assert!(cleaned_sql_unquoted.contains("SET updated_at = NOW()"), "Parsing shouldn't strip unquoted SET assignments");
+    }
+    #[test]
+    fn test_parse_check_constraint_starts_with_check() {
+        let sql = r#"
+CREATE TABLE nodes (
+    checksum_sha256 text,
+    CONSTRAINT check_checksum CHECK (checksum_sha256 IS NULL)
+);
+"#;
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
+        let table = schema.tables.get("\"public\".\"nodes\"").expect("Table not found");
+        
+        // This test ensures that format_check_expression doesn't strip "CHECK"
+        // just because the expression starts with "checksum..."
+        let constraint = &table.check_constraints[0];
+        
+        println!("Parsed expression: {}", constraint.expression);
+        
+        // It must be a full CHECK (...) expression
+        assert!(constraint.expression.trim().to_uppercase().starts_with("CHECK ("));
+        assert!(constraint.expression.contains("checksum_sha256"));
     }
 }

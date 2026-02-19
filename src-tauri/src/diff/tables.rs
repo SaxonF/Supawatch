@@ -96,18 +96,11 @@ pub fn compute_table_diff(remote: &TableInfo, local: &TableInfo) -> TableDiff {
                     // 3. Collapse whitespace
                     let mut collapsed = without_public.split_whitespace().collect::<Vec<_>>().join(" ");
                     
-                    // 4. Strip common type casts
-                    let type_cast_suffixes = [
-                        "::text", "::regconfig", "::integer", "::int", "::bigint", "::smallint",
-                        "::boolean", "::bool", "::numeric", "::jsonb", "::varchar",
-                        "::character varying", "::timestamp", "::timestamptz", "::date",
-                        "::time", "::float", "::double precision", "::regclass", "::regtype",
-                        "::bpchar",
-                    ];
-                    
-                    for suffix in type_cast_suffixes {
-                        collapsed = collapsed.replace(suffix, "");
-                    }
+                    // 4. Strip common type casts using Regex
+                    // Matches ::type, ::schema.type, ::type[], or ::schema.type[]
+                    use regex::Regex;
+                    let cast_re = Regex::new(r"::(?:[a-z_][a-z0-9_]*)(?:\.[a-z_][a-z0-9_]*)*(?:\[\])?").unwrap();
+                    let collapsed = cast_re.replace_all(&collapsed, "").to_string();
 
                     // 5. Remove inner parentheses found in concatenations or expressions
                     let mut s = collapsed;
@@ -199,7 +192,30 @@ pub fn compute_table_diff(remote: &TableInfo, local: &TableInfo) -> TableDiff {
             // Default value - normalize for comparison (strips type casts like ::text)
             // Skip comparison for generated columns - they can't have defaults
             if !local_col.is_generated && !remote_col.is_generated {
-                if utils::normalize_default_option(&local_col.column_default) != utils::normalize_default_option(&remote_col.column_default) {
+                // Special handling for SERIAL/BIGSERIAL columns
+                // Local parsed as "bigserial" (or mapped to bigint/integer but kept as serial in source) has NO default in struct
+                // Remote has "nextval('..._seq'::regclass)"
+                // If local type implies a sequence and local default is None, and remote default is nextval, we assume match.
+                let local_type_lower = local_col.data_type.to_lowercase();
+                let is_serial_type = local_type_lower.contains("serial");
+                
+                let default_mismatch = if is_serial_type && local_col.column_default.is_none() {
+                     if let Some(remote_default) = &remote_col.column_default {
+                         // If remote is nextval, we consider it a match (implicit default vs explicit system default)
+                         !remote_default.to_lowercase().contains("nextval")
+                     } else {
+                         // Serial without nextval on remote? rare but if so, it's a diff? 
+                         // Or maybe ident column. Let's assume if both are None it's fine.
+                         // If remote is None, then it differs from "implied" serial? 
+                         // Actually if remote is None, it means it's NOT an auto-incrementing column on DB side?
+                         // But for now, just check the nextval case.
+                         true 
+                     }
+                } else {
+                    utils::normalize_default_option(&local_col.column_default) != utils::normalize_default_option(&remote_col.column_default)
+                };
+
+                if default_mismatch {
                     changes.default_change = Some((
                         remote_col.column_default.clone(),
                         local_col.column_default.clone(),
@@ -368,6 +384,7 @@ pub fn compute_table_diff(remote: &TableInfo, local: &TableInfo) -> TableDiff {
 
     for f in &local.foreign_keys {
         if !remote_fks.contains_key(&f.constraint_name) {
+            println!("[DIFF DEBUG] FK '{}' not found in remote. Remote keys: {:?}", f.constraint_name, remote_fks.keys());
             diff.foreign_keys_to_create.push(f.clone());
         } else {
             let remote_f = remote_fks.get(&f.constraint_name).unwrap();
@@ -546,17 +563,10 @@ pub fn indexes_differ(local: &IndexInfo, remote: &IndexInfo) -> bool {
     let normalize_expr = |e: &str| -> String {
         let s = e.to_lowercase().replace('"', "");
         let collapsed = s.split_whitespace().collect::<Vec<_>>().join(" ");
-        // Strip common type casts (e.g., ::uuid, ::text, ::integer)
-        let type_cast_suffixes = [
-            "::uuid", "::text", "::integer", "::int", "::bigint", "::smallint",
-            "::boolean", "::bool", "::numeric", "::jsonb", "::varchar",
-            "::character varying", "::timestamp", "::timestamptz", "::date",
-            "::time", "::float", "::double precision", "::regclass", "::regtype",
-        ];
-        let mut result = collapsed;
-        for suffix in type_cast_suffixes {
-            result = result.replace(suffix, "");
-        }
+        // Strip common type casts (e.g., ::uuid, ::text, ::integer) using Regex
+        use regex::Regex;
+        let cast_re = Regex::new(r"::(?:[a-z_][a-z0-9_]*)(?:\.[a-z_][a-z0-9_]*)*(?:\[\])?").unwrap();
+        let result = cast_re.replace_all(&collapsed, "").to_string();
         result
     };
     let local_exprs: Vec<String> = local.expressions.iter().map(|e| normalize_expr(e)).collect();
@@ -573,10 +583,19 @@ pub fn indexes_differ(local: &IndexInfo, remote: &IndexInfo) -> bool {
 }
 
 pub fn foreign_keys_differ(local: &ForeignKeyInfo, remote: &ForeignKeyInfo) -> bool {
-    local.column_name != remote.column_name
+    let differs = local.columns != remote.columns
         || local.foreign_schema != remote.foreign_schema
         || local.foreign_table != remote.foreign_table
-        || local.foreign_column != remote.foreign_column
+        || local.foreign_columns != remote.foreign_columns
         || local.on_delete != remote.on_delete
-        || local.on_update != remote.on_update
+        || local.on_update != remote.on_update;
+    
+    if differs {
+        println!("[DIFF DEBUG] FK '{}' differs:", local.constraint_name);
+        println!("  Local:  cols={:?} f_schema={} f_table={} f_cols={:?} del={} upd={}", 
+            local.columns, local.foreign_schema, local.foreign_table, local.foreign_columns, local.on_delete, local.on_update);
+        println!("  Remote: cols={:?} f_schema={} f_table={} f_cols={:?} del={} upd={}", 
+            remote.columns, remote.foreign_schema, remote.foreign_table, remote.foreign_columns, remote.on_delete, remote.on_update);
+    }
+    differs
 }

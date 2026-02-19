@@ -202,14 +202,38 @@ pub fn compute_diff(remote: &DbSchema, local: &DbSchema) -> SchemaDiff {
         } else {
             let remote_func = remote.functions.get(name).unwrap();
             
+            // If remote function belongs to an extension, we trust the extension manages it.
+            // Even if arguments differ (e.g. named vs unnamed), we should not drop/recreate it
+            // unless the user explicitly dropped the extension (which is handled by extensions_to_drop).
+            if remote_func.extension.is_some() {
+                continue;
+            }
+
             // Check if argument names have changed (Postgres doesn't support renaming args with CREATE OR REPLACE)
             // The key is based on types, so if we are here, types match. We check names.
+            // Relaxed check: If remote name is empty (introspection sometimes misses it or extension doesn't define it),
+            // but types match (which they do if we are here), then we assume it's NOT a rename.
             let args_renamed = local_func.args.len() == remote_func.args.len() && 
-                local_func.args.iter().zip(&remote_func.args).any(|(l, r)| l.name != r.name);
+                local_func.args.iter().zip(&remote_func.args).any(|(l, r)| {
+                    !r.name.is_empty() && l.name != r.name
+                });
+
+            let return_changed = utils::normalize_function_return_type(&local_func.return_type) 
+                != utils::normalize_function_return_type(&remote_func.return_type);
 
             if args_renamed {
                 eprintln!("=== FUNCTION DIFF DEBUG for {} ===", name);
-                eprintln!("  Argument names changed - forcing DROP and CREATE");
+                eprintln!("  Args renamed.");
+            }
+            
+            if return_changed {
+                 eprintln!("=== FUNCTION DIFF DEBUG for {} ===", name);
+                 eprintln!("  Return type changed: '{}' vs '{}'", 
+                    utils::normalize_function_return_type(&local_func.return_type), 
+                    utils::normalize_function_return_type(&remote_func.return_type));
+            }
+            
+            if args_renamed || return_changed {
                 diff.functions_to_drop.push(name.clone());
                 diff.functions_to_create.push(local_func.clone());
                 continue;
@@ -304,6 +328,55 @@ pub fn compute_diff(remote: &DbSchema, local: &DbSchema) -> SchemaDiff {
         if seq.extension.is_some() {
             continue;
         }
+
+        // If sequence is owned by a table column (e.g. SERIAL/BIGSERIAL), check if that table/column exists locally.
+        // If so, we assume the sequence is implicitly managed by the column type and should NOT be dropped.
+        if let Some(owned_by) = &seq.owned_by {
+            // owned_by format is "schema.table.column" or "table.column"?
+            // Introspection usually returns "table.column" or "schema.table.column".
+            // Let's assume schema.table.column if schema is present, or assume same schema.
+            // Actually, introspection query (sequences.rs) returns:
+            // d.refobjid::regclass::text || '.' || a.attname
+            // which usually includes schema if it's not in search path, but commonly "tablename.colname".
+            // We need to parse it.
+            
+            // Try to split by dot.
+            let parts: Vec<&str> = owned_by.split('.').collect();
+            let (table_name, col_name) = if parts.len() >= 2 {
+                // simple heuristic: last part is column, second last is table. 
+                // schema might be previous parts.
+                 (parts[parts.len()-2], parts[parts.len()-1])
+            } else {
+                ("", "")
+            };
+            
+            if !table_name.is_empty() && !col_name.is_empty() {
+                // Check if this table exists in local schema
+                // note: local.tables keys are just "tablename" (or schema.tablename?)
+                // keys in hashmap are "table_name" (no schema prefix? no, introspection includes schema?)
+                // Introspection keys are `format!("{}.{}", table.schema, table.table_name)` usually?
+                // Let's check how tables are inserted. `tables.rs`: key is `table_name` string from query...
+                // Actually `DbSchema` keys seem to be just table name or schema.table.
+                // In `introspection/tables.rs`: keys are `table.table_name.clone()`? No, it's HashMap.
+                // Wait, `DbSchema` is `pub tables: HashMap<String, TableInfo>`.
+                // In `tables.rs` test: `local.tables.insert("users".into(), ...)`
+                // So keys are whatever we put in.
+                
+                // We iterate `remote.tables` by key.
+                // We should try to find the table in local tables.
+                // We can iterate local tables to find match on table_name and column.
+                // This is O(N) but N is small (tables).
+                let explicitly_kept = local.tables.values().any(|t| {
+                    t.table_name == table_name && t.columns.contains_key(col_name)
+                    // We might want to check schema too if available in owned_by
+                });
+                
+                if explicitly_kept {
+                    continue;
+                }
+            }
+        }
+
         if !local.sequences.contains_key(name) {
             diff.sequences_to_drop.push(name.clone());
         }

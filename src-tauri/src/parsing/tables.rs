@@ -27,20 +27,23 @@ pub fn handle_create_table(
     for constraint in constraints {
         match constraint {
             TableConstraint::ForeignKey(fk) => {
-                if let (Some(col), Some(ref_col)) =
-                    (fk.columns.first(), fk.referred_columns.first())
-                {
+                let columns: Vec<String> = fk.columns.iter().map(|c| strip_quotes(&c.to_string())).collect();
+                let ref_columns: Vec<String> = fk.referred_columns.iter().map(|c| strip_quotes(&c.to_string())).collect();
+
+                if !columns.is_empty() && !ref_columns.is_empty() {
                     let (ref_schema, ref_table) = parse_object_name(&fk.foreign_table);
+                    // Use first column for name generation if constraint name is missing
+                    let col_for_name = &columns[0];
                     foreign_keys.push(ForeignKeyInfo {
-                        constraint_name: fk
+                         constraint_name: fk
                             .name
                             .as_ref()
                             .map(|n| strip_quotes(&n.value))
-                            .unwrap_or_else(|| format!("fk_{}_{}", table_name, strip_quotes(&col.to_string()))),
-                        column_name: strip_quotes(&col.to_string()),
+                            .unwrap_or_else(|| format!("fk_{}_{}", table_name, col_for_name)),
+                        columns,
                         foreign_schema: ref_schema,
                         foreign_table: ref_table,
-                        foreign_column: strip_quotes(&ref_col.to_string()),
+                        foreign_columns: ref_columns,
                         on_delete: fk
                             .on_delete
                             .as_ref()
@@ -106,22 +109,24 @@ pub fn handle_alter_table(
                 AlterTableOperation::AddConstraint { constraint, .. } => {
                     match constraint {
                         TableConstraint::ForeignKey(fk) => {
-                            if let (Some(col), Some(ref_col)) =
-                                (fk.columns.first(), fk.referred_columns.first())
-                            {
+                            let columns: Vec<String> = fk.columns.iter().map(|c| strip_quotes(&c.to_string())).collect();
+                            let ref_columns: Vec<String> = fk.referred_columns.iter().map(|c| strip_quotes(&c.to_string())).collect();
+
+                            if !columns.is_empty() && !ref_columns.is_empty() {
+                                let col_for_name = &columns[0];
                                 let constraint_name = if let Some(n) = &fk.name {
                                     strip_quotes(&n.value)
                                 } else {
-                                    format!("fk_{}_{}", table_name, strip_quotes(&col.to_string()))
+                                    format!("fk_{}_{}", table_name, col_for_name)
                                 };
                                 let (ref_schema, ref_table) = parse_object_name(&fk.foreign_table);
 
                                 t_info.foreign_keys.push(ForeignKeyInfo {
                                     constraint_name,
-                                    column_name: strip_quotes(&col.to_string()),
+                                    columns,
                                     foreign_schema: ref_schema,
                                     foreign_table: ref_table,
-                                    foreign_column: strip_quotes(&ref_col.to_string()),
+                                    foreign_columns: ref_columns,
                                     on_delete: fk
                                         .on_delete
                                         .as_ref()
@@ -346,11 +351,26 @@ pub fn parse_columns(
                 ColumnOption::ForeignKey(fk_constraint) => {
                     // Handle inline REFERENCES like: user_id uuid REFERENCES auth.users(id)
                     let (ref_schema, ref_table) = parse_object_name(&fk_constraint.foreign_table);
-                    let ref_column = fk_constraint
+                    let ref_columns: Vec<String> = fk_constraint
                         .referred_columns
-                        .first()
+                        .iter()
                         .map(|c| strip_quotes(&c.to_string()))
-                        .unwrap_or_else(|| "id".to_string());
+                        .collect();
+                    
+                    // Inline FK implicitly references ONE column in the foreign table (usually 'id' if omitted)
+                    // But if it's inline in a column definition, the logical source column is THIS column `name`.
+                    // SQL allows inline composite FKs ONLY if referred_columns has multiple, 
+                    // BUT that syntax is rare/invalid for single column def? 
+                    // Actually inline FK is for the column being defined. 
+                    // So `foreign_key_props` on a column def means "this column references...".
+                    // So `columns` = vec![name.clone()].
+                    
+                    let target_ref_cols = if ref_columns.is_empty() {
+                         vec!["id".to_string()]
+                    } else {
+                        ref_columns
+                    };
+
                     let constraint_name = fk_constraint
                         .name
                         .as_ref()
@@ -359,10 +379,10 @@ pub fn parse_columns(
 
                     fks.push(ForeignKeyInfo {
                         constraint_name,
-                        column_name: name.clone(),
+                        columns: vec![name.clone()],
                         foreign_schema: ref_schema,
                         foreign_table: ref_table,
-                        foreign_column: ref_column,
+                        foreign_columns: target_ref_cols,
                         on_delete: fk_constraint
                             .on_delete
                             .as_ref()

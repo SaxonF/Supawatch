@@ -139,11 +139,13 @@ pub const TABLES_BULK_QUERY: &str = r#"
             t.tgname as trigger_name,
             t.tgtype::integer as tgtype,
             p.proname as function_name,
+            pn.nspname as function_schema,
             pg_get_triggerdef(t.oid) as trigger_def
         FROM pg_trigger t
         JOIN pg_class c ON c.oid = t.tgrelid
         JOIN pg_namespace n ON n.oid = c.relnamespace
         JOIN pg_proc p ON p.oid = t.tgfoid
+        JOIN pg_namespace pn ON pn.oid = p.pronamespace
         WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
           AND n.nspname NOT LIKE 'pg_toast%'
           AND n.nspname NOT LIKE 'pg_temp%'
@@ -329,6 +331,7 @@ pub fn parse_bulk_response(data: &serde_json::Value) -> Result<HashMap<String, T
         trigger_name: String,
         tgtype: i32,
         function_name: String,
+        function_schema: String,
         trigger_def: Option<String>,
     }
     let triggers: Vec<TriggerRow> = data
@@ -449,19 +452,46 @@ pub fn parse_bulk_response(data: &serde_json::Value) -> Result<HashMap<String, T
         }
     }
 
-    // Populate foreign keys
+    // Populate foreign keys - group by constraint name
+    // The query returns flattened rows (one per column pair), ordered by ordinal position (due to unnest) 
+    // but the `fks` vec iteration order corresponds to the query result order.
+    // We need to group them.
+    // Map: TableKey -> ConstraintName -> ForeignKeyInfo (being built)
+    let mut table_fk_map: HashMap<String, HashMap<String, ForeignKeyInfo>> = HashMap::new();
+
     for fk in fks {
-        let key = format!("\"{}\".\"{}\"", fk.schema, fk.table_name);
-        if let Some(table) = tables.get_mut(&key) {
-            table.foreign_keys.push(ForeignKeyInfo {
+        let table_key = format!("\"{}\".\"{}\"", fk.schema, fk.table_name);
+        
+        table_fk_map
+            .entry(table_key)
+            .or_insert_with(HashMap::new)
+            .entry(fk.constraint_name.clone())
+            .and_modify(|info| {
+                info.columns.push(fk.column_name.clone());
+                info.foreign_columns.push(fk.foreign_column.clone());
+            })
+            .or_insert_with(|| ForeignKeyInfo {
                 constraint_name: fk.constraint_name,
-                column_name: fk.column_name,
+                columns: vec![fk.column_name],
                 foreign_schema: fk.foreign_schema,
                 foreign_table: fk.foreign_table,
-                foreign_column: fk.foreign_column,
+                foreign_columns: vec![fk.foreign_column],
                 on_delete: fk.on_delete,
                 on_update: fk.on_update,
             });
+    }
+
+    // Assign to tables
+    for (table_key, fk_map) in table_fk_map {
+        if let Some(table) = tables.get_mut(&table_key) {
+             for (_, fk_info) in fk_map {
+                 table.foreign_keys.push(fk_info);
+             }
+             // Sort for deterministic order (optional but good for testing/diff stability if needed, 
+             // though diff usually handles unordered lists by key)
+             // The diff logic checks existence by constraint name, so order in the Vec might not matter strict 
+             // but let's keep it stable.
+             table.foreign_keys.sort_by(|a, b| a.constraint_name.cmp(&b.constraint_name));
         }
     }
 
@@ -546,6 +576,9 @@ pub fn parse_bulk_response(data: &serde_json::Value) -> Result<HashMap<String, T
             .as_ref()
             .and_then(|d| extract_trigger_when_clause(d));
 
+        // Use schema-qualified function name if available
+        let function_name = format!("{}.{}", tr.function_schema, tr.function_name);
+
         trigger_map
             .entry(trig_key)
             .and_modify(|(_, existing)| {
@@ -561,7 +594,7 @@ pub fn parse_bulk_response(data: &serde_json::Value) -> Result<HashMap<String, T
                     timing,
                     events,
                     orientation,
-                    function_name: tr.function_name.clone(),
+                    function_name,
                     when_clause,
                 })
             });

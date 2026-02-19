@@ -346,10 +346,10 @@ fn test_modify_generated_column_expression() {
 
     let diff = compute_diff(&remote, &local);
     let table_diff = diff.table_changes.get("products").unwrap();
-    assert_eq!(table_diff.columns_to_modify.len(), 1);
-    let change = &table_diff.columns_to_modify[0];
-    assert_eq!(change.column_name, "total");
-    assert_eq!(change.changes.generated_change, Some((Some("(price * qty)".into()), Some("(price + qty)".into()))));
+    
+    // Generated column changes are handled as DROP + ADD
+    assert!(table_diff.columns_to_drop.contains(&"total".to_string()));
+    assert!(table_diff.columns_to_add.contains(&"total".to_string()));
 }
 
 #[test]
@@ -577,20 +577,20 @@ fn test_trigger_when_clause_comparison() {
 fn test_foreign_key_on_update_comparison() {
     let local = ForeignKeyInfo {
         constraint_name: "fk_test".to_string(),
-        column_name: "user_id".to_string(),
+        columns: vec!["user_id".to_string()],
         foreign_schema: "public".to_string(),
         foreign_table: "users".to_string(),
-        foreign_column: "id".to_string(),
+        foreign_columns: vec!["id".to_string()],
         on_delete: "CASCADE".to_string(),
         on_update: "SET NULL".to_string(),
     };
 
     let remote = ForeignKeyInfo {
         constraint_name: "fk_test".to_string(),
-        column_name: "user_id".to_string(),
+        columns: vec!["user_id".to_string()],
         foreign_schema: "public".to_string(),
         foreign_table: "users".to_string(),
-        foreign_column: "id".to_string(),
+        foreign_columns: vec!["id".to_string()],
         on_delete: "CASCADE".to_string(),
         on_update: "NO ACTION".to_string(),
     };
@@ -1967,10 +1967,10 @@ fn test_foreign_key_add() {
     let mut local_table = remote_table.clone();
     local_table.foreign_keys.push(ForeignKeyInfo {
         constraint_name: "fk_user".into(),
-        column_name: "user_id".into(),
+        columns: vec!["user_id".into()],
         foreign_schema: "public".into(),
         foreign_table: "users".into(),
-        foreign_column: "id".into(),
+        foreign_columns: vec!["id".into()],
         on_delete: "CASCADE".into(),
         on_update: "NO ACTION".into(),
     });
@@ -1995,10 +1995,10 @@ fn test_foreign_key_drop() {
         columns: HashMap::new(),
         foreign_keys: vec![ForeignKeyInfo {
             constraint_name: "fk_user".into(),
-            column_name: "user_id".into(),
+            columns: vec!["user_id".into()],
             foreign_schema: "public".into(),
             foreign_table: "users".into(),
-            foreign_column: "id".into(),
+            foreign_columns: vec!["id".into()],
             on_delete: "CASCADE".into(),
             on_update: "NO ACTION".into(),
         }],
@@ -3004,4 +3004,389 @@ CREATE UNIQUE INDEX "role_bindings_member_unique_idx" ON "authz"."role_bindings"
         !differs,
         "End-to-end: parsed local index should match introspected remote index"
     );
+}
+
+#[test]
+fn test_generated_column_uuid_cast_normalization() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    let mut remote_table = TableInfo {
+        schema: "authz".into(),
+        table_name: "role_bindings".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![], extension: None,
+        comment: None,
+    };
+    
+    // Remote has implicit ::uuid cast from Postgres
+    remote_table.columns.insert("scope_uuid".into(), ColumnInfo {
+        column_name: "scope_uuid".into(),
+        data_type: "uuid".into(),
+        is_nullable: true,
+        column_default: None,
+        udt_name: "uuid".into(),
+        is_primary_key: false,
+        is_unique: false,
+        is_identity: false,
+        identity_generation: None,
+        is_generated: true,
+        generation_expression: Some("CASE WHEN scope_type = 'file_node'::text AND scope_id IS NOT NULL THEN scope_id::uuid ELSE NULL::uuid END".into()),
+        collation: None,
+        enum_name: None,
+        is_array: false,
+        comment: None,
+    });
+    
+    // Local definition matches but without ::uuid cast on NULL
+    let mut local_table = remote_table.clone();
+    local_table.columns.insert("scope_uuid".into(), ColumnInfo {
+        column_name: "scope_uuid".into(),
+        data_type: "uuid".into(),
+        is_nullable: true,
+        column_default: None,
+        udt_name: "uuid".into(),
+        is_primary_key: false,
+        is_unique: false,
+        is_identity: false,
+        identity_generation: None,
+        is_generated: true,
+        generation_expression: Some("CASE WHEN scope_type = 'file_node' AND scope_id IS NOT NULL THEN scope_id::UUID ELSE NULL END".into()),
+        collation: None,
+        enum_name: None,
+        is_array: false,
+        comment: None,
+    });
+
+    remote.tables.insert("role_bindings".into(), remote_table);
+    local.tables.insert("role_bindings".into(), local_table);
+
+    let diff = compute_diff(&remote, &local);
+    
+    // Should be no changes because normalization strips ::uuid
+    if let Some(table_diff) = diff.table_changes.get("role_bindings") {
+        assert!(table_diff.columns_to_modify.is_empty(), "Generated column diff should be empty");
+        assert!(table_diff.columns_to_add.is_empty(), "Should not add column");
+        assert!(table_diff.columns_to_drop.is_empty(), "Should not drop column");
+    }
+}
+
+#[test]
+fn test_trigger_function_schema_comparison() {
+    // Local: Function without schema (implies public or search_path)
+    // We normalize this to public.func if no schema is present
+    let local = TriggerInfo {
+        name: "trig_test".to_string(),
+        events: vec!["UPDATE".to_string()],
+        timing: "AFTER".to_string(),
+        orientation: "ROW".to_string(),
+        function_name: "my_func".to_string(), // No schema
+        when_clause: None,
+    };
+
+    // Remote: Function with explicit public schema (introspection results typically have this)
+    let remote = TriggerInfo {
+        name: "trig_test".to_string(),
+        events: vec!["UPDATE".to_string()],
+        timing: "AFTER".to_string(),
+        orientation: "ROW".to_string(),
+        function_name: "public.my_func".to_string(), // Explicit schema
+        when_clause: None,
+    };
+
+    assert!(!tables::triggers_differ(&local, &remote), "Trigger with implied public schema should match explicit public schema");
+
+    // Local: Function with explicit custom schema
+    let local_custom = TriggerInfo {
+        name: "trig_test".to_string(),
+        events: vec!["UPDATE".to_string()],
+        timing: "AFTER".to_string(),
+        orientation: "ROW".to_string(),
+        function_name: "auth.my_func".to_string(),
+        when_clause: None,
+    };
+
+    // Remote: Function with explicit custom schema
+    let remote_custom = TriggerInfo {
+        name: "trig_test".to_string(),
+        events: vec!["UPDATE".to_string()],
+        timing: "AFTER".to_string(),
+        orientation: "ROW".to_string(),
+        function_name: "auth.my_func".to_string(),
+        when_clause: None,
+    };
+
+    assert!(!tables::triggers_differ(&local_custom, &remote_custom), "Trigger with matching custom schema should match");
+}
+
+#[test]
+fn test_generated_column_custom_type_cast() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    // Remote has explicit cast to a custom type in another schema
+    let mut remote_table = TableInfo {
+        schema: "public".into(),
+        table_name: "items".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![], extension: None,
+        comment: None,
+    };
+    
+    remote_table.columns.insert("status".into(), ColumnInfo {
+        column_name: "status".into(),
+        data_type: "text".into(), // Base type might effectively be text/enum
+        is_nullable: true,
+        column_default: None,
+        udt_name: "text".into(),
+        is_primary_key: false,
+        is_unique: false,
+        is_identity: false,
+        identity_generation: None,
+        is_generated: true,
+        // The introspection might return this with a cast to the custom enum type
+        generation_expression: Some("('params'::text)::extensions.my_enum".into()),
+        collation: None,
+        enum_name: None,
+        is_array: false,
+        comment: None,
+    });
+    
+    let mut local_table = remote_table.clone();
+    local_table.columns.insert("status".into(), ColumnInfo {
+        column_name: "status".into(),
+        data_type: "text".into(),
+        is_nullable: true,
+        column_default: None,
+        udt_name: "text".into(),
+        is_primary_key: false,
+        is_unique: false,
+        is_identity: false,
+        identity_generation: None,
+        is_generated: true,
+        // Local definition usually doesn't have the cast to custom type if user didn't write it, 
+        // or just 'params'
+        generation_expression: Some("'params'".into()),
+        collation: None,
+        enum_name: None,
+        is_array: false,
+        comment: None,
+    });
+
+    remote.tables.insert("items".into(), remote_table);
+    local.tables.insert("items".into(), local_table);
+
+    let diff = compute_diff(&remote, &local);
+    // Should NOT have any changes for "items" table
+    assert!(diff.table_changes.is_empty(), "Generated column should not diff when ignoring custom type casts");
+}
+
+#[test]
+fn test_ignore_unnamed_arg_diff() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    // Remote function with UNNAMED args (simulating introspection result where names are missing)
+    // and explicitly NOT owned by extension (so our previous fix doesn't apply)
+    remote.functions.insert(
+        "\"public\".\"pgmq_read\"(text, integer, integer)".to_string(),
+        FunctionInfo {
+            schema: "public".into(),
+            name: "pgmq_read".into(),
+            args: vec![
+                FunctionArg { name: "".into(), type_: "text".into(), mode: None, default_value: None },
+                FunctionArg { name: "".into(), type_: "integer".into(), mode: None, default_value: None },
+                FunctionArg { name: "".into(), type_: "integer".into(), mode: None, default_value: None },
+            ],
+            return_type: "table(msg_id bigint, read_ct integer, enqueued_at timestamp with time zone, vt timestamp with time zone, message jsonb)".into(),
+            language: "sql".into(),
+            definition: "SELECT ...".into(),
+            volatility: None,
+            is_strict: false,
+            security_definer: true,
+            config_params: vec![],
+            grants: vec![],
+            extension: None, // NOT extension owned
+        }
+    );
+
+    // Local function definition (user declaring it, perhaps)
+    // Args are named here, and uses type aliases
+    local.functions.insert(
+        "\"public\".\"pgmq_read\"(text, integer, integer)".to_string(),
+        FunctionInfo {
+            schema: "public".into(),
+            name: "pgmq_read".into(),
+            args: vec![
+                FunctionArg { name: "queue_name".into(), type_: "text".into(), mode: None, default_value: None },
+                FunctionArg { name: "vt".into(), type_: "int".into(), mode: None, default_value: None },
+                FunctionArg { name: "qty".into(), type_: "int".into(), mode: None, default_value: None },
+            ],
+            return_type: "table(msg_id bigint, read_ct int, enqueued_at timestamptz, vt timestamptz, message jsonb)".into(),
+            language: "sql".into(),
+            definition: "SELECT ...".into(),
+            volatility: None,
+            is_strict: false,
+            security_definer: true,
+            config_params: vec![],
+            grants: vec![],
+            extension: None, // User definition doesn't know about extension ownership
+        }
+    );
+
+    let diff = compute_diff(&remote, &local);
+    
+    // DESIRED BEHAVIOR: Ignore difference because remote is extension-owned
+    assert!(diff.functions_to_drop.is_empty(), "Should not drop extension function");
+    assert!(diff.functions_to_create.is_empty(), "Should not recreate extension function");
+}
+
+
+#[test]
+fn test_ignore_bigserial_diff() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    // Remote: Introspected as bigint with nextval default
+    let mut remote_table = TableInfo {
+        schema: "public".into(),
+        table_name: "backfill_jobs".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![], extension: None,
+        comment: None,
+    };
+    remote_table.columns.insert("id".into(), ColumnInfo {
+        column_name: "id".into(),
+        data_type: "bigint".into(), // Normalized from int8
+        is_nullable: false,
+        column_default: Some("nextval('backfill_jobs_id_seq'::regclass)".into()),
+        udt_name: "int8".into(),
+        is_primary_key: true,
+        is_unique: false,
+        is_identity: false,
+        identity_generation: None,
+        is_generated: false,
+        generation_expression: None,
+        collation: None,
+        enum_name: None,
+        is_array: false,
+        comment: None,
+    });
+    remote.tables.insert("backfill_jobs".into(), remote_table);
+
+    // Local: Parsed as BIGSERIAL without default
+    let mut local_table = TableInfo {
+        schema: "public".into(),
+        table_name: "backfill_jobs".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![], extension: None,
+        comment: None,
+    };
+    local_table.columns.insert("id".into(), ColumnInfo {
+        column_name: "id".into(),
+        data_type: "BIGSERIAL".into(), // As parsed
+        is_nullable: false,
+        column_default: None, // No explicit default
+        udt_name: "int8".into(),
+        is_primary_key: true,
+        is_unique: false,
+        is_identity: false,
+        identity_generation: None,
+        is_generated: false,
+        generation_expression: None,
+        collation: None,
+        enum_name: None,
+        is_array: false,
+        comment: None,
+    });
+    local.tables.insert("backfill_jobs".into(), local_table);
+
+    let diff = compute_diff(&remote, &local);
+    
+    // Check if table exists in changes
+    if let Some(table_diff) = diff.table_changes.get("backfill_jobs") {
+        // If it exists, ensure no columns are modified
+        assert!(table_diff.columns_to_modify.is_empty(), "Should not modify BIGSERIAL column: {:?}", table_diff.columns_to_modify);
+    }
+}
+
+#[test]
+fn test_ignore_implicit_sequence_drop() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    // Remote has a sequence owned by a table column
+    let seq_name = "backfill_jobs_id_seq".to_string();
+    remote.sequences.insert(seq_name.clone(), SequenceInfo {
+        schema: "public".into(),
+        name: seq_name.clone(),
+        data_type: "bigint".into(),
+        start_value: 1,
+        min_value: 1,
+        max_value: 9223372036854775807,
+        increment: 1,
+        cycle: false,
+        cache_size: 1,
+        owned_by: Some("public.backfill_jobs.id".into()), // Owned by table column
+        extension: None,
+        comment: None,
+    });
+
+    // Local has the table and column (implicitly owning the sequence via BIGSERIAL), but NOT the sequence object itself
+    let mut local_table = TableInfo {
+        schema: "public".into(),
+        table_name: "backfill_jobs".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![], extension: None,
+        comment: None,
+    };
+    local_table.columns.insert("id".into(), ColumnInfo {
+        column_name: "id".into(),
+        data_type: "BIGSERIAL".into(),
+        is_nullable: false,
+        column_default: None,
+        udt_name: "BIGSERIAL".into(),
+        is_primary_key: true,
+        is_unique: false,
+        is_identity: false,
+        identity_generation: None,
+        is_generated: false,
+        generation_expression: None,
+        collation: None,
+        enum_name: None,
+        is_array: false,
+        comment: None,
+    });
+    local.tables.insert("backfill_jobs".into(), local_table);
+
+    // Compute diff
+    let diff = compute_diff(&remote, &local);
+
+    // Sequence should NOT be dropped because it is owned by a local table column
+    assert!(!diff.sequences_to_drop.contains(&seq_name), "Should not drop explicitly owned sequence");
 }

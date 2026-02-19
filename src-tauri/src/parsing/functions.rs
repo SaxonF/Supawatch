@@ -35,7 +35,10 @@ pub fn handle_create_function(
                 mode,
             } = arg;
 
-            let type_str = data_type.to_string().to_lowercase();
+            // Normalize type (e.g. "int" -> "integer", "bigserial" -> "bigint")
+            // This is crucial for matching keys with introspected functions which use canonical names
+            let type_str = super::helpers::normalize_data_type(&data_type.to_string());
+            
             fn_args.push(FunctionArg {
                 name: arg_name.map(|n| strip_quotes(&n.value)).unwrap_or_default(),
                 type_: type_str,

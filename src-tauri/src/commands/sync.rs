@@ -180,6 +180,8 @@ async fn push_edge_functions(
     state: &Arc<AppState>,
     app_handle: &AppHandle,
 ) -> Result<Vec<EdgeFunctionDeploymentResult>, String> {
+    use futures::stream::{self, StreamExt};
+
     let log = LogEntry::info(
         Some(project_id),
         LogSource::EdgeFunction,
@@ -206,90 +208,125 @@ async fn push_edge_functions(
         return Ok(Vec::new());
     }
 
-    let mut deployment_results = Vec::new();
-    let mut deployed_count = 0;
+    // Clone necessary data for closures
+    let api = api.clone();
+    let project_ref = project_ref.to_string();
+    let state = state.clone();
+    let app_handle = app_handle.clone();
+    let project_local_path = project_local_path.to_path_buf();
 
-    for func in changed_functions {
-        let function_slug = func.slug;
-        let function_path = project_local_path.join(&func.path);
+    // Limit concurrency to 5
+    const CONCURRENCY_LIMIT: usize = 5;
 
-        // We need to re-read files to deploy them
-        // This is slightly inefficient but safe and reuses logic
-        let files = match sync::collect_function_files(&function_path).await {
-            Ok(f) => f,
-            Err(e) => {
-                let log = LogEntry::warning(
-                    Some(project_id),
-                    LogSource::EdgeFunction,
-                    format!("Failed to read {}: {}", function_slug, e),
-                );
-                state.add_log(log).await;
-                 deployment_results.push(EdgeFunctionDeploymentResult {
-                    name: function_slug.clone(),
-                    status: "error".to_string(),
-                    version: None,
-                    error: Some(format!("Failed to read files: {}", e)),
-                });
-                continue;
+    let results = stream::iter(changed_functions)
+        .map(|func| {
+            let api = api.clone();
+            let project_ref = project_ref.clone();
+            let state = state.clone();
+            let app_handle = app_handle.clone();
+            let project_local_path = project_local_path.clone();
+
+            async move {
+                let function_slug = func.slug;
+                let function_path = project_local_path.join(&func.path);
+
+                // We need to re-read files to deploy them
+                // This is slightly inefficient but safe and reuses logic
+                let files = match sync::collect_function_files(&function_path).await {
+                    Ok(f) => f,
+                    Err(e) => {
+                        let log = LogEntry::warning(
+                            Some(project_id),
+                            LogSource::EdgeFunction,
+                            format!("Failed to read {}: {}", function_slug, e),
+                        );
+                        state.add_log(log).await;
+                        return EdgeFunctionDeploymentResult {
+                            name: function_slug.clone(),
+                            status: "error".to_string(),
+                            version: None,
+                            error: Some(format!("Failed to read files: {}", e)),
+                        };
+                    }
+                };
+
+                if files.is_empty() {
+                    return EdgeFunctionDeploymentResult {
+                        name: function_slug,
+                        status: "skipped".to_string(),
+                        version: None,
+                        error: None,
+                    };
+                }
+
+                // Determine entrypoint using shared sync module
+                let entrypoint = sync::determine_entrypoint(&files);
+
+                // Re-compute hash to update the lockfile after deploy
+                let local_hash = sync::compute_files_hash(&files);
+                let hash_file = function_path.join(".harbor_hash");
+
+                // Deploy with all files
+                match api
+                    .deploy_function(
+                        &project_ref,
+                        &function_slug,
+                        &function_slug,
+                        &entrypoint,
+                        files,
+                    )
+                    .await
+                {
+                    Ok(result) => {
+                        // Save hash after successful deploy
+                        let _ = tokio::fs::write(&hash_file, &local_hash).await;
+
+                        let log = LogEntry::success(
+                            Some(project_id),
+                            LogSource::EdgeFunction,
+                            format!("Deployed '{}' (v{})", result.name, result.version),
+                        );
+                        println!("[INFO] Deployed '{}' (v{})", result.name, result.version);
+                        state.add_log(log.clone()).await;
+                        app_handle.emit("log", &log).ok();
+
+                        EdgeFunctionDeploymentResult {
+                            name: result.name,
+                            status: "success".to_string(),
+                            version: Some(result.version),
+                            error: None,
+                        }
+                    }
+                    Err(e) => {
+                        let log = LogEntry::error(
+                            Some(project_id),
+                            LogSource::EdgeFunction,
+                            format!("Failed to deploy '{}': {}", function_slug, e),
+                        );
+                        println!("[ERROR] Failed to deploy '{}': {}", function_slug, e);
+                        state.add_log(log.clone()).await;
+                        app_handle.emit("log", &log).ok();
+
+                        EdgeFunctionDeploymentResult {
+                            name: function_slug.clone(),
+                            status: "error".to_string(),
+                            version: None,
+                            error: Some(e.to_string()),
+                        }
+                    }
+                }
             }
-        };
+        })
+        .buffer_unordered(CONCURRENCY_LIMIT)
+        .collect::<Vec<_>>()
+        .await;
 
-        if files.is_empty() {
-             continue;
-        }
+    // Filter out skipped results (empty files)
+    let final_results: Vec<EdgeFunctionDeploymentResult> = results.into_iter()
+        .filter(|r| r.status != "skipped")
+        .collect();
 
-        // Determine entrypoint using shared sync module
-        let entrypoint = sync::determine_entrypoint(&files);
-        
-        // Re-compute hash to update the lockfile after deploy
-        let local_hash = sync::compute_files_hash(&files);
-        let hash_file = function_path.join(".harbor_hash");
-
-        // Deploy with all files
-        match api
-            .deploy_function(project_ref, &function_slug, &function_slug, &entrypoint, files)
-            .await
-        {
-            Ok(result) => {
-                // Save hash after successful deploy
-                let _ = tokio::fs::write(&hash_file, &local_hash).await;
-
-                let log = LogEntry::success(
-                    Some(project_id),
-                    LogSource::EdgeFunction,
-                    format!("Deployed '{}' (v{})", result.name, result.version),
-                );
-                println!("[INFO] Deployed '{}' (v{})", result.name, result.version);
-                state.add_log(log.clone()).await;
-                app_handle.emit("log", &log).ok();
-                deployed_count += 1;
-                
-                deployment_results.push(EdgeFunctionDeploymentResult {
-                    name: result.name,
-                    status: "success".to_string(),
-                    version: Some(result.version),
-                    error: None,
-                });
-            }
-            Err(e) => {
-                let log = LogEntry::error(
-                    Some(project_id),
-                    LogSource::EdgeFunction,
-                    format!("Failed to deploy '{}': {}", function_slug, e),
-                );
-                println!("[ERROR] Failed to deploy '{}': {}", function_slug, e);
-                state.add_log(log.clone()).await;
-                app_handle.emit("log", &log).ok();
-                
-                 deployment_results.push(EdgeFunctionDeploymentResult {
-                    name: function_slug.clone(),
-                    status: "error".to_string(),
-                    version: None,
-                    error: Some(e.to_string()),
-                });
-            }
-        }
-    }
+    let deployed_count = final_results.iter().filter(|r| r.status == "success").count();
 
     if deployed_count > 0 {
         let log = LogEntry::success(
@@ -302,7 +339,7 @@ async fn push_edge_functions(
         app_handle.emit("log", &log).ok();
     }
 
-    Ok(deployment_results)
+    Ok(final_results)
 }
 
 #[derive(serde::Serialize)]

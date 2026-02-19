@@ -131,6 +131,7 @@ pub struct FunctionBody {
     pub metadata: FunctionBodyMetadata,
 }
 
+#[derive(Clone)]
 pub struct SupabaseApi {
     client: reqwest::Client,
     access_token: String,

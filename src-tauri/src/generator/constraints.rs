@@ -77,10 +77,28 @@ pub fn generate_create_policy(table_name: &str, policy: &PolicyInfo) -> String {
 }
 
 pub fn generate_add_foreign_key(table_name: &str, fk: &ForeignKeyInfo) -> String {
+    // Quote local columns
+    let columns_str = fk.columns
+        .iter()
+        .map(|c| format!("\"{}\"", c))
+        .collect::<Vec<_>>()
+        .join(", ");
+    
+    // Quote foreign columns
+    let foreign_columns_str = fk.foreign_columns
+        .iter()
+        .map(|c| format!("\"{}\"", c))
+        .collect::<Vec<_>>()
+        .join(", ");
+
     let mut sql = format!(
-        "ALTER TABLE {} ADD CONSTRAINT \"{}\" FOREIGN KEY (\"{}\") REFERENCES \"{}\".\"{}\"{}", 
-        table_name, fk.constraint_name, fk.column_name, fk.foreign_schema, fk.foreign_table,
-        format!("(\"{}\")", fk.foreign_column)
+        "ALTER TABLE {} ADD CONSTRAINT \"{}\" FOREIGN KEY ({}) REFERENCES \"{}\".\"{}\" ({})",
+        table_name, 
+        fk.constraint_name, 
+        columns_str, 
+        fk.foreign_schema, 
+        fk.foreign_table,
+        foreign_columns_str
     );
 
     if fk.on_delete != "NO ACTION" {

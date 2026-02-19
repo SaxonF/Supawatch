@@ -214,19 +214,10 @@ pub fn normalize_sql(sql: &str) -> String {
     
     // Strip type casts like ::text, ::integer, etc.
     // These are added by PostgreSQL during introspection
-    // IMPORTANT: Longer matches must come first (::interval before ::int)
-    let type_cast_suffixes = [
-        "::text[]", "::text", 
-        "::integer[]", "::integer", "::interval", "::int[]", "::int",
-        "::bigint[]", "::bigint", "::smallint[]", "::smallint",
-        "::character varying[]", "::character varying", "::varchar[]", "::varchar",
-        "::boolean", "::bool", "::numeric", "::jsonb[]", "::jsonb", "::uuid[]", "::uuid",
-        "::float", "::double precision", "::regclass", "::regtype",
-        "::date", "::time", "::timestamp", "::timestamptz",
-    ];
-    for suffix in type_cast_suffixes {
-        normalized = normalized.replace(suffix, "");
-    }
+    // We use a regex to handle all variations including schema-qualified types and arrays
+    use regex::Regex;
+    let cast_re = Regex::new(r"::(?:[a-z_][a-z0-9_]*)(?:\.[a-z_][a-z0-9_]*)*(?:\[\])?").unwrap();
+    normalized = cast_re.replace_all(&normalized, "").to_string();
     
     // Strip outer wrapping parentheses if they wrap the entire expression
     // This handles cases like "(auth.uid() = user_id)" vs "auth.uid() = user_id"
@@ -495,20 +486,10 @@ pub fn normalize_view_definition(definition: &str) -> String {
     }
 
     // Strip type casts commonly found in introspected views (e.g. (0)::bigint -> 0)
-    // IMPORTANT: Longer matches must come first! e.g. ::interval before ::int
-    let type_cast_suffixes = [
-        "::text[]", "::text", 
-        "::integer[]", "::integer", "::interval", "::int[]", "::int",
-        "::bigint[]", "::bigint", "::smallint[]", "::smallint",
-        "::character varying[]", "::character varying", "::varchar[]", "::varchar",
-        "::boolean", "::bool", "::numeric", "::jsonb[]", "::jsonb", "::uuid[]", "::uuid",
-        "::float", "::double precision", "::regclass", "::regtype",
-        "::date", "::time", "::timestamp", "::timestamptz",
-    ];
-
-    for suffix in type_cast_suffixes {
-        normalized = normalized.replace(suffix, "");
-    }
+    // Strip type casts commonly found in introspected views (e.g. (0)::bigint -> 0)
+    use regex::Regex;
+    let cast_re = Regex::new(r"::(?:[a-z_][a-z0-9_]*)(?:\.[a-z_][a-z0-9_]*)*(?:\[\])?").unwrap();
+    normalized = cast_re.replace_all(&normalized, "").to_string();
     
     // Strip trailing semicolon - pg_get_viewdef includes it, sqlparser doesn't
     normalized = normalized.trim_end_matches(';').to_string();
@@ -543,16 +524,11 @@ pub fn normalize_check_expression(expr: &str) -> String {
     }
     
     // Strip type casts like ::text, ::text[], ::integer, etc.
+    // Strip type casts like ::text, ::text[], ::integer, etc.
     // This regex removes PostgreSQL type cast syntax
-    let type_cast_suffixes = [
-        "::text[]", "::text", "::integer[]", "::integer", "::int[]", "::int",
-        "::character varying[]", "::character varying", "::varchar[]", "::varchar",
-        "::boolean", "::bool", "::numeric", "::jsonb[]", "::jsonb", "::uuid[]", "::uuid",
-    ];
-    
-    for suffix in type_cast_suffixes {
-        s = s.replace(suffix, "");
-    }
+    use regex::Regex;
+    let cast_re = Regex::new(r"::(?:[a-z_][a-z0-9_]*)(?:\.[a-z_][a-z0-9_]*)*(?:\[\])?").unwrap();
+    s = cast_re.replace_all(&s, "").to_string();
     
     // Then apply normal SQL normalization (handles parens, whitespace, etc.)
     normalize_sql(&s)
@@ -651,26 +627,81 @@ pub fn normalize_data_type(data_type: &str) -> String {
     // Check for exact matches first
     match trimmed {
         "decimal" => "numeric".to_string(),
-        "int" | "int4" => "integer".to_string(),
-        "int8" => "bigint".to_string(),
-        "int2" => "smallint".to_string(),
+        "int" | "int4" | "serial" => "integer".to_string(),
+        "int8" | "bigserial" => "bigint".to_string(),
+        "int2" | "smallserial" => "smallint".to_string(),
         "bool" => "boolean".to_string(),
         "float8" | "float" => "double precision".to_string(), // In Postgres 'float' is double per default
         "real" | "float4" => "real".to_string(),
-        "varchar" => "character varying".to_string(),
+        "character varying" | "varchar" => "character varying".to_string(), // Normalize to canonical name
         "char" => "character".to_string(),
-        // Timestamp type aliases
-        "timestamptz" | "timestamp with time zone" => "timestamp with time zone".to_string(),
-        "timestamp" | "timestamp without time zone" => "timestamp without time zone".to_string(),
-        // Time type aliases
-        "timetz" | "time with time zone" => "time with time zone".to_string(),
-        "time" | "time without time zone" => "time without time zone".to_string(),
-        // Handle array variants (simple recursive check for [] suffix)
+        // Timestamp type aliases - normalize to canonical
+        "timestamptz" => "timestamp with time zone".to_string(),
+        "timestamp with time zone" => "timestamp with time zone".to_string(),
+        "timestamp" => "timestamp without time zone".to_string(),
+        "timestamp without time zone" => "timestamp without time zone".to_string(),
+        "timetz" => "time with time zone".to_string(),
+        "time with time zone" => "time with time zone".to_string(),
+        "time" => "time without time zone".to_string(),
+        "time without time zone" => "time without time zone".to_string(),
+        
+        // Handle array types recursively
         s if s.ends_with("[]") => {
             let inner = &s[..s.len() - 2];
             format!("{}[]", normalize_data_type(inner))
         },
         _ => trimmed.to_string(),
     }
+}
+
+pub fn normalize_function_return_type(return_type: &str) -> String {
+    let lower = return_type.to_lowercase();
+    let trimmed = lower.trim();
+    
+    // Handle TABLE(...) return types
+    if trimmed.starts_with("table(") && trimmed.ends_with(')') {
+        // format: table(col1 type1, col2 type2, ...)
+        let inner = &trimmed[6..trimmed.len()-1];
+        
+        // Naive split by comma won't work if types have commas (e.g. numeric(10,2))
+        // But for standard types it's okay. detailed parsing is hard.
+        // Let's do a simple regex replacement for common types within the string
+        // instead of parsing. This handles the specific case reported.
+        let mut s = inner.to_string();
+        
+        // Replace common aliases with canonical names
+        // Note: word boundaries are important
+        // simple string replacment might be dangerous, e.g. "print" -> "printeger"
+        // Regex is safer.
+        
+        use regex::Regex;
+        let replacements = [
+            (r"\bint\b", "integer"),
+            (r"\bint4\b", "integer"),
+            (r"\bint8\b", "bigint"),
+            (r"\bbigserial\b", "bigint"),
+            (r"\bserial\b", "integer"),
+            (r"\bsmallserial\b", "smallint"),
+            (r"\bint2\b", "smallint"),
+            (r"\bbool\b", "boolean"),
+            (r"\btimestamptz\b", "timestamp with time zone"),
+            (r"\btimestamp\b", "timestamp without time zone"),
+            (r"\btimetz\b", "time with time zone"),
+            (r"\bvarchar\b", "character varying"),
+        ];
+        
+        for (pattern, replacement) in replacements {
+             let re = Regex::new(pattern).unwrap();
+             s = re.replace_all(&s, replacement).to_string();
+        }
+        
+        // Also normalize whitespace
+        s = normalize_sql(&s);
+        
+        return format!("table({})", s);
+    }
+    
+    // For simple types, use standard normalization
+    normalize_data_type(trimmed)
 }
 

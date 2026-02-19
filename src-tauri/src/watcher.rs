@@ -368,6 +368,8 @@ async fn handle_edge_function_push(
     file_path: &str,
     base_path: &str,
 ) -> Result<(), String> {
+    use futures::stream::{self, StreamExt};
+
     // Get project details
     let project = state.get_project(project_id).await.map_err(|e| e.to_string())?;
     
@@ -407,12 +409,14 @@ async fn handle_edge_function_push(
 
     update_icon(&app_handle, true);
 
+    let mut slugs_to_deploy = Vec::new();
+
     // If change is in _shared, deploy ALL functions
     if function_slug == "_shared" {
         let log = LogEntry::info(
             Some(project_id),
             LogSource::EdgeFunction,
-            "Shared code andged. Deploying all functions...".to_string(),
+            "Shared code changed. Deploying all functions...".to_string(),
         );
         state.add_log(log.clone()).await;
         app_handle.emit("log", &log).ok();
@@ -425,18 +429,8 @@ async fn handle_edge_function_push(
             while let Ok(Some(entry)) = entries.next_entry().await {
                 if entry.path().is_dir() {
                     if let Some(slug) = entry.file_name().to_str() {
-                        if slug.starts_with('_') || slug.starts_with('.') {
-                            continue;
-                        }
-                        // Deploy function
-                        if let Err(e) = deploy_function_internal(&state, &app_handle, project_id, &project_ref, &api, base_path, slug).await {
-                             let log = LogEntry::error(
-                                Some(project_id),
-                                LogSource::EdgeFunction,
-                                format!("Failed to auto-deploy {}: {}", slug, e),
-                            );
-                            state.add_log(log.clone()).await;
-                            app_handle.emit("log", &log).ok();
+                        if !slug.starts_with('_') && !slug.starts_with('.') {
+                            slugs_to_deploy.push(slug.to_string());
                         }
                     }
                 }
@@ -444,12 +438,52 @@ async fn handle_edge_function_push(
         }
     } else {
         // Deploy single function
-        if let Err(e) = deploy_function_internal(&state, &app_handle, project_id, &project_ref, &api, base_path, &function_slug).await {
-            update_icon(&app_handle, false);
-             return Err(e);
-        }
-        
+        slugs_to_deploy.push(function_slug);
     }
+
+    // Limit concurrency to 5
+    const CONCURRENCY_LIMIT: usize = 5;
+
+    // Clone data for the stream
+    let state = state.clone();
+    let app_handle = app_handle.clone();
+    let project_ref = project_ref.clone();
+    let api = api.clone();
+    let base_path = base_path.to_string();
+
+    let _results = stream::iter(slugs_to_deploy)
+        .map(|slug| {
+            let state = state.clone();
+            let app_handle = app_handle.clone();
+            let project_ref = project_ref.clone();
+            let api = api.clone();
+            let base_path = base_path.clone();
+
+            async move {
+                if let Err(e) = deploy_function_internal(
+                    &state,
+                    &app_handle,
+                    project_id,
+                    &project_ref,
+                    &api,
+                    &base_path,
+                    &slug,
+                )
+                .await
+                {
+                    let log = LogEntry::error(
+                        Some(project_id),
+                        LogSource::EdgeFunction,
+                        format!("Failed to auto-deploy {}: {}", slug, e),
+                    );
+                    state.add_log(log.clone()).await;
+                    app_handle.emit("log", &log).ok();
+                }
+            }
+        })
+        .buffer_unordered(CONCURRENCY_LIMIT)
+        .collect::<Vec<_>>()
+        .await;
 
     update_icon(&app_handle, false);
     Ok(())
