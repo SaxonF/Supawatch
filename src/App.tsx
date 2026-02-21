@@ -132,8 +132,8 @@ function App() {
         {
           title: "Destructive Changes Detected",
           kind: "warning",
-          okLabel: "Push Changes",
-          cancelLabel: "Cancel",
+          okLabel: "Force Push Changes",
+          cancelLabel: "Cancel Push",
         },
       );
 

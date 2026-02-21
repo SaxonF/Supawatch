@@ -82,7 +82,7 @@ export function ProjectHeader({
     const confirmed = await ask(`Delete project "${project.name}"?`, {
       title: "Confirm Delete",
       kind: "warning",
-      okLabel: "Delete",
+      okLabel: "Delete Project",
       cancelLabel: "Cancel",
     });
 
@@ -101,7 +101,7 @@ export function ProjectHeader({
       {
         title: "Split Schema",
         kind: "info",
-        okLabel: "Split",
+        okLabel: "Split Schema File",
         cancelLabel: "Cancel",
       },
     );
@@ -240,6 +240,7 @@ export function ProjectHeader({
 
           <Button
             variant="outline"
+            size="icon"
             className={
               isWatching
                 ? "text-primary border-primary/50 hover:bg-primary/10 hover:text-primary/75"
@@ -247,14 +248,17 @@ export function ProjectHeader({
             }
             onClick={toggleWatch}
             disabled={isLoading}
-            title={isWatching ? "Stop watching" : "Start watching"}
+            title={
+              isWatching
+                ? "Stop watching local folder"
+                : "Watch local folder and automatically deploy changes (ideal for prototyping, not production)"
+            }
           >
             {isWatching ? (
               <Eye size={16} strokeWidth={1} />
             ) : (
               <EyeOff size={16} strokeWidth={1} />
             )}
-            Watch
           </Button>
         </div>
 

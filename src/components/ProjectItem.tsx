@@ -50,8 +50,8 @@ export function ProjectItem({ project, onUpdate, onDelete }: ProjectItemProps) {
       {
         title: "Confirm Pull",
         kind: "warning",
-        okLabel: "Overwrite",
-        cancelLabel: "Cancel",
+        okLabel: "Overwrite Local",
+        cancelLabel: "Cancel Pull",
       },
     );
 
@@ -100,8 +100,8 @@ export function ProjectItem({ project, onUpdate, onDelete }: ProjectItemProps) {
           {
             title: "Destructive Changes Detected",
             kind: "warning",
-            okLabel: "Push Changes",
-            cancelLabel: "Cancel",
+            okLabel: "Force Push Changes",
+            cancelLabel: "Cancel Push",
           },
         );
 
@@ -127,7 +127,7 @@ export function ProjectItem({ project, onUpdate, onDelete }: ProjectItemProps) {
     const confirmed = await ask(`Delete project "${project.name}"?`, {
       title: "Confirm Delete",
       kind: "warning",
-      okLabel: "Delete",
+      okLabel: "Delete Project",
       cancelLabel: "Cancel",
     });
 

@@ -105,7 +105,7 @@ function LogEntryItem({
           showMetadata && "bg-muted/25",
           !isSelected && "hover:bg-muted/25",
           isSelected && "bg-primary/10 select-none",
-          isSelected && isNextSelected && "border-b-primary/10"
+          isSelected && isNextSelected && "border-b-primary/10",
         )}
       >
         <div className="flex items-center justify-between">
@@ -144,7 +144,7 @@ function LogEntryItem({
                   strokeWidth={1}
                   className={cn(
                     "transition-transform m-0",
-                    showMetadata && "rotate-90"
+                    showMetadata && "rotate-90",
                   )}
                 />
               </Button>
@@ -201,13 +201,14 @@ export function ProjectLogs({
 }: ProjectLogsProps) {
   const [logs, setLogs] = useState<SupabaseLogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isFetching, setIsFetching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const hasFetchedRef = useRef<boolean>(false);
   const [showErrorsOnly, setShowErrorsOnly] = useState(false);
   const [selectedLogIds, setSelectedLogIds] = useState<Set<string>>(new Set());
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(
-    null
+    null,
   );
 
   useEffect(() => {
@@ -222,6 +223,7 @@ export function ProjectLogs({
   const loadLogs = async (projectId: string) => {
     // Keep loading state mainly for the initial load or explicit refreshes
     if (!hasFetchedRef.current) setIsLoading(true);
+    setIsFetching(true);
 
     try {
       // Always fetch all logs initially so we can filter client-side or toggle quickly
@@ -254,14 +256,14 @@ cross join unnest(m.parsed) as parsed`;
   cross join unnest(m.response) as response
   cross join unnest(m.request) as request
   order by timestamp desc
-  limit 100`
+  limit 100`,
           ),
           api.querySupabaseLogs(
             projectId,
             `select id, function_logs.timestamp, event_message, metadata.event_type, metadata.function_id, metadata.level from function_logs
   cross join unnest(metadata) as metadata
   order by timestamp desc
-  limit 100`
+  limit 100`,
           ),
           api.querySupabaseLogs(
             projectId,
@@ -272,8 +274,9 @@ cross join unnest(m.parsed) as parsed`;
   cross join unnest(m.response) as response
   
   order by timestamp desc
-  limit 100`
+  limit 100`,
           ),
+          new Promise((resolve) => setTimeout(resolve, 500)),
         ]);
 
       const pgLogs = Array.isArray(pgLogsResult) ? pgLogsResult : [];
@@ -357,7 +360,7 @@ cross join unnest(m.parsed) as parsed`;
         ...normalizedApiLogs,
       ].sort(
         (a, b) =>
-          new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+          new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
       );
 
       setLogs(allLogs);
@@ -369,11 +372,12 @@ cross join unnest(m.parsed) as parsed`;
         setError(
           typeof err === "string"
             ? err
-            : err.message || "Failed to load logs from Supabase"
+            : err.message || "Failed to load logs from Supabase",
         );
       }
     } finally {
       setIsLoading(false);
+      setIsFetching(false);
     }
   };
 
@@ -400,7 +404,7 @@ cross join unnest(m.parsed) as parsed`;
   const handleLogSelect = (
     logId: string,
     index: number,
-    e: React.MouseEvent
+    e: React.MouseEvent,
   ) => {
     if (e.shiftKey && lastSelectedIndex !== null) {
       // Shift+click: select range
@@ -428,7 +432,7 @@ cross join unnest(m.parsed) as parsed`;
 
   const copySelectedLogs = async () => {
     const selectedLogs = filteredLogs.filter((log) =>
-      selectedLogIds.has(log.id)
+      selectedLogIds.has(log.id),
     );
     const logText = selectedLogs
       .map((log) => {
@@ -472,7 +476,7 @@ cross join unnest(m.parsed) as parsed`;
           <RefreshCcw
             size={14}
             strokeWidth={1}
-            className={isLoading ? "animate-spin" : ""}
+            className={isFetching ? "animate-spin" : ""}
           />
         </Button>
 
@@ -564,7 +568,7 @@ cross join unnest(m.parsed) as parsed`;
             <RefreshCcw
               size={16}
               strokeWidth={1}
-              className={isLoading ? "animate-spin" : ""}
+              className={isFetching ? "animate-spin" : ""}
             />
           </Button>
           <Button

@@ -55,8 +55,8 @@ export function PullSidebar({
       {
         title: "Confirm Pull",
         kind: "warning",
-        okLabel: "Overwrite",
-        cancelLabel: "Cancel",
+        okLabel: "Overwrite Local",
+        cancelLabel: "Cancel Pull",
       },
     );
 

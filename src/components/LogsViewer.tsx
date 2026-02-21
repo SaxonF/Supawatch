@@ -137,6 +137,7 @@ export function LogsViewer() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isFetching, setIsFetching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const hasFetchedRef = useRef<boolean>(false);
@@ -173,6 +174,7 @@ export function LogsViewer() {
   const loadLogs = async (projectId: string) => {
     // Only show loading indicator on first fetch for this project
     if (!hasFetchedRef.current) setIsLoading(true);
+    setIsFetching(true);
 
     try {
       let sql = `select identifier, postgres_logs.timestamp, id, event_message, parsed.error_severity, parsed.detail, parsed.hint 
@@ -191,6 +193,7 @@ cross join unnest(m.parsed) as parsed`;
       const [pgLogsResult, efLogs] = await Promise.all([
         api.querySupabaseLogs(projectId, sql),
         api.getEdgeFunctionLogs(projectId, undefined, 60 * 24),
+        new Promise((resolve) => setTimeout(resolve, 500)),
       ]);
 
       const pgLogs = Array.isArray(pgLogsResult) ? pgLogsResult : [];
@@ -229,7 +232,7 @@ cross join unnest(m.parsed) as parsed`;
           },
           source: "edge_function" as const,
           status: log.status_code,
-        })
+        }),
       );
 
       // Client-side filtering for Edge Function logs
@@ -238,7 +241,7 @@ cross join unnest(m.parsed) as parsed`;
           .filter(
             (log: any) =>
               (log.status && log.status >= 400) ||
-              log.source === "edge_function" // Keep all edge function logs? Or just errors?
+              log.source === "edge_function", // Keep all edge function logs? Or just errors?
             // User said "I only want to show error logs by default."
             // Usually edge functions with status >= 400 are errors.
             // Let's filter strictly by status >= 400 for Edge Logs if filtering is on.
@@ -248,7 +251,7 @@ cross join unnest(m.parsed) as parsed`;
 
       const allLogs = [...normalizedPgLogs, ...normalizedEfLogs].sort(
         (a, b) =>
-          new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+          new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
       );
 
       setLogs(allLogs);
@@ -263,11 +266,12 @@ cross join unnest(m.parsed) as parsed`;
         setError(
           typeof err === "string"
             ? err
-            : err.message || "Failed to load logs from Supabase"
+            : err.message || "Failed to load logs from Supabase",
         );
       }
     } finally {
       setIsLoading(false);
+      setIsFetching(false);
     }
   };
 
@@ -314,7 +318,11 @@ cross join unnest(m.parsed) as parsed`;
             size="icon"
             onClick={() => selectedProjectId && loadLogs(selectedProjectId)}
           >
-            <RefreshCcw size={16} strokeWidth={1} />
+            <RefreshCcw
+              size={16}
+              strokeWidth={1}
+              className={isFetching ? "animate-spin" : ""}
+            />
           </Button>
         </div>
       </div>

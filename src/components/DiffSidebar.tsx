@@ -73,8 +73,8 @@ export function DiffSidebar({
         {
           title: "Destructive Changes Detected",
           kind: "warning",
-          okLabel: "Push Changes",
-          cancelLabel: "Cancel",
+          okLabel: "Force Push Changes",
+          cancelLabel: "Cancel Push",
         },
       );
       if (!confirmed) return;
@@ -115,8 +115,8 @@ export function DiffSidebar({
           {
             title: "Destructive Changes Detected",
             kind: "warning",
-            okLabel: "Push Changes",
-            cancelLabel: "Cancel",
+            okLabel: "Force Push Changes",
+            cancelLabel: "Cancel Push",
           },
         );
 
@@ -227,11 +227,11 @@ export function DiffSidebar({
                 <h3 className="text-xs text-muted-foreground uppercase tracking-wider mb-2 font-mono">
                   Edge Functions ({diff.edge_functions.length})
                 </h3>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 overflow-x-auto">
                   {diff.edge_functions.map((func) => (
                     <div
                       key={func.slug}
-                      className="flex items-center gap-2 text-sm rounded-full py-2 px-3 bg-muted"
+                      className="flex items-center gap-2 text-sm rounded-full py-2 px-3 bg-muted shrink-0 whitespace-nowrap"
                     >
                       <div className="w-1.5 h-1.5 rounded-full bg-yellow-500 shrink-0" />
                       <span className="font-mono text-xs">{func.name}</span>
