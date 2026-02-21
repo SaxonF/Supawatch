@@ -1,3 +1,4 @@
+import { ask } from "@tauri-apps/plugin-dialog";
 import { Play, RefreshCw, Sprout, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -38,6 +39,18 @@ export function SeedSidebar({ projectId, onClose }: SeedSidebarProps) {
   };
 
   const handleRun = async () => {
+    const confirmed = await ask(
+      `Are you sure you want to execute these seed scripts? This action may overwrite or delete existing data and cannot be undone.`,
+      {
+        title: "Confirm Seed Execution",
+        kind: "warning",
+        okLabel: "Execute Seeds",
+        cancelLabel: "Cancel",
+      },
+    );
+
+    if (!confirmed) return;
+
     setIsRunning(true);
     try {
       const result = await api.runSeeds(projectId);
