@@ -412,6 +412,7 @@ pub fn parse_bulk_response(data: &serde_json::Value) -> Result<HashMap<String, T
                 rls_enabled: false,
                 policies: vec![],
                 check_constraints: vec![],
+                grants: vec![],
                 comment: None,
                 extension: row.extension,
             },

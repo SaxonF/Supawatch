@@ -58,6 +58,7 @@ pub fn handle_create_sequence(
             cycle,
             cache_size,
             owned_by,
+            grants: vec![],
             comment: None,
             extension: None,
         },

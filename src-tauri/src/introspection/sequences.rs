@@ -98,6 +98,7 @@ pub async fn get_sequences(
                 cycle: row.cycle,
                 cache_size: row.cache_size,
                 owned_by: row.owned_by,
+                grants: vec![],
                 comment: row.comment,
                 extension: row.extension,
             },

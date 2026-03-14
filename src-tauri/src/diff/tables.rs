@@ -21,6 +21,8 @@ pub fn compute_table_diff(remote: &TableInfo, local: &TableInfo) -> TableDiff {
         check_constraints_to_drop: vec![],
         foreign_keys_to_create: vec![],
         foreign_keys_to_drop: vec![],
+        grants_to_create: vec![],
+        grants_to_drop: vec![],
         comment_change: None,
     };
 
@@ -358,10 +360,17 @@ pub fn compute_table_diff(remote: &TableInfo, local: &TableInfo) -> TableDiff {
     for c in &local.check_constraints {
         if !remote_checks.contains_key(&c.name) {
             diff.check_constraints_to_create.push(c.clone());
+        } else {
+            // Compare expressions when names match
+            let remote_c = remote_checks.get(&c.name).unwrap();
+            let local_expr = utils::normalize_check_expression(&c.expression);
+            let remote_expr = utils::normalize_check_expression(&remote_c.expression);
+            if local_expr != remote_expr {
+                // Drop old + create new (same name, different expression)
+                diff.check_constraints_to_drop.push((*remote_c).clone());
+                diff.check_constraints_to_create.push(c.clone());
+            }
         }
-        // Note: We don't compare expressions because PostgreSQL rewrites them internally
-        // (e.g., IN ('a', 'b') becomes = ANY (ARRAY['a', 'b']))
-        // If constraint names match, we consider them equivalent
     }
 
     for c in &remote.check_constraints {
@@ -398,6 +407,25 @@ pub fn compute_table_diff(remote: &TableInfo, local: &TableInfo) -> TableDiff {
     for f in &remote.foreign_keys {
         if !local_fks.contains_key(&f.constraint_name) {
             diff.foreign_keys_to_drop.push(f.clone());
+        }
+    }
+
+    // Grants
+    if !local.grants.is_empty() && !super::object_grants_match(&local.grants, &remote.grants) {
+        // Grants to create: in local but not in remote
+        for grant in &local.grants {
+            if !remote.grants.iter().any(|r| r.grantee == grant.grantee && r.privilege == grant.privilege) {
+                diff.grants_to_create.push(grant.clone());
+            }
+        }
+        // Grants to drop: in remote but not in local (only for grantees that local manages)
+        let local_grantees: std::collections::HashSet<&str> = local.grants.iter().map(|g| g.grantee.as_str()).collect();
+        for grant in &remote.grants {
+            let name = grant.grantee.as_str();
+            if name == "postgres" || name == "supabase_admin" { continue; }
+            if local_grantees.contains(name) && !local.grants.iter().any(|l| l.grantee == grant.grantee && l.privilege == grant.privilege) {
+                diff.grants_to_drop.push(grant.clone());
+            }
         }
     }
 

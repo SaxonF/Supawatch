@@ -672,6 +672,7 @@ mod tests {
                 rls_enabled: false,
                 policies: vec![],
                 check_constraints: vec![],
+                grants: vec![],
                 comment: None,
                 extension: None,
             },

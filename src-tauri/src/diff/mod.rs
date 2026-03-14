@@ -1,7 +1,7 @@
 use crate::defaults;
 use crate::schema::{
     CompositeTypeInfo, DbSchema, DomainInfo, EnumInfo, ExtensionInfo, ForeignKeyInfo, FunctionGrant, FunctionInfo,
-    IndexInfo, PolicyInfo, RoleInfo, SequenceInfo, TableInfo, TriggerInfo, ViewInfo,
+    IndexInfo, ObjectGrant, PolicyInfo, RoleInfo, SequenceInfo, TableInfo, TriggerInfo, ViewInfo,
 };
 use std::collections::HashMap;
 
@@ -27,13 +27,20 @@ pub struct SchemaDiff {
     pub sequences_to_update: Vec<SequenceInfo>,
     pub extensions_to_create: Vec<ExtensionInfo>,
     pub extensions_to_drop: Vec<String>,
+    pub extensions_to_update: Vec<ExtensionInfo>,
     pub composite_types_to_create: Vec<CompositeTypeInfo>,
     pub composite_types_to_drop: Vec<String>,
+    pub composite_types_to_update: Vec<(CompositeTypeInfo, CompositeTypeDiff)>,
     pub domains_to_create: Vec<DomainInfo>,
     pub domains_to_drop: Vec<String>,
+    pub domains_to_update: Vec<(DomainInfo, DomainDiff)>,
     pub roles_to_create: Vec<RoleInfo>,
     pub roles_to_drop: Vec<String>,
     pub roles_to_update: Vec<RoleInfo>,
+    pub schema_grants_to_create: Vec<crate::schema::SchemaGrant>,
+    pub schema_grants_to_drop: Vec<crate::schema::SchemaGrant>,
+    pub default_privileges_to_create: Vec<crate::schema::DefaultPrivilege>,
+    pub default_privileges_to_drop: Vec<crate::schema::DefaultPrivilege>,
 }
 
 #[derive(Debug)]
@@ -53,6 +60,8 @@ pub struct TableDiff {
     pub check_constraints_to_drop: Vec<crate::schema::CheckConstraintInfo>,
     pub foreign_keys_to_create: Vec<ForeignKeyInfo>,
     pub foreign_keys_to_drop: Vec<ForeignKeyInfo>,
+    pub grants_to_create: Vec<crate::schema::ObjectGrant>,
+    pub grants_to_drop: Vec<crate::schema::ObjectGrant>,
 }
 
 #[derive(Debug)]
@@ -86,6 +95,21 @@ pub enum EnumChangeType {
     AddValue,
 }
 
+#[derive(Debug)]
+pub struct CompositeTypeDiff {
+    pub attributes_to_add: Vec<crate::schema::CompositeTypeAttribute>,
+    pub attributes_to_drop: Vec<crate::schema::CompositeTypeAttribute>,
+    pub attributes_to_alter: Vec<(crate::schema::CompositeTypeAttribute, crate::schema::CompositeTypeAttribute)>, // (old, new)
+}
+
+#[derive(Debug)]
+pub struct DomainDiff {
+    pub default_change: Option<(Option<String>, Option<String>)>, // (old, new)
+    pub not_null_change: Option<(bool, bool)>, // (old, new)
+    pub constraints_to_add: Vec<crate::schema::DomainCheckConstraint>,
+    pub constraints_to_drop: Vec<crate::schema::DomainCheckConstraint>,
+}
+
 pub fn compute_diff(remote: &DbSchema, local: &DbSchema) -> SchemaDiff {
     let mut diff = SchemaDiff {
         tables_to_create: vec![],
@@ -103,13 +127,20 @@ pub fn compute_diff(remote: &DbSchema, local: &DbSchema) -> SchemaDiff {
         sequences_to_update: vec![],
         extensions_to_create: vec![],
         extensions_to_drop: vec![],
+        extensions_to_update: vec![],
         composite_types_to_create: vec![],
         composite_types_to_drop: vec![],
+        composite_types_to_update: vec![],
         domains_to_create: vec![],
         domains_to_drop: vec![],
+        domains_to_update: vec![],
         roles_to_create: vec![],
         roles_to_drop: vec![],
         roles_to_update: vec![],
+        schema_grants_to_create: vec![],
+        schema_grants_to_drop: vec![],
+        default_privileges_to_create: vec![],
+        default_privileges_to_drop: vec![],
     };
 
     // Tables
@@ -192,6 +223,16 @@ pub fn compute_diff(remote: &DbSchema, local: &DbSchema) -> SchemaDiff {
         }
         if !local.extensions.contains_key(name) {
             diff.extensions_to_drop.push(name.clone());
+        }
+    }
+
+    // Extension version upgrades
+    for (name, local_ext) in &local.extensions {
+        if defaults::is_default_extension(name) { continue; }
+        if let Some(remote_ext) = remote.extensions.get(name) {
+            if local_ext.version != remote_ext.version && local_ext.version.is_some() {
+                diff.extensions_to_update.push(local_ext.clone());
+            }
         }
     }
 
@@ -386,6 +427,12 @@ pub fn compute_diff(remote: &DbSchema, local: &DbSchema) -> SchemaDiff {
     for (name, local_type) in &local.composite_types {
         if !remote.composite_types.contains_key(name) {
             diff.composite_types_to_create.push(local_type.clone());
+        } else {
+            let remote_type = remote.composite_types.get(name).unwrap();
+            let type_diff = compute_composite_type_diff(remote_type, local_type);
+            if !type_diff.attributes_to_add.is_empty() || !type_diff.attributes_to_drop.is_empty() || !type_diff.attributes_to_alter.is_empty() {
+                diff.composite_types_to_update.push((local_type.clone(), type_diff));
+            }
         }
     }
     for (name, type_) in &remote.composite_types {
@@ -402,6 +449,13 @@ pub fn compute_diff(remote: &DbSchema, local: &DbSchema) -> SchemaDiff {
     for (name, local_domain) in &local.domains {
         if !remote.domains.contains_key(name) {
             diff.domains_to_create.push(local_domain.clone());
+        } else {
+            let remote_domain = remote.domains.get(name).unwrap();
+            let domain_diff = compute_domain_diff(remote_domain, local_domain);
+            if domain_diff.default_change.is_some() || domain_diff.not_null_change.is_some()
+                || !domain_diff.constraints_to_add.is_empty() || !domain_diff.constraints_to_drop.is_empty() {
+                diff.domains_to_update.push((local_domain.clone(), domain_diff));
+            }
         }
     }
     for (name, domain) in &remote.domains {
@@ -437,6 +491,46 @@ pub fn compute_diff(remote: &DbSchema, local: &DbSchema) -> SchemaDiff {
         }
     }
 
+    // Schema Grants
+    for local_grant in &local.schema_grants {
+        if !remote.schema_grants.contains(local_grant) {
+            diff.schema_grants_to_create.push(local_grant.clone());
+        }
+    }
+    for remote_grant in &remote.schema_grants {
+        if defaults::is_excluded_schema(&remote_grant.schema) {
+            continue;
+        }
+        let is_system_grantee = matches!(
+            remote_grant.grantee.as_str(),
+            "postgres" | "supabase_admin" | "authenticator" | "pgbouncer" | "anon" | "authenticated" | "service_role"
+        );
+        let schema_managed = local.schema_grants.iter().any(|g| g.schema == remote_grant.schema);
+        if schema_managed && !is_system_grantee && !local.schema_grants.contains(remote_grant) {
+            diff.schema_grants_to_drop.push(remote_grant.clone());
+        }
+    }
+
+    // Default Privileges
+    for local_priv in &local.default_privileges {
+        if !remote.default_privileges.contains(local_priv) {
+            diff.default_privileges_to_create.push(local_priv.clone());
+        }
+    }
+    for remote_priv in &remote.default_privileges {
+        if defaults::is_excluded_schema(&remote_priv.schema) {
+            continue;
+        }
+        let is_system_grantee = matches!(
+            remote_priv.grantee.as_str(),
+            "postgres" | "supabase_admin" | "authenticator" | "pgbouncer" | "anon" | "authenticated" | "service_role"
+        );
+        let schema_managed = local.default_privileges.iter().any(|g| g.schema == remote_priv.schema);
+        if schema_managed && !is_system_grantee && !local.default_privileges.contains(remote_priv) {
+            diff.default_privileges_to_drop.push(remote_priv.clone());
+        }
+    }
+
     diff
 }
 
@@ -456,6 +550,8 @@ impl TableDiff {
             && self.check_constraints_to_drop.is_empty()
             && self.foreign_keys_to_create.is_empty()
             && self.foreign_keys_to_drop.is_empty()
+            && self.grants_to_create.is_empty()
+            && self.grants_to_drop.is_empty()
             && self.comment_change.is_none()
     }
 
@@ -502,13 +598,20 @@ impl SchemaDiff {
             && self.sequences_to_update.is_empty()
             && self.extensions_to_create.is_empty()
             && self.extensions_to_drop.is_empty()
+            && self.extensions_to_update.is_empty()
             && self.composite_types_to_create.is_empty()
             && self.composite_types_to_drop.is_empty()
+            && self.composite_types_to_update.is_empty()
             && self.domains_to_create.is_empty()
             && self.domains_to_drop.is_empty()
+            && self.domains_to_update.is_empty()
             && self.roles_to_create.is_empty()
             && self.roles_to_drop.is_empty()
             && self.roles_to_update.is_empty()
+            && self.schema_grants_to_create.is_empty()
+            && self.schema_grants_to_drop.is_empty()
+            && self.default_privileges_to_create.is_empty()
+            && self.default_privileges_to_drop.is_empty()
     }
 
     pub fn is_destructive(&self) -> bool {
@@ -530,6 +633,85 @@ impl SchemaDiff {
 
         false
     }
+}
+
+fn compute_composite_type_diff(remote: &CompositeTypeInfo, local: &CompositeTypeInfo) -> CompositeTypeDiff {
+    let mut diff = CompositeTypeDiff {
+        attributes_to_add: vec![],
+        attributes_to_drop: vec![],
+        attributes_to_alter: vec![],
+    };
+
+    for local_attr in &local.attributes {
+        if let Some(remote_attr) = remote.attributes.iter().find(|a| a.name == local_attr.name) {
+            if utils::normalize_data_type(&local_attr.data_type) != utils::normalize_data_type(&remote_attr.data_type) {
+                diff.attributes_to_alter.push((remote_attr.clone(), local_attr.clone()));
+            }
+        } else {
+            diff.attributes_to_add.push(local_attr.clone());
+        }
+    }
+    for remote_attr in &remote.attributes {
+        if !local.attributes.iter().any(|a| a.name == remote_attr.name) {
+            diff.attributes_to_drop.push(remote_attr.clone());
+        }
+    }
+    diff
+}
+
+fn compute_domain_diff(remote: &DomainInfo, local: &DomainInfo) -> DomainDiff {
+    let mut diff = DomainDiff {
+        default_change: None,
+        not_null_change: None,
+        constraints_to_add: vec![],
+        constraints_to_drop: vec![],
+    };
+
+    if local.default_value != remote.default_value {
+        diff.default_change = Some((remote.default_value.clone(), local.default_value.clone()));
+    }
+    if local.is_not_null != remote.is_not_null {
+        diff.not_null_change = Some((remote.is_not_null, local.is_not_null));
+    }
+    for local_con in &local.check_constraints {
+        if !remote.check_constraints.iter().any(|r| r.name == local_con.name) {
+            diff.constraints_to_add.push(local_con.clone());
+        }
+    }
+    for remote_con in &remote.check_constraints {
+        if !local.check_constraints.iter().any(|l| l.name == remote_con.name) {
+            diff.constraints_to_drop.push(remote_con.clone());
+        }
+    }
+    diff
+}
+
+/// Compare two lists of object grants (table, view, sequence) for equality, ignoring order
+pub(crate) fn object_grants_match(local: &[crate::schema::ObjectGrant], remote: &[crate::schema::ObjectGrant]) -> bool {
+    // Filter implicit system grants from remote
+    let remote_filtered: Vec<&crate::schema::ObjectGrant> = remote.iter().filter(|r| {
+        let name = r.grantee.as_str();
+        if name == "postgres" || name == "supabase_admin" {
+            return false;
+        }
+        if name == "anon" || name == "service_role" || name == "public" || name == "authenticated" {
+            return local.iter().any(|l| l.grantee == name);
+        }
+        true
+    }).collect();
+
+    if local.is_empty() && remote_filtered.is_empty() {
+        return true;
+    }
+    if local.len() != remote_filtered.len() {
+        return false;
+    }
+    for grant in local {
+        if !remote.iter().any(|r| r.grantee == grant.grantee && r.privilege == grant.privilege) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Compare two lists of function grants for equality, ignoring order

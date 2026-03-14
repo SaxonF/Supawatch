@@ -39,6 +39,8 @@ pub fn views_differ(local: &ViewInfo, remote: &ViewInfo) -> bool {
         || local.is_materialized != remote.is_materialized
         || local.with_options != remote.with_options
         || local.check_option != remote.check_option
+        // Also check grants
+        || (!local.grants.is_empty() && !super::object_grants_match(&local.grants, &remote.grants))
 }
 
 pub fn sequences_differ(local: &SequenceInfo, remote: &SequenceInfo) -> bool {
@@ -49,4 +51,6 @@ pub fn sequences_differ(local: &SequenceInfo, remote: &SequenceInfo) -> bool {
         || local.increment != remote.increment
         || local.cycle != remote.cycle
         || local.cache_size != remote.cache_size
+        // Also check grants
+        || (!local.grants.is_empty() && !super::object_grants_match(&local.grants, &remote.grants))
 }

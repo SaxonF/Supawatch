@@ -8,6 +8,7 @@ use crate::state::AppState;
 use crate::sync;
 use crate::tray::update_icon;
 
+
 #[derive(serde::Serialize)]
 pub struct PullDiffResponse {
     pub migration_sql: String,
@@ -208,15 +209,11 @@ async fn push_edge_functions(
         return Ok(Vec::new());
     }
 
-    // Clone necessary data for closures
-    let api = api.clone();
-    let project_ref = project_ref.to_string();
-    let state = state.clone();
-    let app_handle = app_handle.clone();
-    let project_local_path = project_local_path.to_path_buf();
+    // If there's more than one function, use bundle_only to avoid race conditions
+    let use_bundle_only = changed_functions.len() > 1;
 
-    // Limit concurrency to 5
-    const CONCURRENCY_LIMIT: usize = 5;
+    // Limit concurrency to 3 (lower to reduce API pressure and avoid race conditions)
+    const CONCURRENCY_LIMIT: usize = 3;
 
     let results = stream::iter(changed_functions)
         .map(|func| {
@@ -224,14 +221,12 @@ async fn push_edge_functions(
             let project_ref = project_ref.clone();
             let state = state.clone();
             let app_handle = app_handle.clone();
-            let project_local_path = project_local_path.clone();
+            let project_local_path = project_local_path;
 
             async move {
                 let function_slug = func.slug;
                 let function_path = project_local_path.join(&func.path);
 
-                // We need to re-read files to deploy them
-                // This is slightly inefficient but safe and reuses logic
                 let files = match sync::collect_function_files(&function_path).await {
                     Ok(f) => f,
                     Err(e) => {
@@ -241,100 +236,237 @@ async fn push_edge_functions(
                             format!("Failed to read {}: {}", function_slug, e),
                         );
                         state.add_log(log).await;
-                        return EdgeFunctionDeploymentResult {
-                            name: function_slug.clone(),
-                            status: "error".to_string(),
-                            version: None,
-                            error: Some(format!("Failed to read files: {}", e)),
-                        };
+                        return (
+                            EdgeFunctionDeploymentResult {
+                                name: function_slug.clone(),
+                                status: "error".to_string(),
+                                version: None,
+                                error: Some(format!("Failed to read files: {}", e)),
+                            },
+                            None,
+                            None,
+                        );
                     }
                 };
 
                 if files.is_empty() {
-                    return EdgeFunctionDeploymentResult {
-                        name: function_slug,
-                        status: "skipped".to_string(),
-                        version: None,
-                        error: None,
-                    };
+                    return (
+                        EdgeFunctionDeploymentResult {
+                            name: function_slug,
+                            status: "skipped".to_string(),
+                            version: None,
+                            error: None,
+                        },
+                        None,
+                        None,
+                    );
                 }
 
-                // Determine entrypoint using shared sync module
                 let entrypoint = sync::determine_entrypoint(&files);
-
-                // Re-compute hash to update the lockfile after deploy
                 let local_hash = sync::compute_files_hash(&files);
                 let hash_file = function_path.join(".harbor_hash");
 
-                // Deploy with all files
-                match api
-                    .deploy_function(
-                        &project_ref,
-                        &function_slug,
-                        &function_slug,
-                        &entrypoint,
-                        files,
-                    )
-                    .await
-                {
-                    Ok(result) => {
-                        // Save hash after successful deploy
-                        let _ = tokio::fs::write(&hash_file, &local_hash).await;
-
-                        let log = LogEntry::success(
-                            Some(project_id),
-                            LogSource::EdgeFunction,
-                            format!("Deployed '{}' (v{})", result.name, result.version),
-                        );
-                        println!("[INFO] Deployed '{}' (v{})", result.name, result.version);
-                        state.add_log(log.clone()).await;
-                        app_handle.emit("log", &log).ok();
-
-                        EdgeFunctionDeploymentResult {
-                            name: result.name,
-                            status: "success".to_string(),
-                            version: Some(result.version),
-                            error: None,
-                        }
+                // Phase 1: Upload (with bundle_only if multiple)
+                // Retry up to 3 times for transient failures
+                let mut last_err = String::new();
+                for attempt in 0..3u32 {
+                    if attempt > 0 {
+                        // Exponential backoff: 1s, 2s
+                        tokio::time::sleep(tokio::time::Duration::from_secs(attempt as u64)).await;
                     }
-                    Err(e) => {
-                        let log = LogEntry::error(
-                            Some(project_id),
-                            LogSource::EdgeFunction,
-                            format!("Failed to deploy '{}': {}", function_slug, e),
-                        );
-                        println!("[ERROR] Failed to deploy '{}': {}", function_slug, e);
-                        state.add_log(log.clone()).await;
-                        app_handle.emit("log", &log).ok();
 
-                        EdgeFunctionDeploymentResult {
-                            name: function_slug.clone(),
-                            status: "error".to_string(),
-                            version: None,
-                            error: Some(e.to_string()),
+                    match api
+                        .deploy_function(
+                            &project_ref,
+                            &function_slug,
+                            &function_slug,
+                            &entrypoint,
+                            files.clone(),
+                            use_bundle_only,
+                        )
+                        .await
+                    {
+                        Ok(result) => {
+                            let log_msg = if use_bundle_only {
+                                format!("Bundled '{}' (ready for activation)", result.name)
+                            } else {
+                                format!("Deployed '{}' (v{})", result.name, result.version)
+                            };
+                            
+                            let log = LogEntry::success(
+                                Some(project_id),
+                                LogSource::EdgeFunction,
+                                log_msg.clone(),
+                            );
+                            println!("[INFO] {}", log_msg);
+                            state.add_log(log.clone()).await;
+                            app_handle.emit("log", &log).ok();
+
+                            let deploy_result = EdgeFunctionDeploymentResult {
+                                name: result.name.clone(),
+                                status: "success".to_string(),
+                                version: Some(result.version),
+                                error: None,
+                            };
+
+                            return (deploy_result, Some(result), Some((hash_file, local_hash)));
+                        }
+                        Err(e) => {
+                            last_err = e.to_string();
+                            // Only retry on 5xx or 429 (rate limit)
+                            let is_retryable = last_err.contains("500")
+                                || last_err.contains("502")
+                                || last_err.contains("503")
+                                || last_err.contains("504")
+                                || last_err.contains("429");
+                            if !is_retryable {
+                                break;
+                            }
+                            if attempt < 2 {
+                                let log = LogEntry::warning(
+                                    Some(project_id),
+                                    LogSource::EdgeFunction,
+                                    format!("Deploy '{}' attempt {} failed (retrying): {}", function_slug, attempt + 1, last_err),
+                                );
+                                println!("[WARN] Deploy '{}' attempt {} failed (retrying): {}", function_slug, attempt + 1, last_err);
+                                state.add_log(log.clone()).await;
+                                app_handle.emit("log", &log).ok();
+                            }
                         }
                     }
                 }
+
+                // All retries exhausted or non-retryable error
+                let log = LogEntry::error(
+                    Some(project_id),
+                    LogSource::EdgeFunction,
+                    format!("Failed to deploy '{}': {}", function_slug, last_err),
+                );
+                println!("[ERROR] Failed to deploy '{}': {}", function_slug, last_err);
+                state.add_log(log.clone()).await;
+                app_handle.emit("log", &log).ok();
+
+                (
+                    EdgeFunctionDeploymentResult {
+                        name: function_slug.clone(),
+                        status: "error".to_string(),
+                        version: None,
+                        error: Some(last_err),
+                    },
+                    None,
+                    None,
+                )
             }
         })
         .buffer_unordered(CONCURRENCY_LIMIT)
         .collect::<Vec<_>>()
         .await;
 
-    // Filter out skipped results (empty files)
-    let final_results: Vec<EdgeFunctionDeploymentResult> = results.into_iter()
-        .filter(|r| r.status != "skipped")
-        .collect();
+    let mut final_results = Vec::new();
+    let mut bundled_responses = Vec::new();
+    let mut hash_updates = Vec::new();
+
+    for (result, raw_response, hash_update) in results {
+        if result.status != "skipped" {
+            final_results.push(result.clone());
+        }
+        if let Some(resp) = raw_response {
+            bundled_responses.push(resp);
+        }
+        if let Some(update) = hash_update {
+            hash_updates.push(update);
+        }
+    }
 
     let deployed_count = final_results.iter().filter(|r| r.status == "success").count();
+
+    // Phase 2: Bulk Update (only if we used bundle_only and have successful bundles)
+    if use_bundle_only && !bundled_responses.is_empty() {
+        let log = LogEntry::info(
+            Some(project_id),
+            LogSource::EdgeFunction,
+            format!("Activating {} edge functions atomically...", bundled_responses.len()),
+        );
+        println!("[INFO] Activating {} edge functions atomically...", bundled_responses.len());
+        state.add_log(log.clone()).await;
+        app_handle.emit("log", &log).ok();
+
+        match api.bulk_update_functions(project_ref, &bundled_responses).await {
+            Ok(_) => {
+                let log = LogEntry::success(
+                    Some(project_id),
+                    LogSource::EdgeFunction,
+                    "Atomic activation successful".to_string(),
+                );
+                state.add_log(log).await;
+            }
+            Err(e) => {
+                // Retry bulk update up to 2 more times
+                let mut activated = false;
+                let first_err = e.to_string();
+                for attempt in 1..3u32 {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(attempt as u64)).await;
+                    let log = LogEntry::warning(
+                        Some(project_id),
+                        LogSource::EdgeFunction,
+                        format!("Bulk activation attempt {} failed (retrying): {}", attempt, first_err),
+                    );
+                    println!("[WARN] Bulk activation attempt {} failed (retrying): {}", attempt, first_err);
+                    state.add_log(log.clone()).await;
+                    app_handle.emit("log", &log).ok();
+
+                    match api.bulk_update_functions(project_ref, &bundled_responses).await {
+                        Ok(_) => {
+                            let log = LogEntry::success(
+                                Some(project_id),
+                                LogSource::EdgeFunction,
+                                "Atomic activation successful (on retry)".to_string(),
+                            );
+                            state.add_log(log).await;
+                            activated = true;
+                            break;
+                        }
+                        Err(_) => {}
+                    }
+                }
+
+                if !activated {
+                    let err_msg = format!("Failed to activate functions: {}", first_err);
+                    let log = LogEntry::error(
+                        Some(project_id),
+                        LogSource::EdgeFunction,
+                        err_msg.clone(),
+                    );
+                    println!("[ERROR] {}", err_msg);
+                    state.add_log(log.clone()).await;
+                    app_handle.emit("log", &log).ok();
+
+                    // Mark all previously "success" as error since activation failed
+                    for res in &mut final_results {
+                        if res.status == "success" {
+                            res.status = "error".to_string();
+                            res.error = Some(err_msg.clone());
+                        }
+                    }
+                    // Clear hash updates so we retry next time
+                    hash_updates.clear();
+                }
+            }
+        }
+    }
+
+    // Write hashes only after functions actually deployed/activated successfully
+    for (hash_file, local_hash) in hash_updates {
+        let _ = tokio::fs::write(&hash_file, &local_hash).await;
+    }
 
     if deployed_count > 0 {
         let log = LogEntry::success(
             Some(project_id),
             LogSource::EdgeFunction,
-            format!("Deployed {} edge function(s)", deployed_count),
+            format!("Successfully deployed {} edge function(s)", deployed_count),
         );
-        println!("[INFO] Deployed {} edge function(s)", deployed_count);
+        println!("[INFO] Successfully deployed {} edge function(s)", deployed_count);
         state.add_log(log.clone()).await;
         app_handle.emit("log", &log).ok();
     }
@@ -342,7 +474,7 @@ async fn push_edge_functions(
     Ok(final_results)
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 pub struct EdgeFunctionDeploymentResult {
     pub name: String,
     pub status: String, // "success" or "error"
@@ -593,6 +725,7 @@ pub async fn deploy_edge_function(
             &function_name,
             &entrypoint,
             files,
+            false,
         )
         .await;
 

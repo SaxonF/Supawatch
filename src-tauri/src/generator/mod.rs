@@ -1,5 +1,5 @@
 mod constraints;
-mod objects;
+pub mod objects;
 mod roles;
 mod tables;
 pub mod typescript;
@@ -265,6 +265,52 @@ pub fn split_sql(schema: &DbSchema) -> Vec<(String, String)> {
         }
     }
 
+    // ---- 09_grants.sql: table, view, sequence grants ----
+    {
+        let mut stmts: Vec<String> = Vec::new();
+
+        // Table grants
+        let mut table_list: Vec<(&String, &TableInfo)> = schema.tables.iter().collect();
+        table_list.sort_by(|a, b| a.0.cmp(b.0));
+        for (name, table) in &table_list {
+            for grant in &table.grants {
+                stmts.push(format!(
+                    "GRANT {} ON {} TO \"{}\";",
+                    grant.privilege, name, grant.grantee
+                ));
+            }
+        }
+
+        // View grants
+        let mut view_list: Vec<&ViewInfo> = schema.views.values().collect();
+        view_list.sort_by(|a, b| a.name.cmp(&b.name));
+        for view in &view_list {
+            for grant in &view.grants {
+                let qualified = format!("\"{}\".\"{}\"", view.schema, view.name);
+                stmts.push(format!(
+                    "GRANT {} ON {} TO \"{}\";",
+                    grant.privilege, qualified, grant.grantee
+                ));
+            }
+        }
+
+        // Sequence grants
+        let mut seq_list: Vec<&SequenceInfo> = schema.sequences.values().collect();
+        seq_list.sort_by(|a, b| a.name.cmp(&b.name));
+        for seq in &seq_list {
+            for grant in &seq.grants {
+                stmts.push(format!(
+                    "GRANT {} ON SEQUENCE \"{}\".\"{}\" TO \"{}\";",
+                    grant.privilege, seq.schema, seq.name, grant.grantee
+                ));
+            }
+        }
+
+        if !stmts.is_empty() {
+            files.push(("09_grants.sql".to_string(), stmts.join("\n")));
+        }
+    }
+
     files
 }
 
@@ -354,6 +400,16 @@ pub fn generate_sql(diff: &SchemaDiff, local_schema: &DbSchema) -> String {
         statements.push(roles::generate_create_extension(ext));
     }
 
+    // Extension version upgrades
+    for ext in &diff.extensions_to_update {
+        if let Some(version) = &ext.version {
+            statements.push(format!(
+                "ALTER EXTENSION \"{}\" UPDATE TO '{}';",
+                ext.name, version
+            ));
+        }
+    }
+
     // ====================
     // 2. DROP operations (reverse dependency order)
     // ====================
@@ -416,6 +472,60 @@ pub fn generate_sql(diff: &SchemaDiff, local_schema: &DbSchema) -> String {
         statements.push(types::generate_create_domain(domain));
     }
 
+    // Composite type alterations
+    for (comp, type_diff) in &diff.composite_types_to_update {
+        let qualified = format!("\"{}\".\"{}\"", comp.schema, comp.name);
+        for attr in &type_diff.attributes_to_drop {
+            statements.push(format!(
+                "ALTER TYPE {} DROP ATTRIBUTE \"{}\";",
+                qualified, attr.name
+            ));
+        }
+        for attr in &type_diff.attributes_to_add {
+            statements.push(format!(
+                "ALTER TYPE {} ADD ATTRIBUTE \"{}\" {};",
+                qualified, attr.name, attr.data_type
+            ));
+        }
+        for (_, new_attr) in &type_diff.attributes_to_alter {
+            statements.push(format!(
+                "ALTER TYPE {} ALTER ATTRIBUTE \"{}\" TYPE {};",
+                qualified, new_attr.name, new_attr.data_type
+            ));
+        }
+    }
+
+    // Domain alterations
+    for (domain, domain_diff) in &diff.domains_to_update {
+        let qualified = format!("\"{}\".\"{}\"", domain.schema, domain.name);
+        if let Some((_, new_default)) = &domain_diff.default_change {
+            if let Some(default_val) = new_default {
+                statements.push(format!("ALTER DOMAIN {} SET DEFAULT {};", qualified, default_val));
+            } else {
+                statements.push(format!("ALTER DOMAIN {} DROP DEFAULT;", qualified));
+            }
+        }
+        if let Some((_, new_not_null)) = &domain_diff.not_null_change {
+            if *new_not_null {
+                statements.push(format!("ALTER DOMAIN {} SET NOT NULL;", qualified));
+            } else {
+                statements.push(format!("ALTER DOMAIN {} DROP NOT NULL;", qualified));
+            }
+        }
+        for con in &domain_diff.constraints_to_drop {
+            if let Some(name) = &con.name {
+                statements.push(format!("ALTER DOMAIN {} DROP CONSTRAINT \"{}\";", qualified, name));
+            }
+        }
+        for con in &domain_diff.constraints_to_add {
+            if let Some(name) = &con.name {
+                statements.push(format!("ALTER DOMAIN {} ADD CONSTRAINT \"{}\" CHECK ({});", qualified, name, con.expression));
+            } else {
+                statements.push(format!("ALTER DOMAIN {} ADD CHECK ({});", qualified, con.expression));
+            }
+        }
+    }
+
     // Add enum values
     for enum_change in &diff.enum_changes {
         if enum_change.type_ == EnumChangeType::AddValue {
@@ -441,6 +551,16 @@ pub fn generate_sql(diff: &SchemaDiff, local_schema: &DbSchema) -> String {
         statements.push(objects::generate_alter_sequence(seq));
     }
 
+    // Sequence grants
+    for seq in &diff.sequences_to_create {
+        for grant in &seq.grants {
+            statements.push(format!(
+                "GRANT {} ON SEQUENCE \"{}\".\"{}\" TO \"{}\";",
+                grant.privilege, seq.schema, seq.name, grant.grantee
+            ));
+        }
+    }
+
     // ====================
     // 5. TABLES
     // ====================
@@ -461,11 +581,39 @@ pub fn generate_sql(diff: &SchemaDiff, local_schema: &DbSchema) -> String {
         }
     }
 
+    // Table grants for new tables
+    for name in &diff.tables_to_create {
+        if let Some(table) = local_schema.tables.get(name) {
+            for grant in &table.grants {
+                statements.push(format!(
+                    "GRANT {} ON {} TO \"{}\";",
+                    grant.privilege, name, grant.grantee
+                ));
+            }
+        }
+    }
+
     // Alter existing tables
     for (table_name, table_diff) in &diff.table_changes {
         if let Some(table) = local_schema.tables.get(table_name) {
             let alter_stmts = tables::generate_alter_table(table_name, table_diff, table);
             statements.extend(alter_stmts);
+        }
+    }
+
+    // Grant changes for existing tables
+    for (table_name, table_diff) in &diff.table_changes {
+        for grant in &table_diff.grants_to_drop {
+            statements.push(format!(
+                "REVOKE {} ON {} FROM \"{}\";",
+                grant.privilege, table_name, grant.grantee
+            ));
+        }
+        for grant in &table_diff.grants_to_create {
+            statements.push(format!(
+                "GRANT {} ON {} TO \"{}\";",
+                grant.privilege, table_name, grant.grantee
+            ));
         }
     }
 
@@ -487,6 +635,26 @@ pub fn generate_sql(diff: &SchemaDiff, local_schema: &DbSchema) -> String {
     // Create new views
     for view in &diff.views_to_create {
         statements.push(objects::generate_create_view(view));
+    }
+
+    // View grants
+    for view in &diff.views_to_create {
+        for grant in &view.grants {
+            let qualified = format!("\"{}\".\"{}\"", view.schema, view.name);
+            statements.push(format!(
+                "GRANT {} ON {} TO \"{}\";",
+                grant.privilege, qualified, grant.grantee
+            ));
+        }
+    }
+    for view in &diff.views_to_update {
+        for grant in &view.grants {
+            let qualified = format!("\"{}\".\"{}\"", view.schema, view.name);
+            statements.push(format!(
+                "GRANT {} ON {} TO \"{}\";",
+                grant.privilege, qualified, grant.grantee
+            ));
+        }
     }
 
     // ====================
@@ -624,6 +792,42 @@ pub fn generate_sql(diff: &SchemaDiff, local_schema: &DbSchema) -> String {
     // Drop extensions (last, as others may depend on them)
     for name in &diff.extensions_to_drop {
         statements.push(format!("DROP EXTENSION IF EXISTS \"{}\" CASCADE;", name));
+    }
+
+    // 16. Default Privileges and Schema Grants
+
+    // Drops first
+    for sg in &diff.schema_grants_to_drop {
+        statements.push(format!(
+            "REVOKE {} ON SCHEMA \"{}\" FROM \"{}\";",
+            sg.privilege, sg.schema, sg.grantee
+        ));
+    }
+    for dp in &diff.default_privileges_to_drop {
+        statements.push(format!(
+            "REVOKE {} ON ALL {} IN SCHEMA \"{}\" FROM \"{}\";",
+            dp.privilege,
+            dp.object_type.to_uppercase(),
+            dp.schema,
+            dp.grantee
+        ));
+    }
+
+    // Creates
+    for sg in &diff.schema_grants_to_create {
+        statements.push(format!(
+            "GRANT {} ON SCHEMA \"{}\" TO \"{}\";",
+            sg.privilege, sg.schema, sg.grantee
+        ));
+    }
+    for dp in &diff.default_privileges_to_create {
+        statements.push(format!(
+            "GRANT {} ON ALL {} IN SCHEMA \"{}\" TO \"{}\";",
+            dp.privilege,
+            dp.object_type.to_uppercase(),
+            dp.schema,
+            dp.grantee
+        ));
     }
 
     statements.join("\n")

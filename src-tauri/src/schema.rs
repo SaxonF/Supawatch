@@ -28,6 +28,9 @@ pub struct DbSchema {
     pub extensions: HashMap<String, ExtensionInfo>,
     pub composite_types: HashMap<String, CompositeTypeInfo>,
     pub domains: HashMap<String, DomainInfo>,
+    // Grants & Default Privileges
+    pub schema_grants: Vec<SchemaGrant>,
+    pub default_privileges: Vec<DefaultPrivilege>,
 }
 
 impl Default for DbSchema {
@@ -42,6 +45,8 @@ impl Default for DbSchema {
             extensions: HashMap::new(),
             composite_types: HashMap::new(),
             domains: HashMap::new(),
+            schema_grants: Vec::new(),
+            default_privileges: Vec::new(),
         }
     }
 }
@@ -63,6 +68,7 @@ pub struct TableInfo {
     pub rls_enabled: bool,
     pub policies: Vec<PolicyInfo>,
     pub check_constraints: Vec<CheckConstraintInfo>,
+    pub grants: Vec<ObjectGrant>,
     pub comment: Option<String>,
     pub extension: Option<String>,
 }
@@ -152,6 +158,28 @@ pub struct FunctionGrant {
     pub privilege: String,
 }
 
+/// Grant on a table, view, or sequence (SELECT, INSERT, UPDATE, DELETE, USAGE, etc.)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ObjectGrant {
+    pub grantee: String,
+    pub privilege: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SchemaGrant {
+    pub schema: String,
+    pub grantee: String,
+    pub privilege: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DefaultPrivilege {
+    pub schema: String,
+    pub object_type: String, // e.g., "tables", "sequences", "functions", "types", "schemas"
+    pub grantee: String,
+    pub privilege: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ViewInfo {
     pub schema: String,
@@ -163,6 +191,7 @@ pub struct ViewInfo {
     pub comment: Option<String>,
     pub with_options: Vec<String>,
     pub check_option: Option<String>,
+    pub grants: Vec<ObjectGrant>,
     pub extension: Option<String>,
 }
 
@@ -185,6 +214,7 @@ pub struct SequenceInfo {
     pub cycle: bool,
     pub cache_size: i64,
     pub owned_by: Option<String>,
+    pub grants: Vec<ObjectGrant>,
     pub comment: Option<String>,
     pub extension: Option<String>,
 }

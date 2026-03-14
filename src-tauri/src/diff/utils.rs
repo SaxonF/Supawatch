@@ -30,6 +30,17 @@ fn clean_function_arg(arg: sqlparser::ast::FunctionArg) -> sqlparser::ast::Funct
     }
 }
 
+fn clean_ident(mut ident: sqlparser::ast::Ident) -> sqlparser::ast::Ident {
+    // Strip trailing PostgreSQL-added numeric suffixes for aliases, e.g., "t_1" -> "t"
+    // Postgres does this when there are multiple relations or CTEs with similar shapes.
+    // We'll use regex to strip trailing `_N` where N is a number.
+    let re = regex::Regex::new(r"_([0-9]+)$").unwrap();
+    if re.is_match(&ident.value) {
+        ident.value = re.replace(&ident.value, "").to_string();
+    }
+    ident
+}
+
 fn clean_expr(expr: Expr) -> Expr {
     match expr {
         Expr::Nested(inner) => clean_expr(*inner),
@@ -37,6 +48,13 @@ fn clean_expr(expr: Expr) -> Expr {
         // Handle interval '...' which parses as Expr::Interval in newer sqlparser
         Expr::Interval(interval) => clean_expr(*interval.value),
         
+        Expr::Identifier(ident) => Expr::Identifier(clean_ident(ident)),
+        Expr::CompoundIdentifier(mut idents) => {
+            // "t_1.id" -> "t.id"
+            idents = idents.into_iter().map(clean_ident).collect();
+            Expr::CompoundIdentifier(idents)
+        },
+
         // Recurse common structures
         Expr::BinaryOp { left, op, right } => Expr::BinaryOp {
             left: Box::new(clean_expr(*left)),
@@ -48,9 +66,24 @@ fn clean_expr(expr: Expr) -> Expr {
             expr: Box::new(clean_expr(*expr)),
         },
         Expr::Function(mut func) => {
+            // Also clean function names (e.g. if they have schema prefixes "public.count" -> "count")
+            if func.name.0.len() > 1 && func.name.to_string().to_lowercase().starts_with("public.") {
+                func.name.0.remove(0);
+            }
             match func.args {
                 sqlparser::ast::FunctionArguments::List(mut list) => {
                     list.args = list.args.into_iter().map(clean_function_arg).collect();
+                    list.clauses = list.clauses.into_iter().map(|mut clause| {
+                        match clause {
+                            sqlparser::ast::FunctionArgumentClause::OrderBy(mut obs) => {
+                                for ob in &mut obs {
+                                    ob.expr = clean_expr(ob.expr.clone());
+                                }
+                                sqlparser::ast::FunctionArgumentClause::OrderBy(obs)
+                            },
+                            _ => clause
+                        }
+                    }).collect();
                     func.args = sqlparser::ast::FunctionArguments::List(list);
                 }
                 _ => {}
@@ -78,6 +111,17 @@ fn clean_expr(expr: Expr) -> Expr {
             
             Expr::Function(func)
         },
+        Expr::Case { case_token, end_token, operand, conditions, else_result } => Expr::Case {
+            case_token,
+            end_token,
+            operand: operand.map(|e| Box::new(clean_expr(*e))),
+            conditions: conditions.into_iter().map(|mut w| {
+                w.condition = clean_expr(w.condition);
+                w.result = clean_expr(w.result);
+                w
+            }).collect(),
+            else_result: else_result.map(|e| Box::new(clean_expr(*e))),
+        },
         Expr::InSubquery { expr, subquery, negated } => Expr::InSubquery {
             expr: Box::new(clean_expr(*expr)),
             subquery: Box::new(clean_query(*subquery)),
@@ -100,13 +144,93 @@ fn clean_join_constraint(constraint: sqlparser::ast::JoinConstraint) -> sqlparse
     }
 }
 
+fn clean_table_factor(mut factor: TableFactor) -> TableFactor {
+    match &mut factor {
+        TableFactor::Table { name, alias, args, .. } => {
+            // Strip schema name "public" from table names
+            if name.0.len() > 1 && name.to_string().to_lowercase().starts_with("public.") {
+                name.0.remove(0);
+            }
+            // Strip _N from table names in case postgres rewrites CTE names
+            // Actually, we can't easily mutate ObjectNamePart generically if it's an enum,
+            // but we can just use our regex on the string representation if needed, 
+            // or just leave table names alone if we only care about aliases.
+            // Let's just strip _N from the alias since that's what Postgres changes for CTEs mostly.
+            if let Some(a) = alias {
+                a.name = clean_ident(a.name.clone());
+                // Strip explicit column aliases that pg_get_viewdef adds
+                // This covers table functions (like jsonb_each_text(...) req(key, value)) when they parse as TableFactor::Table
+                a.columns.clear();
+            }
+            if let Some(table_args) = args {
+                table_args.args = table_args.args.clone().into_iter().map(clean_function_arg).collect();
+            }
+        }
+        TableFactor::Function { lateral: _, name: _, args, alias } => {
+            *args = args.clone().into_iter().map(clean_function_arg).collect();
+            if let Some(a) = alias {
+                a.name = clean_ident(a.name.clone());
+                a.columns.clear();
+            }
+        }
+        TableFactor::TableFunction { expr, alias } => {
+            *expr = clean_expr(expr.clone());
+            if let Some(a) = alias {
+                a.name = clean_ident(a.name.clone());
+                // Strip explicit column aliases that pg_get_viewdef adds
+                // e.g. jsonb_each_text(...) req(key, value) -> jsonb_each_text(...) req
+                a.columns.clear();
+            }
+        }
+        TableFactor::Derived { subquery, alias, .. } => {
+            *subquery = Box::new(clean_query(*subquery.clone()));
+            if let Some(a) = alias {
+                a.name = clean_ident(a.name.clone());
+            }
+        }
+        TableFactor::NestedJoin { table_with_joins, alias } => {
+            let mut new_joins = *table_with_joins.clone();
+            new_joins.relation = clean_table_factor(new_joins.relation);
+            new_joins.joins = new_joins.joins.into_iter().map(|mut join| {
+                join.relation = clean_table_factor(join.relation);
+                match join.join_operator {
+                    sqlparser::ast::JoinOperator::Inner(constraint) => {
+                        join.join_operator = sqlparser::ast::JoinOperator::Inner(clean_join_constraint(constraint));
+                    },
+                    sqlparser::ast::JoinOperator::LeftOuter(constraint) => {
+                        join.join_operator = sqlparser::ast::JoinOperator::LeftOuter(clean_join_constraint(constraint));
+                    },
+                    sqlparser::ast::JoinOperator::RightOuter(constraint) => {
+                        join.join_operator = sqlparser::ast::JoinOperator::RightOuter(clean_join_constraint(constraint));
+                    },
+                    sqlparser::ast::JoinOperator::FullOuter(constraint) => {
+                        join.join_operator = sqlparser::ast::JoinOperator::FullOuter(clean_join_constraint(constraint));
+                    },
+                    #[cfg(not(feature = "ignore_unresolved_variants"))]
+                    sqlparser::ast::JoinOperator::Left(constraint) => {
+                        join.join_operator = sqlparser::ast::JoinOperator::Left(clean_join_constraint(constraint));
+                    },
+                    _ => {}
+                }
+                join
+            }).collect();
+            *table_with_joins = Box::new(new_joins);
+            if let Some(a) = alias {
+                a.name = clean_ident(a.name.clone());
+            }
+        }
+        _ => {}
+    }
+    factor
+}
+
 fn clean_query(mut query: sqlparser::ast::Query) -> sqlparser::ast::Query {
     // Clean projection (SELECT list)
     if let SetExpr::Select(mut select) = *query.body {
         select.projection = select.projection.into_iter().map(|item| {
             match item {
                 SelectItem::UnnamedExpr(expr) => SelectItem::UnnamedExpr(clean_expr(expr)),
-                SelectItem::ExprWithAlias { expr, alias } => SelectItem::ExprWithAlias { expr: clean_expr(expr), alias },
+                SelectItem::ExprWithAlias { expr, alias } => SelectItem::ExprWithAlias { expr: clean_expr(expr), alias: clean_ident(alias) },
                 _ => item,
             }
         }).collect();
@@ -116,10 +240,23 @@ fn clean_query(mut query: sqlparser::ast::Query) -> sqlparser::ast::Query {
             select.selection = Some(clean_expr(selection));
         }
 
+        // Clean GROUP BY clause
+        match select.group_by {
+            sqlparser::ast::GroupByExpr::Expressions(exprs, modifiers) => {
+                select.group_by = sqlparser::ast::GroupByExpr::Expressions(
+                    exprs.into_iter().map(clean_expr).collect(),
+                    modifiers
+                );
+            },
+            _ => {}
+        }
+
         // Clean JOINs in FROM clause
         // select.from is Vec<TableWithJoins>
         select.from = select.from.into_iter().map(|mut table| {
+            table.relation = clean_table_factor(table.relation);
             table.joins = table.joins.into_iter().map(|mut join| {
+                 join.relation = clean_table_factor(join.relation);
                  // JoinOperator in sqlparser usually wraps JoinConstraint for Inner, Left, Right etc.
                  // But Cross, Implicit, etc. don't have constraints.
                  match join.join_operator {
@@ -163,6 +300,17 @@ fn clean_query(mut query: sqlparser::ast::Query) -> sqlparser::ast::Query {
         // Put back
         *query.body = SetExpr::Select(select);
     }
+
+    // Clean CTEs (WITH clause)
+    if let Some(mut with) = query.with {
+        with.cte_tables = with.cte_tables.into_iter().map(|mut cte| {
+            cte.alias.name = clean_ident(cte.alias.name);
+            cte.query = Box::new(clean_query(*cte.query));
+            cte
+        }).collect();
+        query.with = Some(with);
+    }
+
     query
 }
 
@@ -517,21 +665,36 @@ pub fn normalize_view_definition(definition: &str) -> String {
 /// remote introspection (CHECK (((status)::text = ANY ((ARRAY['a'::text, 'b'::text])::text[])))).
 pub fn normalize_check_expression(expr: &str) -> String {
     let mut s = expr.trim().to_lowercase();
-    
+
     // Remove leading CHECK keyword if present
     if s.starts_with("check") {
         s = s.trim_start_matches("check").trim().to_string();
     }
-    
-    // Strip type casts like ::text, ::text[], ::integer, etc.
-    // Strip type casts like ::text, ::text[], ::integer, etc.
-    // This regex removes PostgreSQL type cast syntax
+
+    // Strip type casts like ::text, ::text[], ::character varying, ::timestamp with time zone, etc.
+    // Must handle multi-word types BEFORE single-word types.
     use regex::Regex;
+    let multi_word_cast_re = Regex::new(r"::\s*(?:character varying|double precision|timestamp with(?:out)? time zone|time with(?:out)? time zone)(?:\[\])?").unwrap();
+    s = multi_word_cast_re.replace_all(&s, "").to_string();
     let cast_re = Regex::new(r"::(?:[a-z_][a-z0-9_]*)(?:\.[a-z_][a-z0-9_]*)*(?:\[\])?").unwrap();
     s = cast_re.replace_all(&s, "").to_string();
-    
-    // Then apply normal SQL normalization (handles parens, whitespace, etc.)
-    normalize_sql(&s)
+
+    // Apply normal SQL normalization (handles parens, whitespace, quotes, etc.)
+    s = normalize_sql(&s);
+
+    // Convert PostgreSQL's `= any(array[...])` back to `in(...)` form.
+    // PostgreSQL rewrites `col IN ('a', 'b')` to `((col)::text = ANY ((ARRAY['a', 'b'])::text[]))`.
+    // After stripping casts, normalize_sql, we get patterns like:
+    //   `(type)= any((array['solo','multiplayer']))`
+    // We need to handle optional parens around the column and around array[...].
+    let any_re = Regex::new(r"\(?(\w+)\)?\s*=\s*any\(\(?array\[([^\]]*)\]\)?\)").unwrap();
+    s = any_re.replace_all(&s, |caps: &regex::Captures| {
+        let col = &caps[1];
+        let values = &caps[2];
+        format!("{} in({})", col, values)
+    }).to_string();
+
+    s
 }
 
 /// Normalize default value expressions for comparison.
@@ -540,6 +703,11 @@ pub fn normalize_check_expression(expr: &str) -> String {
 /// remote introspection ('value'::text).
 pub fn normalize_default_value(expr: &str) -> String {
     let mut s = expr.trim().to_lowercase();
+    
+    // Strip common schema prefixes that might differ between local parsing and remote introspection
+    s = s.replace("public.", "")
+         .replace("extensions.", "")
+         .replace("pg_catalog.", "");
     
     // Strip common type casts at the end (::text, ::integer, etc.)
     // Handle patterns like 'value'::text or 'value'::character varying

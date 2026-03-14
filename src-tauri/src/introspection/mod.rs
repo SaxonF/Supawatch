@@ -1,4 +1,5 @@
 mod functions;
+mod grants;
 mod helpers;
 mod queries;
 mod roles;
@@ -10,8 +11,8 @@ mod views;
 use helpers::*;
 
 use crate::schema::{
-    CompositeTypeInfo, DbSchema, DomainInfo, EnumInfo, ExtensionInfo,
-    FunctionInfo, RoleInfo, SequenceInfo, TableInfo, ViewInfo,
+    CompositeTypeInfo, DbSchema, DefaultPrivilege, DomainInfo, EnumInfo, ExtensionInfo,
+    FunctionInfo, ObjectGrant, RoleInfo, SchemaGrant, SequenceInfo, TableInfo, ViewInfo,
 };
 use crate::supabase_api::SupabaseApi;
 use serde::Deserialize;
@@ -36,7 +37,7 @@ impl<'a> Introspector<'a> {
         // Run all bulk queries in parallel for maximum efficiency
         println!("[DEBUG introspect] Running bulk queries...");
 
-        let (enums, functions, roles, tables_data, views, sequences, extensions, composite_types, domains) =
+        let (enums, functions, roles, mut tables_data, mut views, mut sequences, extensions, composite_types, domains, schema_grants, default_privileges) =
             match tokio::time::timeout(
                 std::time::Duration::from_secs(10),
                 async {
@@ -49,7 +50,9 @@ impl<'a> Introspector<'a> {
                         self.get_sequences(),
                         self.get_extensions(),
                         self.get_composite_types(),
-                        self.get_domains()
+                        self.get_domains(),
+                        self.get_schema_grants(),
+                        self.get_default_privileges()
                     )
                 },
             )
@@ -63,6 +66,29 @@ impl<'a> Introspector<'a> {
                     )
                 }
             };
+
+        // Fetch object grants separately (needs mutable access to results)
+        let object_grants = self.get_object_grants().await?;
+        for (object_type, key, grant) in object_grants {
+            match object_type.as_str() {
+                "table" => {
+                    if let Some(table) = tables_data.get_mut(&key) {
+                        table.grants.push(grant);
+                    }
+                }
+                "view" => {
+                    if let Some(view) = views.get_mut(&key) {
+                        view.grants.push(grant);
+                    }
+                }
+                "sequence" => {
+                    if let Some(seq) = sequences.get_mut(&key) {
+                        seq.grants.push(grant);
+                    }
+                }
+                _ => {}
+            }
+        }
 
         let total_triggers: usize = tables_data.values().map(|t| t.triggers.len()).sum();
         let total_policies: usize = tables_data.values().map(|t| t.policies.len()).sum();
@@ -100,6 +126,8 @@ impl<'a> Introspector<'a> {
             extensions,
             composite_types,
             domains,
+            schema_grants,
+            default_privileges,
         })
     }
 
@@ -131,6 +159,18 @@ impl<'a> Introspector<'a> {
         types::get_domains(self.api, &self.project_ref).await
     }
 
+    async fn get_schema_grants(&self) -> Result<Vec<SchemaGrant>, String> {
+        grants::get_schema_grants(self.api, &self.project_ref).await
+    }
+
+    async fn get_default_privileges(&self) -> Result<Vec<DefaultPrivilege>, String> {
+        grants::get_default_privileges(self.api, &self.project_ref).await
+    }
+
+    async fn get_object_grants(&self) -> Result<Vec<(String, String, ObjectGrant)>, String> {
+        grants::get_object_grants(self.api, &self.project_ref).await
+    }
+
     /// Fetch all table information using bulk queries (minimal API calls)
     async fn get_all_tables_bulk(&self) -> Result<HashMap<String, TableInfo>, String> {
         tables::get_all_tables_bulk(self.api, &self.project_ref).await
@@ -144,6 +184,25 @@ impl<'a> Introspector<'a> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_inspect_cron_grants() {
+        let client = reqwest::Client::new();
+        let api = crate::supabase_api::SupabaseApi::new(
+            "saxonfletcher/Supawatch".to_string(),
+            client
+        );
+        let q = r#"
+            SELECT c.relname, acl.grantee, acl.privilege_type
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) acl
+            WHERE n.nspname = 'cron';
+        "#;
+        let res = api.run_query(q, "saxonfletcher/Supawatch", true).await.unwrap();
+        println!("CRON NATIVE PRIVS: {:#?}", res);
+    }
 
     #[test]
     fn test_parse_bulk_response_array_type() {
@@ -200,6 +259,7 @@ mod tests {
                     "trigger_name": "test_trigger",
                     "tgtype": 21,
                     "function_name": "test_func",
+                    "function_schema": "public",
                     "trigger_def": "CREATE TRIGGER test_trigger AFTER INSERT OR UPDATE ON test_table FOR EACH ROW EXECUTE FUNCTION test_func()"
                 }
             ],
@@ -218,7 +278,7 @@ mod tests {
         assert_eq!(trigger.timing, "AFTER");
         assert!(trigger.events.contains(&"UPDATE".to_string()));
         assert!(trigger.events.contains(&"INSERT".to_string()));
-        assert_eq!(trigger.function_name, "test_func");
+        assert_eq!(trigger.function_name, "public.test_func");
     }
 
     #[test]
@@ -410,6 +470,7 @@ mod tests {
                 "trigger_name": "on_skill_experience_change",
                 "tgtype": 19,
                 "function_name": "check_skill_level_up",
+                "function_schema": "public",
                 "trigger_def": "CREATE TRIGGER on_skill_experience_change BEFORE UPDATE OF experience ON public.character_skills FOR EACH ROW WHEN ((NEW.experience > OLD.experience)) EXECUTE FUNCTION check_skill_level_up()"
             }],
             "policies": [],
@@ -924,6 +985,7 @@ mod tests {
                     "trigger_name": "notify_all",
                     "tgtype": 4,
                     "function_name": "notify_func",
+                    "function_schema": "public",
                     "trigger_def": "CREATE TRIGGER notify_all AFTER INSERT ON events FOR EACH STATEMENT EXECUTE FUNCTION notify_func()"
                 }
             ],
@@ -953,6 +1015,7 @@ mod tests {
                     "trigger_name": "validate_data",
                     "tgtype": 6,
                     "function_name": "validate_func",
+                    "function_schema": "public",
                     "trigger_def": "CREATE TRIGGER validate_data BEFORE INSERT ON data FOR EACH ROW EXECUTE FUNCTION validate_func()"
                 }
             ],

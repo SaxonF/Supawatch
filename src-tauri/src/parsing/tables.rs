@@ -87,6 +87,7 @@ pub fn handle_create_table(
             rls_enabled: false,
             policies: vec![],
             check_constraints,
+            grants: vec![],
             comment: None,
             extension: None,
         },

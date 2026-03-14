@@ -12,6 +12,9 @@ impl SchemaDiff {
         for ext in &self.extensions_to_drop {
             parts.push(format!("- Extension '{}'", ext));
         }
+        for ext in &self.extensions_to_update {
+            parts.push(format!("~ Extension '{}' (version update)", ext.name));
+        }
 
         // Types
         for t in &self.composite_types_to_create {
@@ -20,6 +23,9 @@ impl SchemaDiff {
         for t in &self.composite_types_to_drop {
             parts.push(format!("- Type '{}'", t));
         }
+        for (comp, _) in &self.composite_types_to_update {
+            parts.push(format!("~ Type '{}' (attributes changed)", comp.name));
+        }
 
         // Domains
         for d in &self.domains_to_create {
@@ -27,6 +33,9 @@ impl SchemaDiff {
         }
         for d in &self.domains_to_drop {
             parts.push(format!("- Domain '{}'", d));
+        }
+        for (domain, _) in &self.domains_to_update {
+            parts.push(format!("~ Domain '{}' (properties changed)", domain.name));
         }
 
         // Enums
@@ -143,6 +152,13 @@ impl SchemaDiff {
             }
             for f in &diff.foreign_keys_to_drop {
                 parts.push(format!("- FK '{}' ON '{}'", f.constraint_name, table_name));
+            }
+
+            for g in &diff.grants_to_create {
+                parts.push(format!("+ Grant {} TO '{}' ON '{}'", g.privilege, g.grantee, table_name));
+            }
+            for g in &diff.grants_to_drop {
+                parts.push(format!("- Grant {} FROM '{}' ON '{}'", g.privilege, g.grantee, table_name));
             }
         }
 

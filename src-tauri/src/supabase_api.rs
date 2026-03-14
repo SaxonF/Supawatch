@@ -80,12 +80,18 @@ struct FunctionMetadata {
     verify_jwt: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct DeployResponse {
     pub id: String,
     pub slug: String,
     pub name: String,
     pub version: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    
+    // Capture any extra fields the API returns and forward them back during bulk update
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -356,6 +362,7 @@ impl SupabaseApi {
     ///
     /// files is a vector of (relative_path, content) pairs for all files in the function
     /// entrypoint is the main file name (e.g., "index.ts")
+    /// bundle_only: if true, bundles the function without persisting (for use with bulk_update_functions)
     pub async fn deploy_function(
         &self,
         project_ref: &str,
@@ -363,11 +370,19 @@ impl SupabaseApi {
         name: &str,
         entrypoint: &str,
         files: Vec<(String, Vec<u8>)>,
+        bundle_only: bool,
     ) -> Result<DeployResponse, ApiError> {
-        let url = format!(
-            "{}/v1/projects/{}/functions/deploy?slug={}",
-            SUPABASE_API_BASE, project_ref, slug
-        );
+        let url = if bundle_only {
+            format!(
+                "{}/v1/projects/{}/functions/deploy?slug={}&bundleOnly=true",
+                SUPABASE_API_BASE, project_ref, slug
+            )
+        } else {
+            format!(
+                "{}/v1/projects/{}/functions/deploy?slug={}",
+                SUPABASE_API_BASE, project_ref, slug
+            )
+        };
 
         // Detect import map file (deno.json or import_map.json)
         let import_map_path = files.iter()
@@ -428,6 +443,44 @@ impl SupabaseApi {
         }
 
         Ok(response.json().await?)
+    }
+
+    /// Bulk update (activate) multiple edge functions atomically
+    ///
+    /// Takes the DeployResponse objects from bundle-only deploys and activates them all at once.
+    /// This is the same approach the Supabase CLI uses for multi-function deploys.
+    pub async fn bulk_update_functions(
+        &self,
+        project_ref: &str,
+        functions: &[DeployResponse],
+    ) -> Result<(), ApiError> {
+        let url = format!(
+            "{}/v1/projects/{}/functions",
+            SUPABASE_API_BASE, project_ref
+        );
+
+        let mut payload = functions.to_vec();
+        for func in &mut payload {
+            func.status = Some("ACTIVE".to_string());
+            func.extra.retain(|_, v| !v.is_null());
+        }
+
+        let response = self
+            .client
+            .put(&url)
+            .header("Authorization", self.auth_header())
+            .header("Content-Type", "application/json")
+            .json(&payload)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let message = response.text().await.unwrap_or_default();
+            return Err(ApiError::ApiError { status, message });
+        }
+
+        Ok(())
     }
 
     /// Delete an edge function

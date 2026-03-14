@@ -45,13 +45,20 @@ fn test_generate_sql_full() {
         sequences_to_update: vec![],
         extensions_to_create: vec![],
         extensions_to_drop: vec![],
+        extensions_to_update: vec![],
         composite_types_to_create: vec![],
         composite_types_to_drop: vec![],
+        composite_types_to_update: vec![],
         domains_to_create: vec![],
         domains_to_drop: vec![],
+        domains_to_update: vec![],
         roles_to_create: vec![],
         roles_to_drop: vec![],
         roles_to_update: vec![],
+        schema_grants_to_create: vec![],
+        schema_grants_to_drop: vec![],
+        default_privileges_to_create: vec![],
+        default_privileges_to_drop: vec![],
     };
 
     // Run generator
@@ -125,6 +132,7 @@ fn test_generate_create_sequence() {
         cycle: false,
         cache_size: 10,
         owned_by: Some("users.id".to_string()),
+        grants: vec![],
         comment: None,
         extension: None,
     };
@@ -147,6 +155,7 @@ fn test_generate_create_view() {
         comment: None,
         with_options: vec!["security_barrier=true".to_string()],
         check_option: None,
+        grants: vec![],
         extension: None,
     };
 
@@ -167,6 +176,7 @@ fn test_generate_materialized_view() {
         comment: None,
         with_options: vec![],
         check_option: None,
+        grants: vec![],
         extension: None,
     };
 
@@ -260,13 +270,20 @@ fn test_drop_type_quoting() {
         sequences_to_update: vec![],
         extensions_to_create: vec![],
         extensions_to_drop: vec![],
+        extensions_to_update: vec![],
         composite_types_to_create: vec![],
         composite_types_to_drop: vec!["\"public\".\"addr\"".to_string()], // Already quoted
+        composite_types_to_update: vec![],
         domains_to_create: vec![],
         domains_to_drop: vec![],
+        domains_to_update: vec![],
         roles_to_create: vec![],
         roles_to_drop: vec![],
         roles_to_update: vec![],
+        schema_grants_to_create: vec![],
+        schema_grants_to_drop: vec![],
+        default_privileges_to_create: vec![],
+        default_privileges_to_drop: vec![],
     };
 
     let schema = DbSchema::new();
@@ -307,6 +324,7 @@ fn test_generate_alter_table_columns() {
         rls_enabled: false,
         policies: vec![],
         check_constraints: vec![],
+        grants: vec![],
         comment: None,
         extension: None,
     };
@@ -339,6 +357,8 @@ fn test_generate_alter_table_columns() {
         check_constraints_to_drop: vec![],
         foreign_keys_to_create: vec![],
         foreign_keys_to_drop: vec![],
+        grants_to_create: vec![],
+        grants_to_drop: vec![],
         comment_change: None,
     };
 
@@ -561,6 +581,7 @@ fn test_generate_alter_sequence() {
         cycle: true,
         cache_size: 20,
         owned_by: None,
+        grants: vec![],
         comment: None,
         extension: None,
     };
@@ -602,6 +623,7 @@ fn test_generate_identity_column_change() {
         rls_enabled: false,
         policies: vec![],
         check_constraints: vec![],
+        grants: vec![],
         comment: None,
         extension: None,
     };
@@ -634,6 +656,8 @@ fn test_generate_identity_column_change() {
         check_constraints_to_drop: vec![],
         foreign_keys_to_create: vec![],
         foreign_keys_to_drop: vec![],
+        grants_to_create: vec![],
+        grants_to_drop: vec![],
         comment_change: None,
     };
 
@@ -671,6 +695,7 @@ fn test_generate_collation_change() {
         rls_enabled: false,
         policies: vec![],
         check_constraints: vec![],
+        grants: vec![],
         comment: None,
         extension: None,
     };
@@ -703,6 +728,8 @@ fn test_generate_collation_change() {
         check_constraints_to_drop: vec![],
         foreign_keys_to_create: vec![],
         foreign_keys_to_drop: vec![],
+        grants_to_create: vec![],
+        grants_to_drop: vec![],
         comment_change: None,
     };
 
@@ -728,6 +755,7 @@ fn test_generate_check_constraint_add() {
                 columns: vec![],
             }
         ],
+        grants: vec![],
         comment: None,
         extension: None,
     };
@@ -753,6 +781,8 @@ fn test_generate_check_constraint_add() {
         check_constraints_to_drop: vec![],
         foreign_keys_to_create: vec![],
         foreign_keys_to_drop: vec![],
+        grants_to_create: vec![],
+        grants_to_drop: vec![],
         comment_change: None,
     };
 
@@ -772,6 +802,7 @@ fn test_generate_rls_enable() {
         rls_enabled: true,
         policies: vec![],
         check_constraints: vec![],
+        grants: vec![],
         comment: None,
         extension: None,
     };
@@ -791,6 +822,8 @@ fn test_generate_rls_enable() {
         check_constraints_to_drop: vec![],
         foreign_keys_to_create: vec![],
         foreign_keys_to_drop: vec![],
+        grants_to_create: vec![],
+        grants_to_drop: vec![],
         comment_change: None,
     };
 
@@ -810,6 +843,7 @@ fn test_generate_rls_disable() {
         rls_enabled: false,
         policies: vec![],
         check_constraints: vec![],
+        grants: vec![],
         comment: None,
         extension: None,
     };
@@ -829,6 +863,8 @@ fn test_generate_rls_disable() {
         check_constraints_to_drop: vec![],
         foreign_keys_to_create: vec![],
         foreign_keys_to_drop: vec![],
+        grants_to_create: vec![],
+        grants_to_drop: vec![],
         comment_change: None,
     };
 
@@ -909,13 +945,20 @@ fn test_generate_drop_table() {
         sequences_to_update: vec![],
         extensions_to_create: vec![],
         extensions_to_drop: vec![],
+        extensions_to_update: vec![],
         composite_types_to_create: vec![],
         composite_types_to_drop: vec![],
+        composite_types_to_update: vec![],
         domains_to_create: vec![],
         domains_to_drop: vec![],
+        domains_to_update: vec![],
         roles_to_create: vec![],
         roles_to_drop: vec![],
         roles_to_update: vec![],
+        schema_grants_to_create: vec![],
+        schema_grants_to_drop: vec![],
+        default_privileges_to_create: vec![],
+        default_privileges_to_drop: vec![],
     };
 
     let schema = DbSchema::new();
@@ -936,6 +979,7 @@ fn test_generate_drop_view() {
         comment: None,
         with_options: vec![],
         check_option: None,
+        grants: vec![],
         extension: None,
     });
 
@@ -955,13 +999,20 @@ fn test_generate_drop_view() {
         sequences_to_update: vec![],
         extensions_to_create: vec![],
         extensions_to_drop: vec![],
+        extensions_to_update: vec![],
         composite_types_to_create: vec![],
         composite_types_to_drop: vec![],
+        composite_types_to_update: vec![],
         domains_to_create: vec![],
         domains_to_drop: vec![],
+        domains_to_update: vec![],
         roles_to_create: vec![],
         roles_to_drop: vec![],
         roles_to_update: vec![],
+        schema_grants_to_create: vec![],
+        schema_grants_to_drop: vec![],
+        default_privileges_to_create: vec![],
+        default_privileges_to_drop: vec![],
     };
 
     let sql = generate_sql(&diff, &schema);
@@ -981,6 +1032,7 @@ fn test_generate_drop_materialized_view() {
         comment: None,
         with_options: vec![],
         check_option: None,
+        grants: vec![],
         extension: None,
     });
 
@@ -1000,13 +1052,20 @@ fn test_generate_drop_materialized_view() {
         sequences_to_update: vec![],
         extensions_to_create: vec![],
         extensions_to_drop: vec![],
+        extensions_to_update: vec![],
         composite_types_to_create: vec![],
         composite_types_to_drop: vec![],
+        composite_types_to_update: vec![],
         domains_to_create: vec![],
         domains_to_drop: vec![],
+        domains_to_update: vec![],
         roles_to_create: vec![],
         roles_to_drop: vec![],
         roles_to_update: vec![],
+        schema_grants_to_create: vec![],
+        schema_grants_to_drop: vec![],
+        default_privileges_to_create: vec![],
+        default_privileges_to_drop: vec![],
     };
 
     let sql = generate_sql(&diff, &schema);
@@ -1031,13 +1090,20 @@ fn test_generate_drop_sequence() {
         sequences_to_update: vec![],
         extensions_to_create: vec![],
         extensions_to_drop: vec![],
+        extensions_to_update: vec![],
         composite_types_to_create: vec![],
         composite_types_to_drop: vec![],
+        composite_types_to_update: vec![],
         domains_to_create: vec![],
         domains_to_drop: vec![],
+        domains_to_update: vec![],
         roles_to_create: vec![],
         roles_to_drop: vec![],
         roles_to_update: vec![],
+        schema_grants_to_create: vec![],
+        schema_grants_to_drop: vec![],
+        default_privileges_to_create: vec![],
+        default_privileges_to_drop: vec![],
     };
 
     let schema = DbSchema::new();
@@ -1063,13 +1129,20 @@ fn test_generate_drop_extension() {
         sequences_to_update: vec![],
         extensions_to_create: vec![],
         extensions_to_drop: vec!["postgis".to_string()],
+        extensions_to_update: vec![],
         composite_types_to_create: vec![],
         composite_types_to_drop: vec![],
+        composite_types_to_update: vec![],
         domains_to_create: vec![],
         domains_to_drop: vec![],
+        domains_to_update: vec![],
         roles_to_create: vec![],
         roles_to_drop: vec![],
         roles_to_update: vec![],
+        schema_grants_to_create: vec![],
+        schema_grants_to_drop: vec![],
+        default_privileges_to_create: vec![],
+        default_privileges_to_drop: vec![],
     };
 
     let schema = DbSchema::new();
@@ -1095,13 +1168,20 @@ fn test_generate_drop_role() {
         sequences_to_update: vec![],
         extensions_to_create: vec![],
         extensions_to_drop: vec![],
+        extensions_to_update: vec![],
         composite_types_to_create: vec![],
         composite_types_to_drop: vec![],
+        composite_types_to_update: vec![],
         domains_to_create: vec![],
         domains_to_drop: vec![],
+        domains_to_update: vec![],
         roles_to_create: vec![],
         roles_to_drop: vec!["old_role".to_string()],
         roles_to_update: vec![],
+        schema_grants_to_create: vec![],
+        schema_grants_to_drop: vec![],
+        default_privileges_to_create: vec![],
+        default_privileges_to_drop: vec![],
     };
 
     let schema = DbSchema::new();
@@ -1127,13 +1207,20 @@ fn test_generate_drop_domain() {
         sequences_to_update: vec![],
         extensions_to_create: vec![],
         extensions_to_drop: vec![],
+        extensions_to_update: vec![],
         composite_types_to_create: vec![],
         composite_types_to_drop: vec![],
+        composite_types_to_update: vec![],
         domains_to_create: vec![],
         domains_to_drop: vec!["\"public\".\"old_domain\"".to_string()],
+        domains_to_update: vec![],
         roles_to_create: vec![],
         roles_to_drop: vec![],
         roles_to_update: vec![],
+        schema_grants_to_create: vec![],
+        schema_grants_to_drop: vec![],
+        default_privileges_to_create: vec![],
+        default_privileges_to_drop: vec![],
     };
 
     let schema = DbSchema::new();
@@ -1220,6 +1307,7 @@ fn test_generate_view_with_check_option() {
         comment: None,
         with_options: vec![],
         check_option: Some("LOCAL".to_string()),
+        grants: vec![],
         extension: None,
     };
 
@@ -1239,6 +1327,7 @@ fn test_generate_index_drop_with_constraint() {
         rls_enabled: false,
         policies: vec![],
         check_constraints: vec![],
+        grants: vec![],
         comment: None,
         extension: None,
     };
@@ -1269,6 +1358,8 @@ fn test_generate_index_drop_with_constraint() {
         check_constraints_to_drop: vec![],
         foreign_keys_to_create: vec![],
         foreign_keys_to_drop: vec![],
+        grants_to_create: vec![],
+        grants_to_drop: vec![],
         comment_change: None,
     };
 
@@ -1289,6 +1380,7 @@ fn test_generate_unique_constraint_via_index() {
         rls_enabled: false,
         policies: vec![],
         check_constraints: vec![],
+        grants: vec![],
         comment: None,
         extension: None,
     };
@@ -1319,6 +1411,8 @@ fn test_generate_unique_constraint_via_index() {
         check_constraints_to_drop: vec![],
         foreign_keys_to_create: vec![],
         foreign_keys_to_drop: vec![],
+        grants_to_create: vec![],
+        grants_to_drop: vec![],
         comment_change: None,
     };
 
@@ -1356,6 +1450,7 @@ fn test_generate_drop_default() {
         rls_enabled: false,
         policies: vec![],
         check_constraints: vec![],
+        grants: vec![],
         comment: None,
         extension: None,
     };
@@ -1388,6 +1483,8 @@ fn test_generate_drop_default() {
         check_constraints_to_drop: vec![],
         foreign_keys_to_create: vec![],
         foreign_keys_to_drop: vec![],
+        grants_to_create: vec![],
+        grants_to_drop: vec![],
         comment_change: None,
     };
 
@@ -1425,6 +1522,7 @@ fn test_generate_drop_identity() {
         rls_enabled: false,
         policies: vec![],
         check_constraints: vec![],
+        grants: vec![],
         comment: None,
         extension: None,
     };
@@ -1457,6 +1555,8 @@ fn test_generate_drop_identity() {
         check_constraints_to_drop: vec![],
         foreign_keys_to_create: vec![],
         foreign_keys_to_drop: vec![],
+        grants_to_create: vec![],
+        grants_to_drop: vec![],
         comment_change: None,
     };
 
@@ -1499,6 +1599,7 @@ fn test_generate_add_generated_column() {
         rls_enabled: false,
         policies: vec![],
         check_constraints: vec![],
+        grants: vec![],
         comment: None,
         extension: None,
     };
@@ -1518,6 +1619,8 @@ fn test_generate_add_generated_column() {
         check_constraints_to_drop: vec![],
         foreign_keys_to_create: vec![],
         foreign_keys_to_drop: vec![],
+        grants_to_create: vec![],
+        grants_to_drop: vec![],
         comment_change: None,
     };
 
@@ -1579,6 +1682,7 @@ fn test_generate_create_table_with_generated_column() {
         rls_enabled: false,
         policies: vec![],
         check_constraints: vec![],
+        grants: vec![],
         comment: None,
         extension: None,
     };
@@ -1638,6 +1742,7 @@ fn test_enum_to_text_with_generated_dependency() {
         rls_enabled: false,
         policies: vec![],
         check_constraints: vec![],
+        grants: vec![],
         comment: None,
         extension: None,
     };
@@ -1688,6 +1793,7 @@ fn test_enum_to_text_with_generated_dependency() {
         rls_enabled: false,
         policies: vec![],
         check_constraints: vec![],
+        grants: vec![],
         comment: None,
         extension: None,
     };
@@ -1785,6 +1891,7 @@ fn test_generated_column_normalization_public_prefix() {
         rls_enabled: false,
         policies: vec![],
         check_constraints: vec![],
+        grants: vec![],
         comment: None,
         extension: None,
     };
@@ -1818,6 +1925,7 @@ fn test_generated_column_normalization_public_prefix() {
         rls_enabled: false,
         policies: vec![],
         check_constraints: vec![],
+        grants: vec![],
         comment: None,
         extension: None,
     };
@@ -1882,6 +1990,7 @@ fn test_generated_column_normalization_type_casts() {
         rls_enabled: false,
         policies: vec![],
         check_constraints: vec![],
+        grants: vec![],
         comment: None,
         extension: None,
     };
@@ -1932,6 +2041,7 @@ fn test_generated_column_normalization_type_casts() {
         rls_enabled: false,
         policies: vec![],
         check_constraints: vec![],
+        grants: vec![],
         comment: None,
         extension: None,
     };
@@ -1975,6 +2085,7 @@ fn test_generated_column_normalization_case_sensitivity() {
         rls_enabled: false,
         policies: vec![],
         check_constraints: vec![],
+        grants: vec![],
         comment: None,
         extension: None,
     };
@@ -2008,6 +2119,7 @@ fn test_generated_column_normalization_case_sensitivity() {
         rls_enabled: false,
         policies: vec![],
         check_constraints: vec![],
+        grants: vec![],
         comment: None,
         extension: None,
     };

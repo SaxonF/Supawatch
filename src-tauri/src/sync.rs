@@ -38,11 +38,9 @@ pub async fn collect_function_files(dir: &Path) -> Result<Vec<(String, Vec<u8>)>
     if let Some(parent) = dir.parent() {
         let shared_dir = parent.join("_shared");
         if shared_dir.exists() && shared_dir.is_dir() {
-            // We want these files to appear as "_shared/..." in the bundle
-            // The Deno runtime (and Supabase) typically expects 
-            // imports like `from "../_shared/mod.ts"` to work.
-            // When we deploy with `deploy_function`, we send a flat list of paths.
-            // Using "../_shared/" as a prefix should work if the server respects it.
+            // We want these files to appear as "../_shared/..." in the bundle
+            // The Supabase deploy API places source files under a source/ subdirectory,
+            // so "../_shared/" resolves correctly to the sibling _shared directory.
             collect_files_recursive_with_prefix(&shared_dir, &shared_dir, &mut files, "../_shared/").await?;
         }
     }

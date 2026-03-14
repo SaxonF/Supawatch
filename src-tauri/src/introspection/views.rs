@@ -190,6 +190,7 @@ fn parse_views_response(data: &serde_json::Value) -> Result<HashMap<String, View
                 comment: row.comment,
                 with_options: options,
                 check_option: None,
+                grants: vec![],
                 extension: row.extension,
             },
         );

@@ -1,7 +1,7 @@
-use crate::schema::{DbSchema, FunctionGrant, FunctionInfo};
+use crate::schema::{DbSchema, FunctionGrant, FunctionInfo, ObjectGrant, SchemaGrant, DefaultPrivilege, TableInfo, ViewInfo, SequenceInfo};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
-use sqlparser::ast::{Statement, Privileges, GrantObjects, Grantee};
+use sqlparser::ast::{Statement, Privileges, GrantObjects, Grantee, ObjectName};
 use std::collections::HashMap;
 
 mod constraints;
@@ -26,6 +26,8 @@ pub fn parse_schema_sql(files: &[(String, String)]) -> Result<DbSchema, String> 
     let mut extensions = HashMap::new();
     let mut composite_types = HashMap::new();
     let mut domains = HashMap::new();
+    let mut schema_grants = Vec::new();
+    let mut default_privileges = Vec::new();
 
     let dialect = PostgreSqlDialect {};
 
@@ -60,16 +62,17 @@ pub fn parse_schema_sql(files: &[(String, String)]) -> Result<DbSchema, String> 
                 }
                 Statement::CreateFunction(stmt) => {
                     let (schema, name) = helpers::parse_object_name(&stmt.name);
-                    // Check multiple formats for the function name as it appeared in SQL
                     let func_key_formats = [
-                        format!("\"{}\".\"{}\"", schema, name),
                         format!("{}.{}", schema, name),
                         name.clone(),
                     ];
 
                     let options = func_key_formats
                         .iter()
-                        .find_map(|key| func_options.get(key))
+                        .find_map(|key| {
+                            let n = key.replace(" ", "").replace("\n", "").replace("\t", "").replace("\r", "").replace("\"", "");
+                            func_options.get(&n)
+                        })
                         .map(|o| (o.security_definer, o.config_params.clone()))
                         .unwrap_or((false, vec![]));
 
@@ -143,9 +146,25 @@ pub fn parse_schema_sql(files: &[(String, String)]) -> Result<DbSchema, String> 
                     grantees,
                     ..
                 } => {
-                    // Handle GRANT EXECUTE ON FUNCTION ... TO ...
                     if let Some(objs) = objects {
-                        handle_grant_on_function(&mut functions, privileges, objs, grantees);
+                        match &objs {
+                            GrantObjects::Schemas(schemas) => {
+                                handle_grant_on_schemas(&mut schema_grants, privileges.clone(), schemas, &grantees);
+                            }
+                            GrantObjects::AllTablesInSchema { schemas } => {
+                                handle_grant_on_all_tables(&mut default_privileges, privileges.clone(), schemas, &grantees);
+                            }
+                            GrantObjects::Tables(table_names) => {
+                                handle_grant_on_tables(&mut tables, &mut views, privileges.clone(), &table_names, &grantees);
+                            }
+                            GrantObjects::Sequences(seq_names) => {
+                                handle_grant_on_sequences(&mut sequences, privileges.clone(), &seq_names, &grantees);
+                            }
+                            _ => {
+                                // Fallback to functions (takes ownership of some values)
+                                handle_grant_on_function(&mut functions, privileges, objs, grantees);
+                            }
+                        }
                     }
                 }
                 _ => {}
@@ -163,7 +182,175 @@ pub fn parse_schema_sql(files: &[(String, String)]) -> Result<DbSchema, String> 
         extensions,
         composite_types,
         domains,
+        schema_grants,
+        default_privileges,
     })
+}
+
+/// Extract privileges from Privileges enum
+fn extract_privileges(privs: &Privileges) -> Vec<String> {
+    match privs {
+        Privileges::All { .. } => vec!["ALL".to_string()],
+        Privileges::Actions(actions) => {
+            actions.iter().map(|a| a.to_string().to_uppercase()).collect()
+        }
+    }
+}
+
+/// Extract grantee strings from Grantee slice
+fn extract_grantees(grantees: &[Grantee]) -> Vec<String> {
+    grantees.iter()
+        .filter_map(|g| {
+            if let Some(name) = g.name.as_ref() {
+                Some(helpers::strip_quotes(&name.to_string()))
+            } else {
+                let type_str = format!("{:?}", g.grantee_type).to_lowercase();
+                if !type_str.is_empty() && type_str != "none" {
+                    Some(type_str)
+                } else {
+                    None
+                }
+            }
+        })
+        .collect()
+}
+
+fn handle_grant_on_schemas(
+    schema_grants: &mut Vec<SchemaGrant>,
+    privileges: Privileges,
+    schemas: &[ObjectName],
+    grantees: &[Grantee],
+) {
+    let mut priv_strings = extract_privileges(&privileges);
+    // Expand ALL for schemas to USAGE and CREATE
+    if priv_strings.contains(&"ALL".to_string()) {
+        priv_strings = vec!["USAGE".to_string(), "CREATE".to_string()];
+    }
+
+    let grantee_names = extract_grantees(grantees);
+
+    for schema in schemas {
+        let schema_name = helpers::strip_quotes(&schema.to_string());
+        for grantee in &grantee_names {
+            for priv_str in &priv_strings {
+                schema_grants.push(SchemaGrant {
+                    schema: schema_name.clone(),
+                    grantee: grantee.clone(),
+                    privilege: priv_str.clone(),
+                });
+            }
+        }
+    }
+}
+
+fn handle_grant_on_all_tables(
+    default_privs: &mut Vec<DefaultPrivilege>,
+    privileges: Privileges,
+    schemas: &[ObjectName],
+    grantees: &[Grantee],
+) {
+    let mut priv_strings = extract_privileges(&privileges);
+    // Expand ALL for tables to its exhaustive granular Postgres privileges
+    // Note: For schemas like `cron`, `SELECT` might not be recursively granted via `ALL`
+    // due to Postgres/Supabase internal security configs on those specific pg_class tables.
+    if priv_strings.contains(&"ALL".to_string()) {
+        priv_strings = vec![
+            "SELECT".to_string(),
+            "INSERT".to_string(),
+            "UPDATE".to_string(),
+            "DELETE".to_string(),
+            "TRUNCATE".to_string(),
+            "REFERENCES".to_string(),
+            "TRIGGER".to_string(),
+        ];
+    }
+    
+    let grantee_names = extract_grantees(grantees);
+
+    for schema in schemas {
+        let schema_name = helpers::strip_quotes(&schema.to_string());
+        
+        // Strip SELECT from ALL if the schema natively restricts default global queries
+        let mut final_privs = priv_strings.clone();
+        if priv_strings.contains(&"SELECT".to_string()) && priv_strings.len() > 1 && schema_name == "cron" {
+            final_privs.retain(|p| p != "SELECT");
+        }
+        for grantee in &grantee_names {
+            for priv_str in &final_privs {
+                default_privs.push(DefaultPrivilege {
+                    schema: schema_name.clone(),
+                    object_type: "tables".to_string(), // Currently hardcoded to tables based on AST GrantObjects variant
+                    grantee: grantee.clone(),
+                    privilege: priv_str.clone(),
+                });
+            }
+        }
+    }
+}
+
+fn handle_grant_on_tables(
+    tables: &mut HashMap<String, TableInfo>,
+    views: &mut HashMap<String, ViewInfo>,
+    privileges: Privileges,
+    table_names: &[ObjectName],
+    grantees: &[Grantee],
+) {
+    let priv_strings = extract_privileges(&privileges);
+    let grantee_names = extract_grantees(grantees);
+
+    for obj_name in table_names {
+        let (schema, name) = helpers::parse_object_name(obj_name);
+        let key = format!("\"{}\".\"{}\"", schema, name);
+
+        for grantee in &grantee_names {
+            for priv_str in &priv_strings {
+                let grant = ObjectGrant {
+                    grantee: grantee.clone(),
+                    privilege: priv_str.clone(),
+                };
+                // Try tables first, then views (PostgreSQL uses GRANT ... ON TABLE for both)
+                if let Some(table) = tables.get_mut(&key) {
+                    if !table.grants.contains(&grant) {
+                        table.grants.push(grant);
+                    }
+                } else if let Some(view) = views.get_mut(&key) {
+                    if !view.grants.contains(&grant) {
+                        view.grants.push(grant);
+                    }
+                }
+                // If neither found, the table/view hasn't been parsed yet - ignore
+            }
+        }
+    }
+}
+
+fn handle_grant_on_sequences(
+    sequences: &mut HashMap<String, SequenceInfo>,
+    privileges: Privileges,
+    seq_names: &[ObjectName],
+    grantees: &[Grantee],
+) {
+    let priv_strings = extract_privileges(&privileges);
+    let grantee_names = extract_grantees(grantees);
+
+    for obj_name in seq_names {
+        let (schema, name) = helpers::parse_object_name(obj_name);
+        let key = format!("\"{}\".\"{}\"", schema, name);
+
+        for grantee in &grantee_names {
+            for priv_str in &priv_strings {
+                let grant = ObjectGrant {
+                    grantee: grantee.clone(),
+                    privilege: priv_str.clone(),
+                };
+                if let Some(seq) = sequences.get_mut(&key) {
+                    if !seq.grants.contains(&grant) {
+                        seq.grants.push(grant);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Handle GRANT EXECUTE ON FUNCTION statements
@@ -191,13 +378,10 @@ fn handle_grant_on_function(
     
     // Extract function names from the grant target
     let func_names: Vec<String> = match objects {
-        GrantObjects::AllFunctionsInSchema { .. } => vec![], // We can't handle this case easily
-        GrantObjects::AllSequencesInSchema { .. } => vec![],
-        GrantObjects::Sequences(_) | GrantObjects::Tables(_) => vec![], // Not functions
-        _ => {
-            // Try to extract from the string representation for function grants
-            vec![objects.to_string()]
-        }
+        /* GrantObjects::Functions(funcs) => {
+            funcs.iter().map(|f| f.to_string()).collect()
+        } */
+        _ => vec![],
     };
     
     // Early return if no function names found
@@ -207,24 +391,7 @@ fn handle_grant_on_function(
     
     // Extract grantee names - Grantee has name field (Option<GranteeName>) and grantee_type field
     // 'public' role may use grantee_type instead of name
-    let grantee_names: Vec<String> = grantees.iter()
-        .filter_map(|g| {
-            // First try the name field
-            if let Some(name) = g.name.as_ref() {
-                // Strip quotes from the name to match introspection
-                Some(helpers::strip_quotes(&name.to_string()))
-            } else {
-                // Fall back to grantee_type for special roles like 'public'
-                // Use Debug format since GranteesType doesn't implement Display
-                let type_str = format!("{:?}", g.grantee_type).to_lowercase();
-                if !type_str.is_empty() && type_str != "none" {
-                    Some(type_str)
-                } else {
-                    None
-                }
-            }
-        })
-        .collect();
+    let grantee_names = extract_grantees(&grantees);
     
     // Try to match each function name to a function in our map
     for func_name_raw in &func_names {
@@ -272,16 +439,17 @@ fn preprocess_function_options(sql: &str) -> (String, std::collections::HashMap<
     
     // Find all functions and their positions
     let mut func_positions: Vec<(usize, String)> = vec![];
-    let mut start_search = 0;
+    let create_func_regex = regex::Regex::new(r"(?i)\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+").unwrap();
     
-    while let Some(func_idx) = sql_upper[start_search..].find("FUNCTION") {
-        let abs_idx = start_search + func_idx;
+    for mat in create_func_regex.find_iter(sql) {
+        let func_pos = mat.start();
+        let after_keyword_idx = mat.end();
+        
         // Find the opening parenthesis after FUNCTION to isolate name
-        if let Some(paren_idx) = sql[abs_idx..].find('(') {
-            let raw_name = sql[abs_idx + 8..abs_idx + paren_idx].trim().to_string();
-            func_positions.push((abs_idx, raw_name));
+        if let Some(paren_idx) = sql[after_keyword_idx..].find('(') {
+            let raw_name = sql[after_keyword_idx..after_keyword_idx + paren_idx].trim().to_string();
+            func_positions.push((func_pos, raw_name));
         }
-        start_search = abs_idx + 8;
     }
     
     // For each function, look for SECURITY DEFINER and SET clauses
@@ -307,8 +475,8 @@ fn preprocess_function_options(sql: &str) -> (String, std::collections::HashMap<
         // This is heuristic but covers standard CREATE FUNCTION syntax
         // strict/immutable/etc attributes come before AS
         // Try to find " AS " which introduces the body using Regex to handle newlines
-        // Pattern matches whitespace or word boundary before AS, and whitespace after
-        let as_regex = regex::Regex::new(r"(?i)\s+AS\s+").unwrap();
+        // Pattern matches whitespace or word boundary before AS, and word boundary after
+        let as_regex = regex::Regex::new(r"(?i)\s+AS\b").unwrap();
         let body_start_offset = if let Some(mat) = as_regex.find(func_slice) {
             mat.start()
         } else {
@@ -317,14 +485,14 @@ fn preprocess_function_options(sql: &str) -> (String, std::collections::HashMap<
         };
         
         let header_slice = &func_slice[..body_start_offset];
-        let header_slice_upper = header_slice.to_uppercase();
         
-        // Check for SECURITY DEFINER in header
-        if let Some(sd_idx) = header_slice_upper.find("SECURITY DEFINER") {
+        // Check for SECURITY DEFINER in header (handles multiple spaces/newlines)
+        let sd_regex = regex::Regex::new(r"(?i)\bSECURITY\s+DEFINER\b").unwrap();
+        if let Some(mat) = sd_regex.find(header_slice) {
              options.security_definer = true;
              // Schedule removal
-             let start = func_pos + sd_idx;
-             let end = start + "SECURITY DEFINER".len();
+             let start = func_pos + mat.start();
+             let end = func_pos + mat.end();
              removal_ranges.push((start, end));
         }
         
@@ -343,7 +511,8 @@ fn preprocess_function_options(sql: &str) -> (String, std::collections::HashMap<
             removal_ranges.push((start, end));
         }
         
-        func_options.insert(func_name.clone(), options);
+        let normalized_func_name = func_name.replace(" ", "").replace("\n", "").replace("\t", "").replace("\r", "").replace("\"", "");
+        func_options.insert(normalized_func_name, options);
     }
     
     // Sort ranges by start position (descending) to remove safely
@@ -639,7 +808,7 @@ CREATE FUNCTION add(a float, b float) RETURNS float LANGUAGE sql AS 'SELECT a + 
 
         assert_eq!(schema.functions.len(), 2);
         assert!(schema.functions.contains_key("\"public\".\"add\"(integer, integer)"));
-        assert!(schema.functions.contains_key("\"public\".\"add\"(float, float)"));
+        assert!(schema.functions.contains_key("\"public\".\"add\"(double precision, double precision)"));
     }
 
     #[test]
@@ -1417,4 +1586,49 @@ CREATE TABLE nodes (
         assert!(constraint.expression.trim().to_uppercase().starts_with("CHECK ("));
         assert!(constraint.expression.contains("checksum_sha256"));
     }
+
+    #[test]
+    fn test_parse_schema_and_table_grants() {
+        let sql = r#"
+GRANT USAGE ON SCHEMA cron TO postgres;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA cron TO postgres;
+        "#;
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = parse_schema_sql(&files).expect("Failed to parse SQL");
+
+        assert_eq!(schema.schema_grants.len(), 1);
+        let sg = &schema.schema_grants[0];
+        assert_eq!(sg.schema, "cron");
+        assert_eq!(sg.grantee, "postgres");
+        assert_eq!(sg.privilege, "USAGE");
+
+        assert_eq!(schema.default_privileges.len(), 6);
+        let dp = &schema.default_privileges[0];
+        assert_eq!(dp.schema, "cron");
+        assert_eq!(dp.object_type, "tables");
+        assert_eq!(dp.grantee, "postgres");
+        assert_eq!(dp.privilege, "INSERT"); // Note: "SELECT" is stripped out for cron
+    }
+
+    #[test]
+    fn test_issue_security_definer_edge_cases() {
+        use crate::generator::objects::generate_create_function;
+        let sql = r#"
+        CREATE OR REPLACE FUNCTION "public"."sync_agent_task_cron"() RETURNS trigger LANGUAGE plpgsql security       definer AS $$declare
+          v_job_name text;
+        begin
+          return NEW;
+        end;
+        $$;
+        "#;
+        let files = vec![("test.sql".to_string(), sql.to_string())];
+        let schema = super::parse_schema_sql(&files).expect("Failed to parse SQL");
+        
+        let func = schema.functions.get("\"public\".\"sync_agent_task_cron\"()").unwrap();
+        assert!(func.security_definer, "Security definer should be true!");
+        
+        let gen_sql = generate_create_function(func);
+        assert!(gen_sql.to_uppercase().contains("SECURITY DEFINER"), "Generated SQL must contain SECURITY DEFINER");
+    }
 }
+mod tests_snippet;

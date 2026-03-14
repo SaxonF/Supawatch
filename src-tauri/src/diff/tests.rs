@@ -14,7 +14,7 @@ fn test_create_table() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
     local.tables.insert("users".into(), table);
@@ -38,7 +38,7 @@ fn test_drop_table() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
     remote.tables.insert("users".into(), table);
@@ -64,7 +64,7 @@ fn test_add_column() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
     
@@ -110,7 +110,7 @@ fn test_drop_column() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
     
@@ -141,7 +141,7 @@ fn test_drop_column() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
 
@@ -167,7 +167,7 @@ fn test_modify_column_type() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
     
@@ -233,7 +233,7 @@ fn test_modify_column_nullable() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
 
@@ -298,7 +298,7 @@ fn test_modify_generated_column_expression() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
     
@@ -366,7 +366,7 @@ fn test_add_check_constraint() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
 
@@ -400,7 +400,7 @@ fn test_drop_check_constraint() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
     remote_table.check_constraints.push(CheckConstraintInfo {
@@ -472,13 +472,20 @@ fn test_summarize() {
         sequences_to_update: vec![],
         extensions_to_create: vec![],
         extensions_to_drop: vec![],
+        extensions_to_update: vec![],
         composite_types_to_create: vec![],
         composite_types_to_drop: vec![],
+        composite_types_to_update: vec![],
         domains_to_create: vec![],
         domains_to_drop: vec![],
+        domains_to_update: vec![],
         roles_to_create: vec![],
         roles_to_drop: vec![],
         roles_to_update: vec![],
+        schema_grants_to_create: vec![],
+        schema_grants_to_drop: vec![],
+        default_privileges_to_create: vec![],
+        default_privileges_to_drop: vec![],
     };
 
     let summary = diff.summarize();
@@ -613,7 +620,7 @@ fn test_destructive_change_detection() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     });
     // Local empty -> Drop table
@@ -650,7 +657,7 @@ fn test_destructive_change_detection() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     }); // Table exists but no column -> Drop column
 
@@ -921,7 +928,7 @@ fn test_type_change_is_destructive() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
 
@@ -1014,7 +1021,7 @@ fn test_add_column_is_not_destructive() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
 
@@ -1167,7 +1174,7 @@ fn test_full_schema_diff_does_not_drop_system_objects() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
     users_table.columns.insert(
@@ -1240,7 +1247,7 @@ fn test_view_create() {
             indexes: vec![],
             comment: None,
             with_options: vec![],
-            check_option: None, extension: None,
+            check_option: None, grants: vec![], extension: None,
         },
     );
 
@@ -1265,7 +1272,7 @@ fn test_view_drop() {
             indexes: vec![],
             comment: None,
             with_options: vec![],
-            check_option: None, extension: None,
+            check_option: None, grants: vec![], extension: None,
         },
     );
 
@@ -1290,7 +1297,7 @@ fn test_view_update() {
             indexes: vec![],
             comment: None,
             with_options: vec![],
-            check_option: None, extension: None,
+            check_option: None, grants: vec![], extension: None,
         },
     );
 
@@ -1305,13 +1312,72 @@ fn test_view_update() {
             indexes: vec![],
             comment: None,
             with_options: vec![],
-            check_option: None, extension: None,
+            check_option: None, grants: vec![], extension: None,
         },
     );
 
     let diff = compute_diff(&remote, &local);
     assert_eq!(diff.views_to_update.len(), 1);
     assert_eq!(diff.views_to_update[0].name, "stats");
+}
+
+#[test]
+fn test_view_cte_diff() {
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    // Local definition with full CREATE VIEW and raw types/parens
+    local.views.insert(
+        "\"public\".\"player_stats\"".to_string(),
+        crate::schema::ViewInfo {
+            schema: "public".to_string(),
+            name: "player_stats".to_string(),
+            definition: "CREATE OR REPLACE VIEW \"public\".\"player_stats\" AS WITH playable_characters AS (SELECT o.id FROM public.objects o JOIN public.object_types t ON t.id = o.type_id WHERE t.category = 'character' AND t.is_playable = true AND o.user_id IS NOT NULL) SELECT s.name AS stat_name, COUNT(DISTINCT os.object_id)::INTEGER AS player_count, COALESCE(ROUND(AVG(os.current)::NUMERIC, 2), 0::NUMERIC) AS avg_current FROM playable_characters pc JOIN public.object_stats os ON os.object_id = pc.id JOIN public.stats s ON s.id = os.stat_id GROUP BY s.name;".to_string(),
+            is_materialized: false,
+            columns: vec![],
+            indexes: vec![],
+            comment: None,
+            with_options: vec![],
+            check_option: None,
+            grants: vec![],
+            extension: None,
+        },
+    );
+
+    // Remote definition as returned by pg_get_viewdef (no CREATE VIEW, different casts and parens)
+    remote.views.insert(
+        "\"public\".\"player_stats\"".to_string(),
+        crate::schema::ViewInfo {
+            schema: "public".to_string(),
+            name: "player_stats".to_string(),
+            definition: " WITH playable_characters AS (
+         SELECT o.id
+           FROM (public.objects o
+             JOIN public.object_types t ON ((t.id = o.type_id)))
+          WHERE (((t.category)::text = 'character'::text) AND (t.is_playable = true) AND (o.user_id IS NOT NULL))
+        )
+ SELECT s.name AS stat_name,
+    (count(DISTINCT os.object_id))::integer AS player_count,
+    COALESCE(round((avg(os.current))::numeric, 2), (0)::numeric) AS avg_current
+   FROM (((playable_characters pc
+     JOIN public.object_stats os ON ((os.object_id = pc.id)))
+     JOIN public.stats s ON ((s.id = os.stat_id))))
+  GROUP BY s.name;".to_string(),
+            is_materialized: false,
+            columns: vec![],
+            indexes: vec![],
+            comment: None,
+            with_options: vec![],
+            check_option: None,
+            grants: vec![],
+            extension: None,
+        },
+    );
+
+    let diff = compute_diff(&remote, &local);
+    assert_eq!(diff.views_to_create.len(), 0);
+    assert_eq!(diff.views_to_drop.len(), 0);
+    assert_eq!(diff.views_to_update.len(), 0);
 }
 
 #[test]
@@ -1330,7 +1396,7 @@ fn test_materialized_view_create() {
             indexes: vec![],
             comment: None,
             with_options: vec![],
-            check_option: None, extension: None,
+            check_option: None, grants: vec![], extension: None,
         },
     );
 
@@ -1356,7 +1422,7 @@ fn test_sequence_create() {
             increment: 1,
             cycle: false,
             cache_size: 1,
-            owned_by: None, extension: None,
+            owned_by: None, grants: vec![], extension: None,
             comment: None,
         },
     );
@@ -1383,7 +1449,7 @@ fn test_sequence_drop() {
             increment: 1,
             cycle: false,
             cache_size: 1,
-            owned_by: None, extension: None,
+            owned_by: None, grants: vec![], extension: None,
             comment: None,
         },
     );
@@ -1409,7 +1475,7 @@ fn test_sequence_update() {
             increment: 1,
             cycle: false,
             cache_size: 1,
-            owned_by: None, extension: None,
+            owned_by: None, grants: vec![], extension: None,
             comment: None,
         },
     );
@@ -1426,7 +1492,7 @@ fn test_sequence_update() {
             increment: 5, // Changed increment
             cycle: false,
             cache_size: 1,
-            owned_by: None, extension: None,
+            owned_by: None, grants: vec![], extension: None,
             comment: None,
         },
     );
@@ -1675,7 +1741,7 @@ fn test_column_default_change() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
 
@@ -1739,7 +1805,7 @@ fn test_identity_column_change() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
 
@@ -1803,7 +1869,7 @@ fn test_collation_change() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
 
@@ -1867,7 +1933,7 @@ fn test_column_comment_change() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
 
@@ -1931,7 +1997,7 @@ fn test_table_comment_change() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
 
@@ -1960,7 +2026,7 @@ fn test_foreign_key_add() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
 
@@ -2006,7 +2072,7 @@ fn test_foreign_key_drop() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
 
@@ -2019,7 +2085,7 @@ fn test_foreign_key_drop() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
 
@@ -2045,7 +2111,7 @@ fn test_trigger_create() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
 
@@ -2088,7 +2154,7 @@ fn test_trigger_drop() {
         }],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
 
@@ -2101,7 +2167,7 @@ fn test_trigger_drop() {
         triggers: vec![], // Trigger removed
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
 
@@ -2127,7 +2193,7 @@ fn test_index_with_expression() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
 
@@ -2166,7 +2232,7 @@ fn test_policy_create() {
         triggers: vec![],
         rls_enabled: true,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
 
@@ -2207,7 +2273,7 @@ fn test_policy_drop() {
             qual: Some("true".into()),
             with_check: None,
         }],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
 
@@ -2220,7 +2286,7 @@ fn test_policy_drop() {
         triggers: vec![],
         rls_enabled: true,
         policies: vec![], // Policy removed
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
 
@@ -2246,7 +2312,7 @@ fn test_rls_enable() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
 
@@ -2275,7 +2341,7 @@ fn test_rls_disable() {
         triggers: vec![],
         rls_enabled: true,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
 
@@ -2339,7 +2405,7 @@ fn test_table_diff_is_empty() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
 
@@ -2521,7 +2587,7 @@ fn test_view_diff_normalization_coalesce_cast() {
         indexes: vec![],
         comment: None,
         with_options: vec![],
-        check_option: None, extension: None,
+        check_option: None, grants: vec![], extension: None,
     };
 
     let remote = ViewInfo {
@@ -2533,7 +2599,7 @@ fn test_view_diff_normalization_coalesce_cast() {
         indexes: vec![],
         comment: None,
         with_options: vec![],
-        check_option: None, extension: None,
+        check_option: None, grants: vec![], extension: None,
     };
 
     assert!(!super::objects::views_differ(&local, &remote), "Views should be considered identical despite type casting");
@@ -2554,7 +2620,7 @@ fn test_view_diff_normalization_interval() {
         indexes: vec![],
         comment: None,
         with_options: vec![],
-        check_option: None, extension: None,
+        check_option: None, grants: vec![], extension: None,
     };
 
     let remote = ViewInfo {
@@ -2566,7 +2632,7 @@ fn test_view_diff_normalization_interval() {
         indexes: vec![],
         comment: None,
         with_options: vec![],
-        check_option: None, extension: None,
+        check_option: None, grants: vec![], extension: None,
     };
 
     assert!(!super::objects::views_differ(&local, &remote), "Views should be considered identical despite interval syntax differences");
@@ -2592,7 +2658,7 @@ fn test_view_diff_normalization_complex_parens() {
         indexes: vec![],
         comment: None,
         with_options: vec![],
-        check_option: None, extension: None,
+        check_option: None, grants: vec![], extension: None,
     };
 
     let remote = ViewInfo {
@@ -2604,7 +2670,7 @@ fn test_view_diff_normalization_complex_parens() {
         indexes: vec![],
         comment: None,
         with_options: vec![],
-        check_option: None, extension: None,
+        check_option: None, grants: vec![], extension: None,
     };
 
     assert!(!super::objects::views_differ(&local, &remote), "Views should be considered identical despite complex nested parens in JOIN/FILTER");
@@ -2632,7 +2698,7 @@ fn test_view_diff_normalization_join_on_group_by() {
         indexes: vec![],
         comment: None,
         with_options: vec![],
-        check_option: None, extension: None,
+        check_option: None, grants: vec![], extension: None,
     };
 
     let remote = ViewInfo {
@@ -2644,7 +2710,7 @@ fn test_view_diff_normalization_join_on_group_by() {
         indexes: vec![],
         comment: None,
         with_options: vec![],
-        check_option: None, extension: None,
+        check_option: None, grants: vec![], extension: None,
     };
 
     assert!(!super::objects::views_differ(&local, &remote), "Views should be identical despite pg_get_viewdef's extra parens around JOIN/ON and missing space before GROUP BY");
@@ -3020,7 +3086,7 @@ fn test_generated_column_uuid_cast_normalization() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
     
@@ -3139,7 +3205,7 @@ fn test_generated_column_custom_type_cast() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
     
@@ -3267,7 +3333,7 @@ fn test_ignore_bigserial_diff() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
     remote_table.columns.insert("id".into(), ColumnInfo {
@@ -3299,7 +3365,7 @@ fn test_ignore_bigserial_diff() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
     local_table.columns.insert("id".into(), ColumnInfo {
@@ -3348,6 +3414,7 @@ fn test_ignore_implicit_sequence_drop() {
         cycle: false,
         cache_size: 1,
         owned_by: Some("public.backfill_jobs.id".into()), // Owned by table column
+        grants: vec![],
         extension: None,
         comment: None,
     });
@@ -3362,7 +3429,7 @@ fn test_ignore_implicit_sequence_drop() {
         triggers: vec![],
         rls_enabled: false,
         policies: vec![],
-        check_constraints: vec![], extension: None,
+        check_constraints: vec![], grants: vec![], extension: None,
         comment: None,
     };
     local_table.columns.insert("id".into(), ColumnInfo {
@@ -3389,4 +3456,99 @@ fn test_ignore_implicit_sequence_drop() {
 
     // Sequence should NOT be dropped because it is owned by a local table column
     assert!(!diff.sequences_to_drop.contains(&seq_name), "Should not drop explicitly owned sequence");
+}
+
+#[test]
+fn test_check_constraint_in_vs_any_array() {
+    // PostgreSQL rewrites IN ('a', 'b') to = ANY (ARRAY['a'::text, 'b'::text])
+    // The diff should treat these as equivalent
+    let local_expr = "CHECK ((type)::text = ANY ((ARRAY['solo'::character varying, 'multiplayer'::character varying])::text[]))";
+    let remote_expr = "CHECK (type IN ('solo', 'multiplayer'))";
+
+    let local_normalized = utils::normalize_check_expression(local_expr);
+    let remote_normalized = utils::normalize_check_expression(remote_expr);
+
+    assert_eq!(local_normalized, remote_normalized,
+        "IN vs ANY(ARRAY[]) should normalize to the same thing.\n  Local:  {}\n  Remote: {}",
+        local_normalized, remote_normalized);
+}
+
+#[test]
+fn test_check_constraint_expression_diff_no_false_positive() {
+    // Tables with identical check constraints (just different internal representations)
+    // should produce NO diff
+    let mut remote = DbSchema::new();
+    let mut local = DbSchema::new();
+
+    let remote_table = TableInfo {
+        schema: "public".into(),
+        table_name: "conversations".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![CheckConstraintInfo {
+            name: "conversations_type_check".into(),
+            expression: "((type)::text = ANY ((ARRAY['solo'::character varying, 'multiplayer'::character varying])::text[]))".into(),
+            columns: vec!["type".into()],
+        }],
+        grants: vec![],
+        comment: None,
+        extension: None,
+    };
+    remote.tables.insert("conversations".into(), remote_table);
+
+    let local_table = TableInfo {
+        schema: "public".into(),
+        table_name: "conversations".into(),
+        columns: HashMap::new(),
+        foreign_keys: vec![],
+        indexes: vec![],
+        triggers: vec![],
+        rls_enabled: false,
+        policies: vec![],
+        check_constraints: vec![CheckConstraintInfo {
+            name: "conversations_type_check".into(),
+            expression: "CHECK (type IN ('solo', 'multiplayer'))".into(),
+            columns: vec!["type".into()],
+        }],
+        grants: vec![],
+        comment: None,
+        extension: None,
+    };
+    local.tables.insert("conversations".into(), local_table);
+
+    let diff = compute_diff(&remote, &local);
+    assert!(diff.table_changes.is_empty(),
+        "Should have no table changes for equivalent check constraints, but got: {:?}",
+        diff.table_changes.keys().collect::<Vec<_>>());
+}
+
+#[test]
+fn test_check_constraint_in_vs_any_array_quoted_column() {
+    // Handles quoted columns like "experience_type" IN ('combat', 'craft')
+    let local = "CHECK (\"experience_type\" IN ('combat', 'craft'))";
+    let remote = "((experience_type)::text = ANY ((ARRAY['combat'::character varying, 'craft'::character varying])::text[]))";
+
+    let local_n = utils::normalize_check_expression(local);
+    let remote_n = utils::normalize_check_expression(remote);
+
+    assert_eq!(local_n, remote_n,
+        "Quoted column IN vs ANY(ARRAY[]) should match.\n  Local:  {}\n  Remote: {}",
+        local_n, remote_n);
+}
+
+#[test]
+fn test_check_constraint_in_vs_any_array_four_values() {
+    let local = "CHECK (status IN ('pending', 'running', 'completed', 'failed'))";
+    let remote = "((status)::text = ANY ((ARRAY['pending'::character varying, 'running'::character varying, 'completed'::character varying, 'failed'::character varying])::text[]))";
+
+    let local_n = utils::normalize_check_expression(local);
+    let remote_n = utils::normalize_check_expression(remote);
+
+    assert_eq!(local_n, remote_n,
+        "Multi-value IN vs ANY(ARRAY[]) should match.\n  Local:  {}\n  Remote: {}",
+        local_n, remote_n);
 }

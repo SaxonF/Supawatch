@@ -19,6 +19,10 @@ use crate::tray::update_icon;
 static PUSH_DEBOUNCE: Lazy<Mutex<HashMap<Uuid, Instant>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 const PUSH_DEBOUNCE_SECS: u64 = 2;
 
+// Per-project deploy lock to prevent concurrent edge function deploys
+// (e.g. watcher + manual push racing each other)
+static DEPLOY_LOCKS: Lazy<Mutex<HashMap<Uuid, Arc<Mutex<()>>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+
 pub async fn start_watching(
     app_handle: &AppHandle,
     project_id: Uuid,
@@ -370,6 +374,13 @@ async fn handle_edge_function_push(
 ) -> Result<(), String> {
     use futures::stream::{self, StreamExt};
 
+    // Acquire per-project deploy lock to prevent concurrent deploys
+    let lock = {
+        let mut locks = DEPLOY_LOCKS.lock().await;
+        locks.entry(project_id).or_insert_with(|| Arc::new(Mutex::new(()))).clone()
+    };
+    let _guard = lock.lock().await;
+
     // Get project details
     let project = state.get_project(project_id).await.map_err(|e| e.to_string())?;
     
@@ -388,8 +399,6 @@ async fn handle_edge_function_push(
     };
 
     // Extract function slug from path
-    // Path like: /path/to/project/supabase/functions/my-function/index.ts
-    // We want: my-function
     let relative = get_relative_path(file_path, base_path);
     let function_slug = extract_function_slug(&relative);
     
@@ -441,17 +450,19 @@ async fn handle_edge_function_push(
         slugs_to_deploy.push(function_slug);
     }
 
-    // Limit concurrency to 5
-    const CONCURRENCY_LIMIT: usize = 5;
+    // Use bundle_only + bulk_update when deploying multiple functions (same strategy as sync.rs)
+    let use_bundle_only = slugs_to_deploy.len() > 1;
 
-    // Clone data for the stream
+    // Limit concurrency to 3 for multi-function deploys (lower to reduce API pressure)
+    let concurrency_limit: usize = if use_bundle_only { 3 } else { 1 };
+
     let state = state.clone();
     let app_handle = app_handle.clone();
     let project_ref = project_ref.clone();
     let api = api.clone();
     let base_path = base_path.to_string();
 
-    let _results = stream::iter(slugs_to_deploy)
+    let results = stream::iter(slugs_to_deploy)
         .map(|slug| {
             let state = state.clone();
             let app_handle = app_handle.clone();
@@ -460,108 +471,175 @@ async fn handle_edge_function_push(
             let base_path = base_path.clone();
 
             async move {
-                if let Err(e) = deploy_function_internal(
-                    &state,
-                    &app_handle,
-                    project_id,
-                    &project_ref,
-                    &api,
-                    &base_path,
-                    &slug,
-                )
-                .await
-                {
-                    let log = LogEntry::error(
-                        Some(project_id),
-                        LogSource::EdgeFunction,
-                        format!("Failed to auto-deploy {}: {}", slug, e),
-                    );
-                    state.add_log(log.clone()).await;
-                    app_handle.emit("log", &log).ok();
+                let function_dir = std::path::Path::new(&base_path)
+                    .join("supabase")
+                    .join("functions")
+                    .join(&slug);
+
+                let files = match sync::collect_function_files(&function_dir).await {
+                    Ok(f) => f,
+                    Err(e) => {
+                        let log = LogEntry::error(
+                            Some(project_id),
+                            LogSource::EdgeFunction,
+                            format!("Failed to read {}: {}", slug, e),
+                        );
+                        state.add_log(log.clone()).await;
+                        app_handle.emit("log", &log).ok();
+                        return (slug, Err(format!("Failed to read files: {}", e)), None);
+                    }
+                };
+
+                if files.is_empty() {
+                    return (slug, Ok(None), None);
                 }
+
+                let entrypoint = sync::determine_entrypoint(&files);
+                let local_hash = sync::compute_files_hash(&files);
+                let hash_file = function_dir.join(".harbor_hash");
+
+                // Deploy with retry (up to 3 attempts for transient failures)
+                let mut last_err = String::new();
+                for attempt in 0..3u32 {
+                    if attempt > 0 {
+                        // Exponential backoff: 1s, 2s
+                        tokio::time::sleep(tokio::time::Duration::from_secs(attempt as u64)).await;
+                    }
+
+                    match api.deploy_function(
+                        &project_ref, &slug, &slug, &entrypoint, files.clone(), use_bundle_only,
+                    ).await {
+                        Ok(result) => {
+                            let log_msg = if use_bundle_only {
+                                format!("Bundled '{}' (ready for activation)", result.name)
+                            } else {
+                                format!("Deployed '{}' (v{})", result.name, result.version)
+                            };
+                            let log = LogEntry::success(
+                                Some(project_id),
+                                LogSource::EdgeFunction,
+                                log_msg,
+                            );
+                            state.add_log(log.clone()).await;
+                            app_handle.emit("log", &log).ok();
+
+                            if !use_bundle_only {
+                                let _ = tokio::fs::write(&hash_file, &local_hash).await;
+                            }
+
+                            return (slug, Ok(Some(result)), Some((hash_file, local_hash)));
+                        }
+                        Err(e) => {
+                            last_err = e.to_string();
+                            // Only retry on 5xx or 429 (rate limit)
+                            let is_retryable = last_err.contains("500")
+                                || last_err.contains("502")
+                                || last_err.contains("503")
+                                || last_err.contains("504")
+                                || last_err.contains("429");
+                            if !is_retryable {
+                                break;
+                            }
+                            let log = LogEntry::warning(
+                                Some(project_id),
+                                LogSource::EdgeFunction,
+                                format!("Deploy '{}' attempt {} failed (retrying): {}", slug, attempt + 1, last_err),
+                            );
+                            state.add_log(log.clone()).await;
+                            app_handle.emit("log", &log).ok();
+                        }
+                    }
+                }
+
+                let log = LogEntry::error(
+                    Some(project_id),
+                    LogSource::EdgeFunction,
+                    format!("Failed to auto-deploy {}: {}", slug, last_err),
+                );
+                state.add_log(log.clone()).await;
+                app_handle.emit("log", &log).ok();
+                (slug, Err(last_err), None)
             }
         })
-        .buffer_unordered(CONCURRENCY_LIMIT)
+        .buffer_unordered(concurrency_limit)
         .collect::<Vec<_>>()
         .await;
+
+    // Phase 2: Bulk update if we used bundle_only
+    if use_bundle_only {
+        let bundled: Vec<_> = results.iter()
+            .filter_map(|(_, result, _)| {
+                if let Ok(Some(resp)) = result {
+                    Some(resp.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if !bundled.is_empty() {
+            let log = LogEntry::info(
+                Some(project_id),
+                LogSource::EdgeFunction,
+                format!("Activating {} edge functions atomically...", bundled.len()),
+            );
+            state.add_log(log.clone()).await;
+            app_handle.emit("log", &log).ok();
+
+            // Retry bulk update up to 3 times
+            let mut activated = false;
+            for attempt in 0..3u32 {
+                if attempt > 0 {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(attempt as u64)).await;
+                }
+                match api.bulk_update_functions(&project_ref, &bundled).await {
+                    Ok(_) => {
+                        let log = LogEntry::success(
+                            Some(project_id),
+                            LogSource::EdgeFunction,
+                            "Atomic activation successful".to_string(),
+                        );
+                        state.add_log(log.clone()).await;
+                        app_handle.emit("log", &log).ok();
+
+                        // Write hashes now that activation succeeded
+                        for (_, _, hash_info) in &results {
+                            if let Some((hash_file, local_hash)) = hash_info {
+                                let _ = tokio::fs::write(hash_file, local_hash).await;
+                            }
+                        }
+                        activated = true;
+                        break;
+                    }
+                    Err(e) => {
+                        let err_str = e.to_string();
+                        let log = LogEntry::warning(
+                            Some(project_id),
+                            LogSource::EdgeFunction,
+                            format!("Bulk activation attempt {} failed: {}", attempt + 1, err_str),
+                        );
+                        state.add_log(log.clone()).await;
+                        app_handle.emit("log", &log).ok();
+                    }
+                }
+            }
+
+            if !activated {
+                let log = LogEntry::error(
+                    Some(project_id),
+                    LogSource::EdgeFunction,
+                    "Failed to activate functions after 3 attempts".to_string(),
+                );
+                state.add_log(log.clone()).await;
+                app_handle.emit("log", &log).ok();
+            }
+        }
+    }
 
     update_icon(&app_handle, false);
     Ok(())
 }
 
-async fn deploy_function_internal(
-    state: &Arc<AppState>,
-    app_handle: &AppHandle,
-    project_id: Uuid,
-    project_ref: &str,
-    api: &crate::supabase_api::SupabaseApi,
-    base_path: &str,
-    function_slug: &str,
-) -> Result<(), String> {
-    // Find function directory and collect ALL files
-    let function_dir = std::path::Path::new(base_path)
-        .join("supabase")
-        .join("functions")
-        .join(function_slug);
-
-    // Use shared sync module for file collection
-    // This now includes _shared files if they exist
-    let files = match sync::collect_function_files(&function_dir).await {
-        Ok(f) => f,
-        Err(e) => {
-             return Err(format!("Failed to read function directory: {}", e));
-        }
-    };
-
-    if files.is_empty() {
-         let log = LogEntry::warning(
-            Some(project_id),
-            LogSource::EdgeFunction,
-            format!("No files found in function directory: {}", function_slug),
-        );
-        state.add_log(log.clone()).await;
-        app_handle.emit("log", &log).ok();
-        return Ok(());
-    }
-
-    // Determine entrypoint using shared sync module
-    let entrypoint = sync::determine_entrypoint(&files);
-
-    // Compute hash of all files for tracking using shared sync module
-    let local_hash = sync::compute_files_hash(&files);
-
-    let log = LogEntry::info(
-        Some(project_id),
-        LogSource::EdgeFunction,
-        format!("Deploying '{}' ({} files)...", function_slug, files.len()),
-    );
-    state.add_log(log.clone()).await;
-    app_handle.emit("log", &log).ok();
-
-    // Save hash path for later
-    let hash_file = function_dir.join(".harbor_hash");
-
-    // Deploy with all files
-    match api.deploy_function(project_ref, function_slug, function_slug, &entrypoint, files).await {
-        Ok(result) => {
-            // Save hash after successful deploy
-            let _ = tokio::fs::write(&hash_file, &local_hash).await;
-            
-            let log = LogEntry::success(
-                Some(project_id),
-                LogSource::EdgeFunction,
-                format!("Deployed '{}' (v{})", result.name, result.version),
-            );
-            state.add_log(log.clone()).await;
-            app_handle.emit("log", &log).ok();
-        }
-        Err(e) => {
-            return Err(e.to_string());
-        }
-    }
-
-    Ok(())
-}
 
 async fn handle_typescript_generation(
     state: &Arc<AppState>,
